@@ -8,7 +8,7 @@
 [![Rust](https://img.shields.io/badge/Rust-1.75+-orange.svg)](https://www.rust-lang.org/)
 [![CI](https://github.com/JetSquirrel/cloudbridge/actions/workflows/ci.yml/badge.svg)](https://github.com/JetSquirrel/cloudbridge/actions/workflows/ci.yml)
 [![Release](https://github.com/JetSquirrel/cloudbridge/actions/workflows/release.yml/badge.svg)](https://github.com/JetSquirrel/cloudbridge/actions/workflows/release.yml)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/JetSquirrel/cloudbridge)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey.svg)](https://github.com/JetSquirrel/cloudbridge)
 
 **A cross-platform desktop application for multi-cloud cost management and visualization.**
 
@@ -66,6 +66,10 @@ Download the latest release for your platform from the [Releases](https://github
 | macOS (Intel) | `cloudbridge-macos-x64` |
 | macOS (Apple Silicon) | `cloudbridge-macos-arm64` |
 
+> **Note for Windows users:** Windows SmartScreen may show a warning for unsigned executables. Click "More info" → "Run anyway" to proceed. The application is safe and [open source](https://github.com/JetSquirrel/cloudbridge).
+
+> **Note for macOS users:** You may need to right-click → "Open" the first time, or run `xattr -cr cloudbridge-macos-*` to remove quarantine flags.
+
 ### Prerequisites (for building from source)
 
 - **Rust** 1.75 or later
@@ -87,7 +91,9 @@ cargo build --release
 cargo run --release
 ```
 
-The compiled binary will be at `target/release/cloudbridge.exe`.
+The compiled binary will be at:
+- Windows: `target/release/cloudbridge.exe`
+- macOS/Linux: `target/release/cloudbridge`
 
 ## ⚙️ Configuration
 
@@ -134,26 +140,26 @@ The compiled binary will be at `target/release/cloudbridge.exe`.
 ### Adding a Cloud Account
 
 1. Launch CloudBridge
-2. Navigate to "云账号" (Cloud Accounts) in the sidebar
+2. Navigate to **Accounts** in the sidebar
 3. Select your cloud provider (AWS or Alibaba Cloud)
 4. Enter account name and credentials
-5. Click "验证并添加" (Validate & Add)
+5. Click **Validate & Add**
 
 ### Viewing Cost Data
 
-1. Go to "仪表盘" (Dashboard)
+1. Go to **Dashboard**
 2. View the overview cards showing:
    - Current month total cost
    - Last month total cost
    - Month-over-month change
    - Active accounts count
 3. Click on any account card to expand service-level details
-4. Click "趋势" (Trend) to view the 30-day cost chart
+4. Click **Trend** to view the 30-day cost chart
 
 ### Refreshing Data
 
 - **Automatic:** Data is cached for 6 hours and auto-refreshes when stale
-- **Manual:** Click "刷新" (Refresh) button to force refresh all data
+- **Manual:** Click **Refresh** button to force refresh all data
 
 ## 🗺️ Roadmap
 
@@ -170,7 +176,7 @@ The compiled binary will be at `target/release/cloudbridge.exe`.
 - [ ] Multi-currency support
 
 ### Future
-- [ ] macOS and Linux native builds
+- [ ] Linux native builds
 - [ ] Cost optimization recommendations
 - [ ] Team collaboration features
 - [ ] API for integrations
