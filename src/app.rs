@@ -3,11 +3,7 @@
 use gpui::*;
 use gpui_component::*;
 
-use crate::ui::{
-    accounts::AccountsView,
-    dashboard::DashboardView,
-    settings::SettingsView,
-};
+use crate::ui::{accounts::AccountsView, dashboard::DashboardView, settings::SettingsView};
 
 /// Main application view
 pub struct CloudBridgeApp {
@@ -66,12 +62,27 @@ impl CloudBridgeApp {
                     .border_color(cx.theme().border)
                     .mb_4(),
             )
-            .child(self.nav_item("Dashboard", CurrentView::Dashboard, current == CurrentView::Dashboard, cx))
-            .child(self.nav_item("Accounts", CurrentView::Accounts, current == CurrentView::Accounts, cx))
+            .child(self.nav_item(
+                "Dashboard",
+                CurrentView::Dashboard,
+                current == CurrentView::Dashboard,
+                cx,
+            ))
+            .child(self.nav_item(
+                "Accounts",
+                CurrentView::Accounts,
+                current == CurrentView::Accounts,
+                cx,
+            ))
             .child(
                 div().flex_1(), // Flexible space
             )
-            .child(self.nav_item("Settings", CurrentView::Settings, current == CurrentView::Settings, cx))
+            .child(self.nav_item(
+                "Settings",
+                CurrentView::Settings,
+                current == CurrentView::Settings,
+                cx,
+            ))
     }
 
     fn nav_item(
@@ -109,7 +120,11 @@ impl CloudBridgeApp {
             }))
     }
 
-    fn render_content(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_content(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         match self.current_view {
             CurrentView::Dashboard => div().size_full().child(self.dashboard_view.clone()),
             CurrentView::Accounts => div().size_full().child(self.accounts_view.clone()),

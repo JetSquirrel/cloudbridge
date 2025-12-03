@@ -3,8 +3,8 @@
 use anyhow::{anyhow, Result};
 use chrono::{Datelike, Utc};
 use hmac::{Hmac, Mac};
-use sha1::Sha1;
 use serde::Deserialize;
+use sha1::Sha1;
 use std::collections::BTreeMap;
 
 use super::{CloudProvider, CloudService, CostData, CostSummary, ServiceCost};
@@ -37,8 +37,8 @@ impl AliyunCloudService {
 
     /// Calculate HMAC-SHA1 and return Base64 encoded result
     fn hmac_sha1_base64(key: &str, data: &str) -> String {
-        let mut mac = HmacSha1::new_from_slice(key.as_bytes())
-            .expect("HMAC can take key of any size");
+        let mut mac =
+            HmacSha1::new_from_slice(key.as_bytes()).expect("HMAC can take key of any size");
         mac.update(data.as_bytes());
         let result = mac.finalize().into_bytes();
         base64::Engine::encode(&base64::engine::general_purpose::STANDARD, result)
@@ -90,9 +90,15 @@ impl AliyunCloudService {
         params.insert("Version".to_string(), "2017-12-14".to_string());
         params.insert("AccessKeyId".to_string(), self.access_key_id.clone());
         params.insert("SignatureMethod".to_string(), "HMAC-SHA1".to_string());
-        params.insert("Timestamp".to_string(), Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
+        params.insert(
+            "Timestamp".to_string(),
+            Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        );
         params.insert("SignatureVersion".to_string(), "1.0".to_string());
-        params.insert("SignatureNonce".to_string(), uuid::Uuid::new_v4().to_string());
+        params.insert(
+            "SignatureNonce".to_string(),
+            uuid::Uuid::new_v4().to_string(),
+        );
         params.insert("Action".to_string(), action.to_string());
         params
     }
@@ -100,7 +106,7 @@ impl AliyunCloudService {
     /// Call Alibaba Cloud BSS API
     fn call_bss_api(&self, action: &str, extra_params: &[(&str, &str)]) -> Result<String> {
         let mut params = self.common_params(action);
-        
+
         for (k, v) in extra_params {
             params.insert(k.to_string(), v.to_string());
         }
@@ -127,11 +133,15 @@ impl AliyunCloudService {
             .build()
             .new_agent();
 
-        let response = agent.get(&url).call()
+        let response = agent
+            .get(&url)
+            .call()
             .map_err(|e| anyhow!("Alibaba Cloud API request failed: {}", e))?;
 
         let status = response.status().as_u16();
-        let body = response.into_body().read_to_string()
+        let body = response
+            .into_body()
+            .read_to_string()
             .map_err(|e| anyhow!("Failed to read response: {}", e))?;
 
         // Always print response body for debugging
@@ -139,7 +149,11 @@ impl AliyunCloudService {
 
         if status >= 400 {
             tracing::error!("Alibaba Cloud API error (HTTP {}): {}", status, body);
-            return Err(anyhow!("Alibaba Cloud API request failed: HTTP {} - {}", status, body));
+            return Err(anyhow!(
+                "Alibaba Cloud API request failed: HTTP {} - {}",
+                status,
+                body
+            ));
         }
 
         // Check for business errors - Note: Alibaba Cloud returns "Success" as code on success
@@ -159,9 +173,7 @@ impl AliyunCloudService {
 
     /// Query bill overview
     fn query_bill_overview(&self, billing_cycle: &str) -> Result<BillOverviewResponse> {
-        let body = self.call_bss_api("QueryBillOverview", &[
-            ("BillingCycle", billing_cycle),
-        ])?;
+        let body = self.call_bss_api("QueryBillOverview", &[("BillingCycle", billing_cycle)])?;
 
         tracing::debug!("Bill overview response: {}", body);
 
@@ -170,12 +182,19 @@ impl AliyunCloudService {
     }
 
     /// Query instance bill (daily details)
-    fn describe_instance_bill(&self, billing_cycle: &str, granularity: &str) -> Result<InstanceBillResponse> {
-        let body = self.call_bss_api("DescribeInstanceBill", &[
-            ("BillingCycle", billing_cycle),
-            ("Granularity", granularity), // DAILY or MONTHLY
-            ("MaxResults", "300"),
-        ])?;
+    fn describe_instance_bill(
+        &self,
+        billing_cycle: &str,
+        granularity: &str,
+    ) -> Result<InstanceBillResponse> {
+        let body = self.call_bss_api(
+            "DescribeInstanceBill",
+            &[
+                ("BillingCycle", billing_cycle),
+                ("Granularity", granularity), // DAILY or MONTHLY
+                ("MaxResults", "300"),
+            ],
+        )?;
 
         tracing::debug!("Instance bill response length: {} bytes", body.len());
 
@@ -189,7 +208,7 @@ impl CloudService for AliyunCloudService {
         // Try calling a simple API to validate credentials
         let now = Utc::now();
         let billing_cycle = format!("{}-{:02}", now.year(), now.month());
-        
+
         match self.query_bill_overview(&billing_cycle) {
             Ok(_) => Ok(true),
             Err(e) => {
@@ -202,9 +221,9 @@ impl CloudService for AliyunCloudService {
     fn get_cost_data(&self, start_date: &str, end_date: &str) -> Result<Vec<CostData>> {
         // Alibaba Cloud queries by month, extract year-month
         let billing_cycle = &start_date[..7]; // YYYY-MM
-        
+
         let response = self.describe_instance_bill(billing_cycle, "DAILY")?;
-        
+
         let mut costs = Vec::new();
         if let Some(items_wrapper) = response.data.and_then(|d| d.items) {
             if let Some(items) = items_wrapper.item {
@@ -229,14 +248,18 @@ impl CloudService for AliyunCloudService {
 
     fn get_cost_summary(&self) -> Result<CostSummary> {
         let now = Utc::now();
-        
+
         // Current month
         let current_month = format!("{}-{:02}", now.year(), now.month());
         // Last month
         let last_month_date = now - chrono::Duration::days(now.day() as i64 + 1);
         let last_month = format!("{}-{:02}", last_month_date.year(), last_month_date.month());
 
-        tracing::info!("Querying Alibaba Cloud bills: current_month={}, last_month={}", current_month, last_month);
+        tracing::info!(
+            "Querying Alibaba Cloud bills: current_month={}, last_month={}",
+            current_month,
+            last_month
+        );
 
         // Query current month bill overview
         let current_overview = self.query_bill_overview(&current_month)?;
@@ -269,14 +292,19 @@ impl CloudService for AliyunCloudService {
     }
 
     fn get_cost_trend(&self, start_date: &str, end_date: &str) -> Result<super::CostTrend> {
-        tracing::info!("Getting Alibaba Cloud cost trend: {} to {}", start_date, end_date);
+        tracing::info!(
+            "Getting Alibaba Cloud cost trend: {} to {}",
+            start_date,
+            end_date
+        );
 
         // Alibaba Cloud queries by month
         let billing_cycle = &start_date[..7];
         let response = self.describe_instance_bill(billing_cycle, "DAILY")?;
 
         // Aggregate costs by date
-        let mut daily_map: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+        let mut daily_map: std::collections::HashMap<String, f64> =
+            std::collections::HashMap::new();
 
         if let Some(items_wrapper) = response.data.and_then(|d| d.items) {
             if let Some(items) = items_wrapper.item {
@@ -296,10 +324,13 @@ impl CloudService for AliyunCloudService {
             .into_iter()
             .map(|(date, amount)| super::DailyCost { date, amount })
             .collect();
-        
+
         daily_costs.sort_by(|a, b| a.date.cmp(&b.date));
 
-        tracing::info!("Alibaba Cloud cost trend: {} days of data", daily_costs.len());
+        tracing::info!(
+            "Alibaba Cloud cost trend: {} days of data",
+            daily_costs.len()
+        );
 
         Ok(super::CostTrend {
             account_id: self.account_id.clone(),
@@ -320,10 +351,13 @@ fn parse_bill_overview(response: &BillOverviewResponse) -> (f64, Vec<ServiceCost
                 for item in items {
                     let amount = item.pretax_amount.unwrap_or(0.0);
                     total_cost += amount;
-                    
+
                     if amount > 0.0 {
                         details.push(ServiceCost {
-                            service: item.product_name.clone().unwrap_or_else(|| "Unknown".to_string()),
+                            service: item
+                                .product_name
+                                .clone()
+                                .unwrap_or_else(|| "Unknown".to_string()),
                             amount,
                             currency: "CNY".to_string(),
                         });
@@ -334,7 +368,11 @@ fn parse_bill_overview(response: &BillOverviewResponse) -> (f64, Vec<ServiceCost
     }
 
     // Sort by amount in descending order
-    details.sort_by(|a, b| b.amount.partial_cmp(&a.amount).unwrap_or(std::cmp::Ordering::Equal));
+    details.sort_by(|a, b| {
+        b.amount
+            .partial_cmp(&a.amount)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     (total_cost, details)
 }

@@ -1,11 +1,13 @@
 //! Database module - Using DuckDB for data storage
 
 use anyhow::Result;
-use chrono::{DateTime, Utc, Duration};
+use chrono::{DateTime, Duration, Utc};
 use duckdb::{params, Connection};
 use std::sync::{Arc, Mutex};
 
-use crate::cloud::{CloudAccount, CloudProvider, CostData, CostSummary, CostTrend, DailyCost, ServiceCost};
+use crate::cloud::{
+    CloudAccount, CloudProvider, CostData, CostSummary, CostTrend, DailyCost, ServiceCost,
+};
 use crate::config::get_database_path;
 use crate::crypto::get_crypto_manager;
 
@@ -103,7 +105,9 @@ pub fn init_database() -> Result<()> {
 
 /// Get database connection
 fn get_connection() -> Result<std::sync::MutexGuard<'static, Option<Connection>>> {
-    let db = DB_CONNECTION.lock().map_err(|e| anyhow::anyhow!("Failed to get database connection: {}", e))?;
+    let db = DB_CONNECTION
+        .lock()
+        .map_err(|e| anyhow::anyhow!("Failed to get database connection: {}", e))?;
     if db.is_none() {
         return Err(anyhow::anyhow!("Database not initialized"));
     }
@@ -183,7 +187,18 @@ pub fn get_all_accounts() -> Result<Vec<CloudAccount>> {
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut result = Vec::new();
-    for (id, name, provider, encrypted_ak, encrypted_sk, region, created_at_str, last_synced_str, enabled) in accounts {
+    for (
+        id,
+        name,
+        provider,
+        encrypted_ak,
+        encrypted_sk,
+        region,
+        created_at_str,
+        last_synced_str,
+        enabled,
+    ) in accounts
+    {
         let access_key_id = crypto.decrypt(&encrypted_ak).unwrap_or_default();
         let secret_access_key = crypto.decrypt(&encrypted_sk).unwrap_or_default();
         let created_at = DateTime::parse_from_rfc3339(&created_at_str)
@@ -215,9 +230,15 @@ pub fn delete_account(account_id: &str) -> Result<()> {
     let conn = db.as_ref().unwrap();
 
     // First delete associated cost data
-    conn.execute("DELETE FROM cost_data WHERE account_id = ?", params![account_id])?;
+    conn.execute(
+        "DELETE FROM cost_data WHERE account_id = ?",
+        params![account_id],
+    )?;
     // Then delete the account
-    conn.execute("DELETE FROM cloud_accounts WHERE id = ?", params![account_id])?;
+    conn.execute(
+        "DELETE FROM cloud_accounts WHERE id = ?",
+        params![account_id],
+    )?;
 
     Ok(())
 }
@@ -315,14 +336,14 @@ pub fn get_cached_cost_summary_with_account(
     let mut stmt = conn.prepare(
         "SELECT current_month_cost, last_month_cost, currency, month_over_month_change, 
                 current_month_details, last_month_details, cached_at 
-         FROM cost_summary_cache WHERE account_id = ?"
+         FROM cost_summary_cache WHERE account_id = ?",
     )?;
 
     let result = stmt.query_row(params![account_id], |row| {
         let cached_at_str: String = row.get(6)?;
         let current_details_json: Option<String> = row.get(4)?;
         let last_details_json: Option<String> = row.get(5)?;
-        
+
         Ok((
             row.get::<_, f64>(0)?,
             row.get::<_, f64>(1)?,
@@ -335,12 +356,20 @@ pub fn get_cached_cost_summary_with_account(
     });
 
     match result {
-        Ok((current, last, currency, change, current_details_json, last_details_json, cached_at_str)) => {
+        Ok((
+            current,
+            last,
+            currency,
+            change,
+            current_details_json,
+            last_details_json,
+            cached_at_str,
+        )) => {
             // Check if cache is expired
             let cached_at = DateTime::parse_from_rfc3339(&cached_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now() - Duration::hours(CACHE_TTL_HOURS + 1));
-            
+
             let now = Utc::now();
             if now - cached_at > Duration::hours(CACHE_TTL_HOURS) {
                 tracing::info!("Cost summary cache expired (cached at: {})", cached_at_str);
@@ -355,9 +384,11 @@ pub fn get_cached_cost_summary_with_account(
                 .and_then(|json| serde_json::from_str(&json).ok())
                 .unwrap_or_default();
 
-            tracing::info!("Using cost summary cache (cached at: {}, {} hours remaining)", 
-                cached_at_str, 
-                CACHE_TTL_HOURS - (now - cached_at).num_hours());
+            tracing::info!(
+                "Using cost summary cache (cached at: {}, {} hours remaining)",
+                cached_at_str,
+                CACHE_TTL_HOURS - (now - cached_at).num_hours()
+            );
 
             Ok(Some(CostSummary {
                 account_id: account_id.to_string(),
@@ -407,7 +438,11 @@ pub fn save_cost_summary_cache(summary: &CostSummary) -> Result<()> {
 }
 
 /// Get cached cost trend
-pub fn get_cached_cost_trend(account_id: &str, start_date: &str, end_date: &str) -> Result<Option<CostTrend>> {
+pub fn get_cached_cost_trend(
+    account_id: &str,
+    start_date: &str,
+    end_date: &str,
+) -> Result<Option<CostTrend>> {
     let db = get_connection()?;
     let conn = db.as_ref().unwrap();
 
@@ -415,7 +450,7 @@ pub fn get_cached_cost_trend(account_id: &str, start_date: &str, end_date: &str)
     let mut stmt = conn.prepare(
         "SELECT date, amount, currency, cached_at FROM cost_trend_cache 
          WHERE account_id = ? AND date >= ? AND date < ?
-         ORDER BY date"
+         ORDER BY date",
     )?;
 
     let rows = stmt.query_map(params![account_id, start_date, end_date], |row| {
@@ -433,11 +468,11 @@ pub fn get_cached_cost_trend(account_id: &str, start_date: &str, end_date: &str)
 
     for row in rows {
         let (date, amount, curr, cached_at_str) = row?;
-        
+
         let cached_at = DateTime::parse_from_rfc3339(&cached_at_str)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now() - Duration::hours(CACHE_TTL_HOURS + 1));
-        
+
         // Track the oldest cache time
         if oldest_cache.is_none() || cached_at < oldest_cache.unwrap() {
             oldest_cache = Some(cached_at);
@@ -459,9 +494,11 @@ pub fn get_cached_cost_trend(account_id: &str, start_date: &str, end_date: &str)
             return Ok(None);
         }
 
-        tracing::info!("Using cost trend cache ({} data points, {} hours remaining)", 
+        tracing::info!(
+            "Using cost trend cache ({} data points, {} hours remaining)",
             daily_costs.len(),
-            CACHE_TTL_HOURS - (now - cached_at).num_hours());
+            CACHE_TTL_HOURS - (now - cached_at).num_hours()
+        );
     }
 
     Ok(Some(CostTrend {
@@ -495,7 +532,11 @@ pub fn save_cost_trend_cache(trend: &CostTrend) -> Result<()> {
         )?;
     }
 
-    tracing::info!("Cached cost trend for account {} ({} days)", trend.account_id, trend.daily_costs.len());
+    tracing::info!(
+        "Cached cost trend for account {} ({} days)",
+        trend.account_id,
+        trend.daily_costs.len()
+    );
     Ok(())
 }
 
@@ -505,8 +546,14 @@ pub fn clear_account_cache(account_id: &str) -> Result<()> {
     let db = get_connection()?;
     let conn = db.as_ref().unwrap();
 
-    conn.execute("DELETE FROM cost_summary_cache WHERE account_id = ?", params![account_id])?;
-    conn.execute("DELETE FROM cost_trend_cache WHERE account_id = ?", params![account_id])?;
+    conn.execute(
+        "DELETE FROM cost_summary_cache WHERE account_id = ?",
+        params![account_id],
+    )?;
+    conn.execute(
+        "DELETE FROM cost_trend_cache WHERE account_id = ?",
+        params![account_id],
+    )?;
 
     tracing::info!("Cleared all cache for account {}", account_id);
     Ok(())

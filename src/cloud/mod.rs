@@ -135,14 +135,13 @@ pub struct CostTrend {
 pub trait CloudService: Send + Sync {
     /// Validate credentials
     fn validate_credentials(&self) -> Result<bool>;
-    
+
     /// Get cost data
     fn get_cost_data(&self, start_date: &str, end_date: &str) -> Result<Vec<CostData>>;
-    
+
     /// Get cost summary
     fn get_cost_summary(&self) -> Result<CostSummary>;
-    
+
     /// Get cost trend (daily costs)
     fn get_cost_trend(&self, start_date: &str, end_date: &str) -> Result<CostTrend>;
 }
-

@@ -1,7 +1,7 @@
 //! Cost Trend Chart Component
 
-use gpui::*;
 use gpui::prelude::FluentBuilder;
+use gpui::*;
 use gpui_component::{ActiveTheme, StyledExt};
 
 use crate::cloud::DailyCost;
@@ -39,14 +39,21 @@ impl CostChart {
                 .into_any_element();
         }
 
-        let max_amount = self.daily_costs.iter().map(|d| d.amount).fold(0.0_f64, f64::max);
+        let max_amount = self
+            .daily_costs
+            .iter()
+            .map(|d| d.amount)
+            .fold(0.0_f64, f64::max);
         let chart_height = self.height - 40.0; // Leave space for bottom date labels
         let bar_width = (self.width - 40.0) / self.daily_costs.len() as f32; // Leave space for left Y-axis
 
         // Pre-calculate each bar
-        let bars: Vec<_> = self.daily_costs.iter().enumerate().map(|(i, daily)| {
-            self.render_bar(daily, max_amount, bar_width, chart_height, i, cx)
-        }).collect();
+        let bars: Vec<_> = self
+            .daily_costs
+            .iter()
+            .enumerate()
+            .map(|(i, daily)| self.render_bar(daily, max_amount, bar_width, chart_height, i, cx))
+            .collect();
 
         // Format first and last dates
         let first_date = self.daily_costs.first().map(|d| self.format_date(&d.date));

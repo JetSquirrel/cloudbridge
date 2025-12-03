@@ -53,6 +53,9 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
 git clone https://github.com/YOUR_USERNAME/cloudbridge.git
 cd cloudbridge
 
+# Set up pre-commit hooks (recommended)
+git config core.hooksPath .githooks
+
 # Build
 cargo build
 
@@ -66,8 +69,8 @@ cargo clippy
 ### Code Style
 
 - Follow Rust's official style guidelines
-- Use `cargo fmt` before committing
-- Use `cargo clippy` to catch common mistakes
+- Run `cargo fmt` before committing (enforced by pre-commit hook)
+- Run `cargo clippy` to catch common mistakes (enforced by pre-commit hook)
 - Write documentation for public APIs
 - Use meaningful variable and function names
 

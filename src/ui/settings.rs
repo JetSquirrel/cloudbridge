@@ -1,7 +1,7 @@
 //! Settings View
 
-use gpui::*;
 use gpui::prelude::FluentBuilder;
+use gpui::*;
 use gpui_component::{switch::*, *};
 
 use crate::config::{load_config, save_config, AppConfig};
@@ -85,79 +85,86 @@ impl Render for SettingsView {
                     .child("Settings"),
             )
             // Appearance settings
-            .child(self.render_section(
-                "Appearance",
-                div()
-                    .h_flex()
-                    .justify_between()
-                    .items_center()
-                    .child(
-                        div()
-                            .v_flex()
-                            .child(div().child("Dark Mode"))
-                            .child(
+            .child(
+                self.render_section(
+                    "Appearance",
+                    div()
+                        .h_flex()
+                        .justify_between()
+                        .items_center()
+                        .child(
+                            div().v_flex().child(div().child("Dark Mode")).child(
                                 div()
                                     .text_sm()
                                     .text_color(cx.theme().muted_foreground)
                                     .child("Use dark theme"),
                             ),
-                    )
-                    .child(
-                        Switch::new("dark-mode")
-                            .checked(dark_mode)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.toggle_dark_mode(cx);
-                            })),
-                    ),
-                cx,
-            ))
+                        )
+                        .child(
+                            Switch::new("dark-mode")
+                                .checked(dark_mode)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.toggle_dark_mode(cx);
+                                })),
+                        ),
+                    cx,
+                ),
+            )
             // Data settings
-            .child(self.render_section(
-                "Data",
-                div()
-                    .v_flex()
-                    .gap_3()
-                    .child(
-                        div()
-                            .h_flex()
-                            .justify_between()
-                            .items_center()
-                            .child(
-                                div()
-                                    .v_flex()
-                                    .child(div().child("Data Refresh Interval"))
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .text_color(cx.theme().muted_foreground)
-                                            .child(format!("{} minutes", self.config.refresh_interval_minutes)),
-                                    ),
-                            ),
+            .child(
+                self.render_section(
+                    "Data",
+                    div().v_flex().gap_3().child(
+                        div().h_flex().justify_between().items_center().child(
+                            div()
+                                .v_flex()
+                                .child(div().child("Data Refresh Interval"))
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(format!(
+                                            "{} minutes",
+                                            self.config.refresh_interval_minutes
+                                        )),
+                                ),
+                        ),
                     ),
-                cx,
-            ))
+                    cx,
+                ),
+            )
             // About
-            .child(self.render_section(
-                "About",
-                div()
-                    .v_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_2()
-                            .child(div().text_color(cx.theme().muted_foreground).child("Version:"))
-                            .child(div().child("0.1.0")),
-                    )
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_2()
-                            .child(div().text_color(cx.theme().muted_foreground).child("Built with:"))
-                            .child(div().child("GPUI + Rust")),
-                    ),
-                cx,
-            ))
+            .child(
+                self.render_section(
+                    "About",
+                    div()
+                        .v_flex()
+                        .gap_2()
+                        .child(
+                            div()
+                                .h_flex()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child("Version:"),
+                                )
+                                .child(div().child("0.1.0")),
+                        )
+                        .child(
+                            div()
+                                .h_flex()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child("Built with:"),
+                                )
+                                .child(div().child("GPUI + Rust")),
+                        ),
+                    cx,
+                ),
+            )
             // Save status
             .when_some(self.save_status.clone(), |el, status| {
                 el.child(

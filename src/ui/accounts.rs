@@ -1,9 +1,13 @@
 //! Cloud Account Management View
 
 use chrono::Utc;
-use gpui::*;
 use gpui::prelude::FluentBuilder;
-use gpui_component::{button::*, input::{Input, InputState}, *};
+use gpui::*;
+use gpui_component::{
+    button::*,
+    input::{Input, InputState},
+    *,
+};
 use uuid::Uuid;
 
 use crate::cloud::{CloudAccount, CloudProvider};
@@ -96,23 +100,26 @@ impl AccountsView {
         cx.notify();
     }
 
-    fn set_provider(&mut self, provider: CloudProvider, window: &mut Window, cx: &mut Context<Self>) {
+    fn set_provider(
+        &mut self,
+        provider: CloudProvider,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.selected_provider = provider;
         // Update region placeholder based on cloud provider
-        self.region_input.update(cx, |state, cx| {
-            match provider {
-                CloudProvider::AWS => {
-                    *state = InputState::new(window, cx)
-                        .placeholder("Region (optional, default us-east-1)")
-                        .default_value("us-east-1");
-                }
-                CloudProvider::Aliyun => {
-                    *state = InputState::new(window, cx)
-                        .placeholder("Region (optional, default cn-hangzhou)")
-                        .default_value("cn-hangzhou");
-                }
-                _ => {}
+        self.region_input.update(cx, |state, cx| match provider {
+            CloudProvider::AWS => {
+                *state = InputState::new(window, cx)
+                    .placeholder("Region (optional, default us-east-1)")
+                    .default_value("us-east-1");
             }
+            CloudProvider::Aliyun => {
+                *state = InputState::new(window, cx)
+                    .placeholder("Region (optional, default cn-hangzhou)")
+                    .default_value("cn-hangzhou");
+            }
+            _ => {}
         });
         cx.notify();
     }
@@ -152,7 +159,11 @@ impl AccountsView {
             provider: self.selected_provider.clone(),
             access_key_id: ak,
             secret_access_key: sk,
-            region: if region.is_empty() { None } else { Some(region) },
+            region: if region.is_empty() {
+                None
+            } else {
+                Some(region)
+            },
             created_at: Utc::now(),
             last_synced_at: None,
             enabled: true,
@@ -191,29 +202,27 @@ impl AccountsView {
         let secret_access_key = account.secret_access_key.clone();
         let account_id = account.id.clone();
         let provider = account.provider.clone();
-        
+
         // Set default region based on cloud provider
-        let region = account.region.clone().unwrap_or_else(|| {
-            match provider {
-                CloudProvider::AWS => "us-east-1".to_string(),
-                CloudProvider::Aliyun => "cn-hangzhou".to_string(),
-                _ => "us-east-1".to_string(),
-            }
+        let region = account.region.clone().unwrap_or_else(|| match provider {
+            CloudProvider::AWS => "us-east-1".to_string(),
+            CloudProvider::Aliyun => "cn-hangzhou".to_string(),
+            _ => "us-east-1".to_string(),
         });
-        
+
         // Show validating status
         self.success = Some(format!("Validating account {}...", account_name));
         self.error = None;
         cx.notify();
 
         let account_name_clone = account_name.clone();
-        
+
         // Use standard thread to handle sync HTTP requests
         let (tx, rx) = std::sync::mpsc::channel::<Result<bool, String>>();
-        
+
         std::thread::spawn(move || {
             use crate::cloud::CloudService;
-            
+
             let result: Result<bool, String> = match provider {
                 CloudProvider::AWS => {
                     let service = crate::cloud::aws::AwsCloudService::new(
@@ -243,7 +252,7 @@ impl AccountsView {
                 }
                 _ => Err("Unsupported cloud provider".to_string()),
             };
-            
+
             let _ = tx.send(result);
         });
 
@@ -253,17 +262,24 @@ impl AccountsView {
             let validation_result = smol::unblock(move || {
                 rx.recv_timeout(std::time::Duration::from_secs(30))
                     .unwrap_or(Err("Validation timeout".to_string()))
-            }).await;
-            
+            })
+            .await;
+
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
                     match validation_result {
                         Ok(true) => {
-                            this.success = Some(format!("Account {} validated successfully!", account_name_clone));
+                            this.success = Some(format!(
+                                "Account {} validated successfully!",
+                                account_name_clone
+                            ));
                             this.error = None;
                         }
                         Ok(false) => {
-                            this.error = Some(format!("Account {} credentials invalid", account_name_clone));
+                            this.error = Some(format!(
+                                "Account {} credentials invalid",
+                                account_name_clone
+                            ));
                             this.success = None;
                         }
                         Err(e) => {
@@ -272,8 +288,10 @@ impl AccountsView {
                         }
                     }
                     cx.notify();
-                }).ok();
-            }).ok();
+                })
+                .ok();
+            })
+            .ok();
         })
         .detach();
     }
@@ -299,9 +317,12 @@ impl AccountsView {
                         el.bg(cx.theme().muted)
                             .text_color(cx.theme().muted_foreground)
                     })
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
-                        this.set_provider(CloudProvider::AWS, window, cx);
-                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, window, cx| {
+                            this.set_provider(CloudProvider::AWS, window, cx);
+                        }),
+                    )
                     .child("AWS"),
             )
             .child(
@@ -318,9 +339,12 @@ impl AccountsView {
                         el.bg(cx.theme().muted)
                             .text_color(cx.theme().muted_foreground)
                     })
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
-                        this.set_provider(CloudProvider::Aliyun, window, cx);
-                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, window, cx| {
+                            this.set_provider(CloudProvider::Aliyun, window, cx);
+                        }),
+                    )
                     .child("Aliyun"),
             )
     }
@@ -350,25 +374,18 @@ impl AccountsView {
 
     fn render_accounts_list(&self, cx: &Context<Self>) -> impl IntoElement {
         if self.accounts.is_empty() {
-            return div()
-                .w_full()
-                .p_8()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("No cloud accounts yet, click the button above to add"),
-                );
+            return div().w_full().p_8().items_center().justify_center().child(
+                div()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("No cloud accounts yet, click the button above to add"),
+            );
         }
 
-        div()
-            .w_full()
-            .v_flex()
-            .gap_3()
-            .children(self.accounts.iter().map(|account| {
-                self.render_account_row(account, cx)
-            }))
+        div().w_full().v_flex().gap_3().children(
+            self.accounts
+                .iter()
+                .map(|account| self.render_account_row(account, cx)),
+        )
     }
 
     fn render_account_row(&self, account: &CloudAccount, cx: &Context<Self>) -> impl IntoElement {
@@ -415,7 +432,11 @@ impl AccountsView {
                                 div()
                                     .text_sm()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child(format!("AK: {}****", &account.access_key_id[..8.min(account.access_key_id.len())])),
+                                    .child(format!(
+                                        "AK: {}****",
+                                        &account.access_key_id
+                                            [..8.min(account.access_key_id.len())]
+                                    )),
                             ),
                     ),
             )
@@ -538,12 +559,7 @@ impl AccountsView {
                     )
                     // Error message
                     .when_some(self.error.clone(), |el, error| {
-                        el.child(
-                            div()
-                                .text_sm()
-                                .text_color(gpui::red())
-                                .child(error),
-                        )
+                        el.child(div().text_sm().text_color(gpui::red()).child(error))
                     })
                     // Buttons
                     .child(
@@ -551,22 +567,16 @@ impl AccountsView {
                             .h_flex()
                             .gap_2()
                             .justify_end()
-                            .child(
-                                Button::new("cancel")
-                                    .label("Cancel")
-                                    .ghost()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.hide_add_dialog(cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("save")
-                                    .label("Save")
-                                    .primary()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.save_account(cx);
-                                    })),
-                            ),
+                            .child(Button::new("cancel").label("Cancel").ghost().on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    this.hide_add_dialog(cx);
+                                }),
+                            ))
+                            .child(Button::new("save").label("Save").primary().on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    this.save_account(cx);
+                                }),
+                            )),
                     ),
             )
     }

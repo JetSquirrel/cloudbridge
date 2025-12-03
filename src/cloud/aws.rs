@@ -3,8 +3,8 @@
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Datelike, Utc};
 use hmac::{Hmac, Mac};
-use sha2::{Digest, Sha256};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 use super::{CloudProvider, CloudService, CostData, CostSummary};
 
@@ -64,40 +64,35 @@ impl AwsCloudService {
     ) -> Result<String> {
         let amz_date = timestamp.format("%Y%m%dT%H%M%SZ").to_string();
         let date_stamp = timestamp.format("%Y%m%d").to_string();
-        
+
         // 1. Create canonical request
         let payload_hash = Self::sha256_hash(payload.as_bytes());
-        
+
         // Collect all headers (including host and x-amz-date)
         let mut all_headers: Vec<(String, String)> = headers.to_vec();
         all_headers.push(("host".to_string(), host.to_string()));
         all_headers.push(("x-amz-date".to_string(), amz_date.clone()));
         all_headers.push(("x-amz-content-sha256".to_string(), payload_hash.clone()));
-        
+
         // Sort by lowercase key
         all_headers.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
-        
+
         let canonical_headers: String = all_headers
             .iter()
             .map(|(k, v)| format!("{}:{}\n", k.to_lowercase(), v.trim()))
             .collect();
-        
+
         let signed_headers: String = all_headers
             .iter()
             .map(|(k, _)| k.to_lowercase())
             .collect::<Vec<_>>()
             .join(";");
-        
+
         let canonical_request = format!(
             "{}\n{}\n{}\n{}\n{}\n{}",
-            method,
-            uri,
-            query_string,
-            canonical_headers,
-            signed_headers,
-            payload_hash
+            method, uri, query_string, canonical_headers, signed_headers, payload_hash
         );
-        
+
         // 2. Create string to sign
         let credential_scope = format!("{}/{}/{}/aws4_request", date_stamp, self.region, service);
         let string_to_sign = format!(
@@ -106,7 +101,7 @@ impl AwsCloudService {
             credential_scope,
             Self::sha256_hash(canonical_request.as_bytes())
         );
-        
+
         // 3. Calculate signature
         let k_date = Self::hmac_sha256(
             format!("AWS4{}", self.secret_access_key).as_bytes(),
@@ -116,16 +111,13 @@ impl AwsCloudService {
         let k_service = Self::hmac_sha256(&k_region, service.as_bytes());
         let k_signing = Self::hmac_sha256(&k_service, b"aws4_request");
         let signature = hex::encode(Self::hmac_sha256(&k_signing, string_to_sign.as_bytes()));
-        
+
         // 4. Create authorization header
         let authorization = format!(
             "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
-            self.access_key_id,
-            credential_scope,
-            signed_headers,
-            signature
+            self.access_key_id, credential_scope, signed_headers, signature
         );
-        
+
         Ok(authorization)
     }
 
@@ -136,23 +128,15 @@ impl AwsCloudService {
         let host = format!("sts.{}.amazonaws.com", self.region);
         let uri = "/";
         let query_string = "Action=GetCallerIdentity&Version=2011-06-15";
-        
+
         let amz_date = timestamp.format("%Y%m%dT%H%M%SZ").to_string();
         let payload_hash = Self::sha256_hash(b"");
-        
-        let authorization = self.sign_request(
-            "GET",
-            service,
-            &host,
-            uri,
-            query_string,
-            &[],
-            "",
-            timestamp,
-        )?;
-        
+
+        let authorization =
+            self.sign_request("GET", service, &host, uri, query_string, &[], "", timestamp)?;
+
         let url = format!("https://{}{}?{}", host, uri, query_string);
-        
+
         let response = ureq::get(&url)
             .header("Authorization", &authorization)
             .header("X-Amz-Date", &amz_date)
@@ -160,10 +144,12 @@ impl AwsCloudService {
             .header("Host", &host)
             .call()
             .map_err(|e| anyhow!("STS request failed: {}", e))?;
-        
-        let body = response.into_body().read_to_string()
+
+        let body = response
+            .into_body()
+            .read_to_string()
             .map_err(|e| anyhow!("Failed to read response: {}", e))?;
-        
+
         // Parse XML response
         parse_sts_response(&body)
     }
@@ -177,9 +163,9 @@ impl AwsCloudService {
         let ce_region = "us-east-1";
         let host = format!("ce.{}.amazonaws.com", ce_region);
         let uri = "/";
-        
+
         let amz_date = timestamp.format("%Y%m%dT%H%M%SZ").to_string();
-        
+
         // Build request body
         let request_body = serde_json::json!({
             "TimePeriod": {
@@ -195,38 +181,37 @@ impl AwsCloudService {
         });
         let payload = serde_json::to_string(&request_body)?;
         let payload_hash = Self::sha256_hash(payload.as_bytes());
-        
+
         // Add required headers
         let headers = vec![
-            ("content-type".to_string(), "application/x-amz-json-1.1".to_string()),
-            ("x-amz-target".to_string(), "AWSInsightsIndexService.GetCostAndUsage".to_string()),
+            (
+                "content-type".to_string(),
+                "application/x-amz-json-1.1".to_string(),
+            ),
+            (
+                "x-amz-target".to_string(),
+                "AWSInsightsIndexService.GetCostAndUsage".to_string(),
+            ),
         ];
-        
+
         // Sign with us-east-1 region
         let authorization = self.sign_request_with_region(
-            "POST",
-            service,
-            ce_region,
-            &host,
-            uri,
-            "",
-            &headers,
-            &payload,
-            timestamp,
+            "POST", service, ce_region, &host, uri, "", &headers, &payload, timestamp,
         )?;
-        
+
         let url = format!("https://{}{}", host, uri);
-        
+
         // Use Agent and disable status code as error, so we can read 4xx/5xx response body
         let agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .timeout_global(Some(std::time::Duration::from_secs(30)))
             .build()
             .new_agent();
-        
+
         tracing::debug!("Sending Cost Explorer request: {}", url);
-        
-        let result = agent.post(&url)
+
+        let result = agent
+            .post(&url)
             .header("Authorization", &authorization)
             .header("X-Amz-Date", &amz_date)
             .header("X-Amz-Content-Sha256", &payload_hash)
@@ -234,18 +219,24 @@ impl AwsCloudService {
             .header("Content-Type", "application/x-amz-json-1.1")
             .header("X-Amz-Target", "AWSInsightsIndexService.GetCostAndUsage")
             .send(&payload);
-        
+
         match result {
             Ok(response) => {
                 let status = response.status().as_u16();
-                let body = response.into_body().read_to_string()
+                let body = response
+                    .into_body()
+                    .read_to_string()
                     .map_err(|e| anyhow!("Failed to read response: {}", e))?;
-                
+
                 if status >= 400 {
                     tracing::error!("Cost Explorer error response (HTTP {}): {}", status, body);
-                    return Err(anyhow!("Cost Explorer request failed: HTTP {} - {}", status, body));
+                    return Err(anyhow!(
+                        "Cost Explorer request failed: HTTP {} - {}",
+                        status,
+                        body
+                    ));
                 }
-                
+
                 parse_cost_explorer_response(&body, &self.account_id, &self.account_name)
             }
             Err(e) => {
@@ -264,9 +255,9 @@ impl AwsCloudService {
         let ce_region = "us-east-1";
         let host = format!("ce.{}.amazonaws.com", ce_region);
         let uri = "/";
-        
+
         let amz_date = timestamp.format("%Y%m%dT%H%M%SZ").to_string();
-        
+
         // Build request body - not grouped by service, get daily total cost directly
         let request_body = serde_json::json!({
             "TimePeriod": {
@@ -278,35 +269,34 @@ impl AwsCloudService {
         });
         let payload = serde_json::to_string(&request_body)?;
         let payload_hash = Self::sha256_hash(payload.as_bytes());
-        
+
         let headers = vec![
-            ("content-type".to_string(), "application/x-amz-json-1.1".to_string()),
-            ("x-amz-target".to_string(), "AWSInsightsIndexService.GetCostAndUsage".to_string()),
+            (
+                "content-type".to_string(),
+                "application/x-amz-json-1.1".to_string(),
+            ),
+            (
+                "x-amz-target".to_string(),
+                "AWSInsightsIndexService.GetCostAndUsage".to_string(),
+            ),
         ];
-        
+
         let authorization = self.sign_request_with_region(
-            "POST",
-            service,
-            ce_region,
-            &host,
-            uri,
-            "",
-            &headers,
-            &payload,
-            timestamp,
+            "POST", service, ce_region, &host, uri, "", &headers, &payload, timestamp,
         )?;
-        
+
         let url = format!("https://{}{}", host, uri);
-        
+
         let agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .timeout_global(Some(std::time::Duration::from_secs(30)))
             .build()
             .new_agent();
-        
+
         tracing::debug!("Sending Cost Explorer daily cost request: {}", url);
-        
-        let result = agent.post(&url)
+
+        let result = agent
+            .post(&url)
             .header("Authorization", &authorization)
             .header("X-Amz-Date", &amz_date)
             .header("X-Amz-Content-Sha256", &payload_hash)
@@ -314,18 +304,28 @@ impl AwsCloudService {
             .header("Content-Type", "application/x-amz-json-1.1")
             .header("X-Amz-Target", "AWSInsightsIndexService.GetCostAndUsage")
             .send(&payload);
-        
+
         match result {
             Ok(response) => {
                 let status = response.status().as_u16();
-                let body = response.into_body().read_to_string()
+                let body = response
+                    .into_body()
+                    .read_to_string()
                     .map_err(|e| anyhow!("Failed to read response: {}", e))?;
-                
+
                 if status >= 400 {
-                    tracing::error!("Cost Explorer daily cost request error (HTTP {}): {}", status, body);
-                    return Err(anyhow!("Cost Explorer request failed: HTTP {} - {}", status, body));
+                    tracing::error!(
+                        "Cost Explorer daily cost request error (HTTP {}): {}",
+                        status,
+                        body
+                    );
+                    return Err(anyhow!(
+                        "Cost Explorer request failed: HTTP {} - {}",
+                        status,
+                        body
+                    ));
                 }
-                
+
                 parse_daily_cost_response(&body, &self.account_id)
             }
             Err(e) => {
@@ -334,7 +334,7 @@ impl AwsCloudService {
             }
         }
     }
-    
+
     /// Sign with specified region (for services like Cost Explorer that are only available in specific regions)
     fn sign_request_with_region(
         &self,
@@ -350,40 +350,35 @@ impl AwsCloudService {
     ) -> Result<String> {
         let amz_date = timestamp.format("%Y%m%dT%H%M%SZ").to_string();
         let date_stamp = timestamp.format("%Y%m%d").to_string();
-        
+
         // 1. Create canonical request
         let payload_hash = Self::sha256_hash(payload.as_bytes());
-        
+
         // Collect all headers (including host and x-amz-date)
         let mut all_headers: Vec<(String, String)> = headers.to_vec();
         all_headers.push(("host".to_string(), host.to_string()));
         all_headers.push(("x-amz-date".to_string(), amz_date.clone()));
         all_headers.push(("x-amz-content-sha256".to_string(), payload_hash.clone()));
-        
+
         // Sort by lowercase key
         all_headers.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
-        
+
         let canonical_headers: String = all_headers
             .iter()
             .map(|(k, v)| format!("{}:{}\n", k.to_lowercase(), v.trim()))
             .collect();
-        
+
         let signed_headers: String = all_headers
             .iter()
             .map(|(k, _)| k.to_lowercase())
             .collect::<Vec<_>>()
             .join(";");
-        
+
         let canonical_request = format!(
             "{}\n{}\n{}\n{}\n{}\n{}",
-            method,
-            uri,
-            query_string,
-            canonical_headers,
-            signed_headers,
-            payload_hash
+            method, uri, query_string, canonical_headers, signed_headers, payload_hash
         );
-        
+
         // 2. Create string to sign - use the passed region instead of self.region
         let credential_scope = format!("{}/{}/{}/aws4_request", date_stamp, region, service);
         let string_to_sign = format!(
@@ -392,7 +387,7 @@ impl AwsCloudService {
             credential_scope,
             Self::sha256_hash(canonical_request.as_bytes())
         );
-        
+
         // 3. Calculate signature - use the passed region
         let k_date = Self::hmac_sha256(
             format!("AWS4{}", self.secret_access_key).as_bytes(),
@@ -402,16 +397,13 @@ impl AwsCloudService {
         let k_service = Self::hmac_sha256(&k_region, service.as_bytes());
         let k_signing = Self::hmac_sha256(&k_service, b"aws4_request");
         let signature = hex::encode(Self::hmac_sha256(&k_signing, string_to_sign.as_bytes()));
-        
+
         // 4. Create authorization header
         let authorization = format!(
             "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
-            self.access_key_id,
-            credential_scope,
-            signed_headers,
-            signature
+            self.access_key_id, credential_scope, signed_headers, signature
         );
-        
+
         Ok(authorization)
     }
 }
@@ -435,14 +427,14 @@ fn parse_sts_response(xml: &str) -> Result<StsCallerIdentity> {
         let end = xml.find(&end_tag)?;
         Some(xml[start..end].to_string())
     };
-    
+
     // Check for errors
     if xml.contains("<Error>") {
         let code = extract("Code").unwrap_or_else(|| "Unknown".to_string());
         let message = extract("Message").unwrap_or_else(|| "Unknown error".to_string());
         return Err(anyhow!("AWS STS error: {} - {}", code, message));
     }
-    
+
     Ok(StsCallerIdentity {
         account: extract("Account").unwrap_or_default(),
         arn: extract("Arn").unwrap_or_default(),
@@ -451,13 +443,17 @@ fn parse_sts_response(xml: &str) -> Result<StsCallerIdentity> {
 }
 
 /// Parse Cost Explorer JSON response
-fn parse_cost_explorer_response(json: &str, account_id: &str, _account_name: &str) -> Result<Vec<CostData>> {
+fn parse_cost_explorer_response(
+    json: &str,
+    account_id: &str,
+    _account_name: &str,
+) -> Result<Vec<CostData>> {
     #[derive(Deserialize)]
     struct CeResponse {
         #[serde(rename = "ResultsByTime")]
         results_by_time: Option<Vec<TimeResult>>,
     }
-    
+
     #[derive(Deserialize)]
     struct TimeResult {
         #[serde(rename = "TimePeriod")]
@@ -465,13 +461,13 @@ fn parse_cost_explorer_response(json: &str, account_id: &str, _account_name: &st
         #[serde(rename = "Groups")]
         groups: Option<Vec<CostGroup>>,
     }
-    
+
     #[derive(Deserialize)]
     struct TimePeriod {
         #[serde(rename = "Start")]
         start: String,
     }
-    
+
     #[derive(Deserialize)]
     struct CostGroup {
         #[serde(rename = "Keys")]
@@ -479,13 +475,13 @@ fn parse_cost_explorer_response(json: &str, account_id: &str, _account_name: &st
         #[serde(rename = "Metrics")]
         metrics: CostMetrics,
     }
-    
+
     #[derive(Deserialize)]
     struct CostMetrics {
         #[serde(rename = "UnblendedCost")]
         unblended_cost: CostAmount,
     }
-    
+
     #[derive(Deserialize)]
     struct CostAmount {
         #[serde(rename = "Amount")]
@@ -493,19 +489,22 @@ fn parse_cost_explorer_response(json: &str, account_id: &str, _account_name: &st
         #[serde(rename = "Unit")]
         unit: String,
     }
-    
+
     let response: CeResponse = serde_json::from_str(json)?;
-    
+
     let mut cost_data = Vec::new();
     if let Some(results) = response.results_by_time {
-        tracing::info!("Cost Explorer returned data for {} time periods", results.len());
+        tracing::info!(
+            "Cost Explorer returned data for {} time periods",
+            results.len()
+        );
         for result in results {
             if let Some(groups) = result.groups {
                 for group in groups {
                     let service_name = group.keys.first().cloned().unwrap_or_default();
                     let amount: f64 = group.metrics.unblended_cost.amount.parse().unwrap_or(0.0);
                     let currency = group.metrics.unblended_cost.unit;
-                    
+
                     if amount > 0.0 {
                         tracing::debug!("Service {}: {} {}", service_name, amount, currency);
                         cost_data.push(CostData {
@@ -520,7 +519,7 @@ fn parse_cost_explorer_response(json: &str, account_id: &str, _account_name: &st
             }
         }
     }
-    
+
     tracing::info!("Parsed {} cost data records", cost_data.len());
     Ok(cost_data)
 }
@@ -532,7 +531,7 @@ fn parse_daily_cost_response(json: &str, account_id: &str) -> Result<Vec<CostDat
         #[serde(rename = "ResultsByTime")]
         results_by_time: Option<Vec<TimeResult>>,
     }
-    
+
     #[derive(Deserialize)]
     struct TimeResult {
         #[serde(rename = "TimePeriod")]
@@ -540,19 +539,19 @@ fn parse_daily_cost_response(json: &str, account_id: &str) -> Result<Vec<CostDat
         #[serde(rename = "Total")]
         total: Option<CostMetrics>,
     }
-    
+
     #[derive(Deserialize)]
     struct TimePeriod {
         #[serde(rename = "Start")]
         start: String,
     }
-    
+
     #[derive(Deserialize)]
     struct CostMetrics {
         #[serde(rename = "UnblendedCost")]
         unblended_cost: CostAmount,
     }
-    
+
     #[derive(Deserialize)]
     struct CostAmount {
         #[serde(rename = "Amount")]
@@ -560,17 +559,20 @@ fn parse_daily_cost_response(json: &str, account_id: &str) -> Result<Vec<CostDat
         #[serde(rename = "Unit")]
         unit: String,
     }
-    
+
     let response: CeResponse = serde_json::from_str(json)?;
-    
+
     let mut cost_data = Vec::new();
     if let Some(results) = response.results_by_time {
-        tracing::debug!("Daily cost response returned {} time periods", results.len());
+        tracing::debug!(
+            "Daily cost response returned {} time periods",
+            results.len()
+        );
         for result in results {
             if let Some(total) = result.total {
                 let amount: f64 = total.unblended_cost.amount.parse().unwrap_or(0.0);
                 let currency = total.unblended_cost.unit;
-                
+
                 cost_data.push(CostData {
                     account_id: account_id.to_string(),
                     date: result.time_period.start.clone(),
@@ -581,7 +583,7 @@ fn parse_daily_cost_response(json: &str, account_id: &str) -> Result<Vec<CostDat
             }
         }
     }
-    
+
     tracing::debug!("Parsed {} daily cost data records", cost_data.len());
     Ok(cost_data)
 }
@@ -625,12 +627,20 @@ impl CloudService for AwsCloudService {
         // Get current month costs
         let current_costs = self.get_cost_data(&current_month_start, &current_month_end)?;
         let current_month_cost: f64 = current_costs.iter().map(|c| c.amount).sum();
-        tracing::info!("Current month cost: {} USD ({} records)", current_month_cost, current_costs.len());
+        tracing::info!(
+            "Current month cost: {} USD ({} records)",
+            current_month_cost,
+            current_costs.len()
+        );
 
         // Get last month costs
         let last_costs = self.get_cost_data(&last_month_start, &last_month_end)?;
         let last_month_cost: f64 = last_costs.iter().map(|c| c.amount).sum();
-        tracing::info!("Last month cost: {} USD ({} records)", last_month_cost, last_costs.len());
+        tracing::info!(
+            "Last month cost: {} USD ({} records)",
+            last_month_cost,
+            last_costs.len()
+        );
 
         // Calculate month-over-month change
         let month_over_month_change = if last_month_cost > 0.0 {
@@ -664,13 +674,13 @@ impl CloudService for AwsCloudService {
 
     fn get_cost_trend(&self, start_date: &str, end_date: &str) -> Result<super::CostTrend> {
         tracing::info!("Getting cost trend: {} to {}", start_date, end_date);
-        
+
         // Call Cost Explorer API to get daily costs
         let cost_data = self.call_cost_explorer_daily(start_date, end_date)?;
-        
+
         // Aggregate daily costs
         let (daily_costs, currency) = aggregate_daily_costs(&cost_data);
-        
+
         Ok(super::CostTrend {
             account_id: self.account_id.clone(),
             currency,
@@ -682,15 +692,15 @@ impl CloudService for AwsCloudService {
 /// Aggregate cost data by service
 fn aggregate_costs_by_service(costs: &[CostData]) -> Vec<super::ServiceCost> {
     use std::collections::HashMap;
-    
+
     let mut service_map: HashMap<String, f64> = HashMap::new();
     let mut currency = "USD".to_string();
-    
+
     for cost in costs {
         *service_map.entry(cost.service.clone()).or_insert(0.0) += cost.amount;
         currency = cost.currency.clone();
     }
-    
+
     let mut result: Vec<super::ServiceCost> = service_map
         .into_iter()
         .map(|(service, amount)| super::ServiceCost {
@@ -699,36 +709,37 @@ fn aggregate_costs_by_service(costs: &[CostData]) -> Vec<super::ServiceCost> {
             currency: currency.clone(),
         })
         .collect();
-    
+
     // Sort by amount in descending order
-    result.sort_by(|a, b| b.amount.partial_cmp(&a.amount).unwrap_or(std::cmp::Ordering::Equal));
-    
+    result.sort_by(|a, b| {
+        b.amount
+            .partial_cmp(&a.amount)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
     result
 }
 
 /// Aggregate daily costs by date, returns (daily cost list, currency)
 fn aggregate_daily_costs(costs: &[CostData]) -> (Vec<super::DailyCost>, String) {
     use std::collections::HashMap;
-    
+
     let mut date_map: HashMap<String, f64> = HashMap::new();
     let mut currency = "USD".to_string();
-    
+
     for cost in costs {
         *date_map.entry(cost.date.clone()).or_insert(0.0) += cost.amount;
         currency = cost.currency.clone();
     }
-    
+
     let mut result: Vec<super::DailyCost> = date_map
         .into_iter()
-        .map(|(date, amount)| super::DailyCost {
-            date,
-            amount,
-        })
+        .map(|(date, amount)| super::DailyCost { date, amount })
         .collect();
-    
+
     // Sort by date in ascending order
     result.sort_by(|a, b| a.date.cmp(&b.date));
-    
+
     (result, currency)
 }
 
