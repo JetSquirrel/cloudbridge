@@ -1,0 +1,66 @@
+[package]
+name = "cloudbridge"
+version = "0.1.0"
+edition = "2021"
+description = "A cross-platform desktop application for multi-cloud cost management"
+authors = ["Jet Deng"]
+license = "MIT"
+repository = "https://github.com/JetSquirrel/cloudbridge"
+readme = "README.md"
+keywords = ["cloud", "cost-management", "aws", "aliyun", "finops"]
+categories = ["gui", "finance"]
+rust-version = "1.75"
+
+[dependencies]
+# GPUI framework
+gpui = "0.2"
+gpui-component = "0.5.0-preview1"
+gpui-component-assets = "0.5.0-preview1"
+
+# Sync HTTP client (avoids aws-lc-sys compilation issues)
+ureq = { version = "3", features = ["json"] }
+
+# Run blocking operations in GPUI async context
+smol = "2"
+
+# AWS signing
+hmac = "0.12"
+sha2 = "0.10"
+sha1 = "0.10"  # Aliyun signing
+hex = "0.4"
+
+# Database
+duckdb = { version = "1", features = ["bundled"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Encryption (for AK/SK secure storage)
+aes-gcm = "0.10"
+base64 = "0.22"
+rand = "0.8"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# Configuration
+directories = "5"
+
+# UUID generation
+uuid = { version = "1", features = ["v4"] }
+
+# Lazy initialization
+lazy_static = "1"
+
+[profile.release]
+opt-level = 3
+lto = true

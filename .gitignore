@@ -1,0 +1,39 @@
+# Build artifacts
+/target/
+debug/
+release/
+
+# Cargo lock file (optional for applications, keep it)
+# Cargo.lock
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment and local config
+.env
+.env.local
+*.local
+
+# Logs
+*.log
+logs/
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# User data (contains encrypted credentials - never commit!)
+*.duckdb
+*.duckdb.wal
+config.json

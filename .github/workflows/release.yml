@@ -1,0 +1,142 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v0.1.0)'
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: cloudbridge.exe
+            asset_name: cloudbridge-windows-x64.exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: cloudbridge
+            asset_name: cloudbridge-macos-x64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: cloudbridge
+            asset_name: cloudbridge-macos-arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Windows SDK (Windows only)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          # Windows SDK should be pre-installed on windows-latest
+          # Verify fxc.exe is available
+          $fxcPath = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\fxc.exe"
+          if (Test-Path $fxcPath) {
+            Write-Host "Found fxc.exe at $fxcPath"
+          } else {
+            # Try to find fxc.exe in other locations
+            $fxc = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "fxc.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($fxc) {
+              Write-Host "Found fxc.exe at $($fxc.FullName)"
+              $fxcDir = Split-Path $fxc.FullName -Parent
+              echo "$fxcDir" >> $env:GITHUB_PATH
+            } else {
+              Write-Host "::warning::fxc.exe not found, GPUI shader compilation may fail"
+            }
+          }
+
+      - name: Add Windows SDK to PATH (Windows only)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $sdkPath = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64"
+          if (Test-Path $sdkPath) {
+            echo $sdkPath >> $env:GITHUB_PATH
+          }
+
+      - name: Install macOS dependencies (macOS only)
+        if: matrix.os == 'macos-latest'
+        run: |
+          # Install any required macOS dependencies
+          brew install cmake
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare artifact (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}" "${{ matrix.asset_name }}"
+
+      - name: Prepare artifact (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          cp "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}" "${{ matrix.asset_name }}"
+          chmod +x "${{ matrix.asset_name }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ matrix.asset_name }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -la artifacts/
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: CloudBridge ${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          generate_release_notes: true
+          files: |
+            artifacts/cloudbridge-windows-x64.exe/cloudbridge-windows-x64.exe
+            artifacts/cloudbridge-macos-x64/cloudbridge-macos-x64
+            artifacts/cloudbridge-macos-arm64/cloudbridge-macos-arm64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
