@@ -7,12 +7,23 @@ mod ui;
 
 use gpui::*;
 use gpui_component::*;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 fn main() {
-    // Initialize logging
+    // Initialize logging with appropriate level for release/debug
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        if cfg!(debug_assertions) {
+            // Debug build: show debug logs
+            EnvFilter::new("cloudbridge=debug,gpui=warn")
+        } else {
+            // Release build: only show warnings and errors
+            EnvFilter::new("cloudbridge=warn,gpui=error")
+        }
+    });
+
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
+        .with(filter)
         .init();
 
     tracing::info!("Starting CloudBridge...");

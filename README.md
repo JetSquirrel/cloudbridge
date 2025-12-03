@@ -12,11 +12,19 @@
 
 **A cross-platform desktop application for multi-cloud cost management and visualization.**
 
-[Features](#features) • [Installation](#installation) • [Configuration](#configuration) • [Usage](#usage) • [Roadmap](#roadmap)
+[Features](#-features) • [Screenshot](#-screenshot) • [Installation](#-installation) • [Configuration](#️-configuration) • [Usage](#-usage) • [Roadmap](#-roadmap)
 
 </div>
 
 ---
+
+## 📸 Screenshot
+
+<div align="center">
+
+![CloudBridge Screenshot](images/cloudbridge.png)
+
+</div>
 
 ## ✨ Features
 
