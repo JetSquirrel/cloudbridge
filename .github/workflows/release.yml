@@ -49,7 +49,7 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Setup Windows SDK (Windows only)
-        if: matrix.os == 'windows-latest'
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           # Find the latest Windows SDK with x64 fxc.exe
@@ -71,7 +71,7 @@ jobs:
           Write-Host "PATH will include SDK bin directory for shader compilation"
 
       - name: Install macOS dependencies (macOS only)
-        if: matrix.os == 'macos-latest'
+        if: runner.os == 'macOS'
         run: |
           # Install any required macOS dependencies
           brew install cmake
@@ -80,13 +80,13 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Prepare artifact (Windows)
-        if: matrix.os == 'windows-latest'
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}" "${{ matrix.asset_name }}"
 
       - name: Prepare artifact (macOS)
-        if: matrix.os == 'macos-latest'
+        if: runner.os == 'macOS'
         run: |
           cp "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}" "${{ matrix.asset_name }}"
           chmod +x "${{ matrix.asset_name }}"
@@ -99,6 +99,7 @@ jobs:
 
   release:
     needs: build
+    if: always() && needs.build.result != 'cancelled'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -111,9 +112,17 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+        continue-on-error: true
 
       - name: Display structure of downloaded files
-        run: ls -la artifacts/
+        run: |
+          echo "Checking artifacts directory..."
+          if [ -d "artifacts" ]; then
+            ls -la artifacts/
+            find artifacts -type f
+          else
+            echo "No artifacts directory found"
+          fi
 
       - name: Determine version
         id: version
@@ -132,6 +141,7 @@ jobs:
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, '-') }}
           generate_release_notes: true
+          fail_on_unmatched_files: false
           files: |
             artifacts/cloudbridge-windows-x64.exe/cloudbridge-windows-x64.exe
             artifacts/cloudbridge-macos-x64/cloudbridge-macos-x64
