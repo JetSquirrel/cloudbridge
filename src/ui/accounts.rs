@@ -45,12 +45,6 @@ struct NewAccountForm {
     region: String,
 }
 
-impl Default for CloudProvider {
-    fn default() -> Self {
-        CloudProvider::AWS
-    }
-}
-
 impl AccountsView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Account Name"));
@@ -156,7 +150,7 @@ impl AccountsView {
         let account = CloudAccount {
             id: Uuid::new_v4().to_string(),
             name,
-            provider: self.selected_provider.clone(),
+            provider: self.selected_provider,
             access_key_id: ak,
             secret_access_key: sk,
             region: if region.is_empty() {
@@ -201,7 +195,7 @@ impl AccountsView {
         let access_key_id = account.access_key_id.clone();
         let secret_access_key = account.secret_access_key.clone();
         let account_id = account.id.clone();
-        let provider = account.provider.clone();
+        let provider = account.provider;
 
         // Set default region based on cloud provider
         let region = account.region.clone().unwrap_or_else(|| match provider {

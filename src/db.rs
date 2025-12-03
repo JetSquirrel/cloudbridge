@@ -393,7 +393,7 @@ pub fn get_cached_cost_summary_with_account(
             Ok(Some(CostSummary {
                 account_id: account_id.to_string(),
                 account_name: account_name.to_string(),
-                provider: provider.clone(),
+                provider: *provider,
                 current_month_cost: current,
                 last_month_cost: last,
                 currency,

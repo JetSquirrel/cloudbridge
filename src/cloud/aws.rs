@@ -51,6 +51,7 @@ impl AwsCloudService {
     }
 
     /// Create AWS Signature V4 signature
+    #[allow(clippy::too_many_arguments)]
     fn sign_request(
         &self,
         method: &str,
@@ -336,6 +337,7 @@ impl AwsCloudService {
     }
 
     /// Sign with specified region (for services like Cost Explorer that are only available in specific regions)
+    #[allow(clippy::too_many_arguments)]
     fn sign_request_with_region(
         &self,
         method: &str,

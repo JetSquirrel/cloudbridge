@@ -8,8 +8,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Cloud provider type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum CloudProvider {
+    #[default]
     AWS,
     Aliyun,
     Azure,
