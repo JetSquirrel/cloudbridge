@@ -124,8 +124,6 @@ impl AliyunCloudService {
 
         let url = format!("https://business.aliyuncs.com/?{}", query);
 
-        tracing::debug!("Alibaba Cloud API request: {} -> {}", action, url);
-
         // Send request
         let agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
@@ -145,7 +143,7 @@ impl AliyunCloudService {
             .map_err(|e| anyhow!("Failed to read response: {}", e))?;
 
         // Always print response body for debugging
-        tracing::info!("Alibaba Cloud API response (HTTP {}): {}", status, body);
+        tracing::debug!("Alibaba Cloud API response: HTTP {}", status);
 
         if status >= 400 {
             tracing::error!("Alibaba Cloud API error (HTTP {}): {}", status, body);
@@ -175,8 +173,6 @@ impl AliyunCloudService {
     fn query_bill_overview(&self, billing_cycle: &str) -> Result<BillOverviewResponse> {
         let body = self.call_bss_api("QueryBillOverview", &[("BillingCycle", billing_cycle)])?;
 
-        tracing::debug!("Bill overview response: {}", body);
-
         serde_json::from_str(&body)
             .map_err(|e| anyhow!("Failed to parse bill overview: {} - {}", e, body))
     }
@@ -196,7 +192,25 @@ impl AliyunCloudService {
             ],
         )?;
 
-        tracing::debug!("Instance bill response length: {} bytes", body.len());
+        serde_json::from_str(&body)
+            .map_err(|e| anyhow!("Failed to parse instance bill: {} - {}", e, body))
+    }
+
+    /// Query instance bill for a specific date (daily granularity requires BillingDate)
+    fn describe_instance_bill_by_date(
+        &self,
+        billing_cycle: &str,
+        billing_date: &str,
+    ) -> Result<InstanceBillResponse> {
+        let body = self.call_bss_api(
+            "DescribeInstanceBill",
+            &[
+                ("BillingCycle", billing_cycle),
+                ("BillingDate", billing_date),
+                ("Granularity", "DAILY"),
+                ("MaxResults", "300"),
+            ],
+        )?;
 
         serde_json::from_str(&body)
             .map_err(|e| anyhow!("Failed to parse instance bill: {} - {}", e, body))
@@ -225,20 +239,18 @@ impl CloudService for AliyunCloudService {
         let response = self.describe_instance_bill(billing_cycle, "DAILY")?;
 
         let mut costs = Vec::new();
-        if let Some(items_wrapper) = response.data.and_then(|d| d.items) {
-            if let Some(items) = items_wrapper.item {
-                for item in items {
-                    let date = item.billing_date.unwrap_or_default();
-                    // Filter by date range
-                    if date.as_str() >= start_date && date.as_str() <= end_date {
-                        costs.push(CostData {
-                            account_id: self.account_id.clone(),
-                            date,
-                            service: item.product_name.unwrap_or_else(|| "Unknown".to_string()),
-                            amount: item.pretax_amount.unwrap_or(0.0),
-                            currency: "CNY".to_string(),
-                        });
-                    }
+        if let Some(items) = response.data.and_then(|d| d.items) {
+            for item in items {
+                let date = item.billing_date.unwrap_or_default();
+                // Filter by date range
+                if date.as_str() >= start_date && date.as_str() <= end_date {
+                    costs.push(CostData {
+                        account_id: self.account_id.clone(),
+                        date,
+                        service: item.product_name.unwrap_or_else(|| "Unknown".to_string()),
+                        amount: item.pretax_amount.unwrap_or(0.0),
+                        currency: "CNY".to_string(),
+                    });
                 }
             }
         }
@@ -254,12 +266,6 @@ impl CloudService for AliyunCloudService {
         // Last month
         let last_month_date = now - chrono::Duration::days(now.day() as i64 + 1);
         let last_month = format!("{}-{:02}", last_month_date.year(), last_month_date.month());
-
-        tracing::info!(
-            "Querying Alibaba Cloud bills: current_month={}, last_month={}",
-            current_month,
-            last_month
-        );
 
         // Query current month bill overview
         let current_overview = self.query_bill_overview(&current_month)?;
@@ -292,31 +298,42 @@ impl CloudService for AliyunCloudService {
     }
 
     fn get_cost_trend(&self, start_date: &str, end_date: &str) -> Result<super::CostTrend> {
-        tracing::info!(
-            "Getting Alibaba Cloud cost trend: {} to {}",
-            start_date,
-            end_date
-        );
-
-        // Alibaba Cloud queries by month
-        let billing_cycle = &start_date[..7];
-        let response = self.describe_instance_bill(billing_cycle, "DAILY")?;
-
         // Aggregate costs by date
         let mut daily_map: std::collections::HashMap<String, f64> =
             std::collections::HashMap::new();
 
-        if let Some(items_wrapper) = response.data.and_then(|d| d.items) {
-            if let Some(items) = items_wrapper.item {
-                for item in items {
-                    if let Some(date) = item.billing_date {
-                        if date.as_str() >= start_date && date.as_str() < end_date {
+        // Use chrono to iterate through each day in the date range
+        use chrono::NaiveDate;
+
+        let start = NaiveDate::parse_from_str(start_date, "%Y-%m-%d")
+            .map_err(|e| anyhow!("Invalid start date: {}", e))?;
+        let end = NaiveDate::parse_from_str(end_date, "%Y-%m-%d")
+            .map_err(|e| anyhow!("Invalid end date: {}", e))?;
+
+        let mut current = start;
+        while current < end {
+            let date_str = current.format("%Y-%m-%d").to_string();
+            let billing_cycle = current.format("%Y-%m").to_string();
+
+            match self.describe_instance_bill_by_date(&billing_cycle, &date_str) {
+                Ok(response) => {
+                    if let Some(items) = response.data.and_then(|d| d.items) {
+                        let mut day_total = 0.0;
+                        for item in items {
                             let amount = item.pretax_amount.unwrap_or(0.0);
-                            *daily_map.entry(date).or_insert(0.0) += amount;
+                            day_total += amount;
+                        }
+                        if day_total > 0.0 {
+                            daily_map.insert(date_str.clone(), day_total);
                         }
                     }
                 }
+                Err(e) => {
+                    tracing::warn!("Failed to query bill for {}: {}", date_str, e);
+                }
             }
+
+            current += chrono::Duration::days(1);
         }
 
         // Convert to sorted list
@@ -326,11 +343,6 @@ impl CloudService for AliyunCloudService {
             .collect();
 
         daily_costs.sort_by(|a, b| a.date.cmp(&b.date));
-
-        tracing::info!(
-            "Alibaba Cloud cost trend: {} days of data",
-            daily_costs.len()
-        );
 
         Ok(super::CostTrend {
             account_id: self.account_id.clone(),
@@ -449,14 +461,8 @@ struct InstanceBillData {
     total_count: Option<i32>,
     next_token: Option<String>,
     max_results: Option<i32>,
-    items: Option<InstanceBillItems>,
-}
-
-/// Alibaba Cloud's Items is an object containing an Item array
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct InstanceBillItems {
-    item: Option<Vec<InstanceBillItem>>,
+    /// DescribeInstanceBill returns Items as a direct array, not wrapped in an object
+    items: Option<Vec<InstanceBillItem>>,
 }
 
 #[derive(Debug, Deserialize)]

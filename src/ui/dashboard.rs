@@ -2,7 +2,7 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::{button::*, *};
+use gpui_component::{button::*, scroll::ScrollableElement, *};
 use std::collections::HashMap;
 
 use super::chart::{CostChart, CostStats};
@@ -60,54 +60,31 @@ impl DashboardView {
         let (tx, rx) = std::sync::mpsc::channel::<Result<Vec<CostSummary>, String>>();
 
         std::thread::spawn(move || {
-            tracing::info!("Dashboard starting to load account data...");
             match crate::db::get_all_accounts() {
                 Ok(accounts) => {
-                    tracing::info!("Dashboard retrieved {} accounts", accounts.len());
                     let mut summaries = Vec::new();
 
                     for account in accounts {
                         if !account.enabled {
-                            tracing::info!("Skipping disabled account: {}", account.name);
                             continue;
                         }
 
-                        tracing::info!(
-                            "Processing account: {} ({})",
-                            account.name,
-                            account.provider.short_name()
-                        );
-
                         // Try to get from cache first
-                        tracing::info!("Checking cache for account {}...", account.name);
                         match crate::db::get_cached_cost_summary_with_account(
                             &account.id,
                             &account.name,
                             &account.provider,
                         ) {
                             Ok(Some(cached)) => {
-                                tracing::info!("Account {} using cached data", account.name);
                                 summaries.push(cached);
                                 continue;
                             }
-                            Ok(None) => {
-                                tracing::info!(
-                                    "Account {} has no cache, fetching from API",
-                                    account.name
-                                );
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Account {} cache query failed: {}, trying API",
-                                    account.name,
-                                    e
-                                );
-                            }
+                            Ok(None) => {}
+                            Err(_) => {}
                         }
 
                         match account.provider {
                             crate::cloud::CloudProvider::AWS => {
-                                tracing::info!("Calling AWS Cost Explorer API...");
                                 let service = crate::cloud::aws::AwsCloudService::new(
                                     account.id.clone(),
                                     account.name.clone(),
@@ -119,10 +96,6 @@ impl DashboardView {
                                 use crate::cloud::CloudService;
                                 match service.get_cost_summary() {
                                     Ok(summary) => {
-                                        tracing::info!(
-                                            "AWS account {} cost retrieval successful",
-                                            account.name
-                                        );
                                         // Save to cache
                                         if let Err(e) = crate::db::save_cost_summary_cache(&summary)
                                         {
@@ -140,7 +113,6 @@ impl DashboardView {
                                 }
                             }
                             crate::cloud::CloudProvider::Aliyun => {
-                                tracing::info!("Calling Aliyun BSS API...");
                                 let service = crate::cloud::aliyun::AliyunCloudService::new(
                                     account.id.clone(),
                                     account.name.clone(),
@@ -152,10 +124,6 @@ impl DashboardView {
                                 use crate::cloud::CloudService;
                                 match service.get_cost_summary() {
                                     Ok(summary) => {
-                                        tracing::info!(
-                                            "Aliyun account {} cost retrieval successful",
-                                            account.name
-                                        );
                                         // Save to cache
                                         if let Err(e) = crate::db::save_cost_summary_cache(&summary)
                                         {
@@ -172,28 +140,16 @@ impl DashboardView {
                                     }
                                 }
                             }
-                            _ => {
-                                tracing::warn!(
-                                    "Account {} uses unsupported cloud provider",
-                                    account.name
-                                );
-                            }
+                            _ => {}
                         }
                     }
-                    tracing::info!(
-                        "Dashboard preparing to send {} cost summary entries",
-                        summaries.len()
-                    );
-                    if let Err(e) = tx.send(Ok(summaries)) {
-                        tracing::error!("Failed to send data: {:?}", e);
-                    }
+                    let _ = tx.send(Ok(summaries));
                 }
                 Err(e) => {
                     tracing::error!("Failed to get account list: {}", e);
                     let _ = tx.send(Err(format!("Failed to load data: {}", e)));
                 }
             }
-            tracing::info!("Dashboard background thread completed");
         });
 
         // Use gpui spawn to wait for results
@@ -204,29 +160,15 @@ impl DashboardView {
             })
             .await;
 
-            tracing::info!("Dashboard received data result");
-
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
                     match result {
                         Ok(summaries) => {
-                            tracing::info!("Dashboard updating {} cost summaries", summaries.len());
-                            for s in &summaries {
-                                tracing::info!(
-                                    "Account {}: current month {:.2} {}, last month {:.2} {}",
-                                    s.account_name,
-                                    s.current_month_cost,
-                                    s.currency,
-                                    s.last_month_cost,
-                                    s.currency
-                                );
-                            }
                             this.summaries = summaries;
                             this.loading = false;
                             this.error = None;
                         }
                         Err(e) => {
-                            tracing::error!("Dashboard update failed: {}", e);
                             this.error = Some(e);
                             this.loading = false;
                         }
@@ -348,12 +290,18 @@ impl DashboardView {
                     .mt_4()
                     .child("Cost Details by Account"),
             )
-            .child(div().w_full().h_flex().flex_wrap().gap_4().children(
-                self.summaries.iter().enumerate().map(|(index, summary)| {
-                    let is_expanded = self.expanded_account.as_ref() == Some(&summary.account_id);
-                    self.render_account_card(summary, is_expanded, index, cx)
-                }),
-            ))
+            // Account cards - use v_flex layout for better expanded card handling
+            .child(
+                div()
+                    .w_full()
+                    .v_flex()
+                    .gap_4()
+                    .children(self.summaries.iter().enumerate().map(|(index, summary)| {
+                        let is_expanded =
+                            self.expanded_account.as_ref() == Some(&summary.account_id);
+                        self.render_account_card(summary, is_expanded, index, cx)
+                    })),
+            )
     }
 
     fn render_stat_card(
@@ -406,7 +354,6 @@ impl DashboardView {
             gpui::green()
         };
 
-        let card_width = if is_expanded { px(600.0) } else { px(280.0) };
         let account_id = summary.account_id.clone();
         let details = summary.current_month_details.clone();
 
@@ -419,7 +366,9 @@ impl DashboardView {
 
         div()
             .id(ElementId::Name(format!("account-card-{}", index).into()))
-            .w(card_width)
+            // Expanded card takes full width, collapsed card has fixed width
+            .when(is_expanded, |el| el.w_full())
+            .when(!is_expanded, |el| el.w(px(280.0)))
             .p_4()
             .rounded_lg()
             .border_1()
@@ -638,8 +587,12 @@ impl DashboardView {
             use chrono::{Datelike, Duration, Utc};
 
             let now = Utc::now();
-            // Get past 30 days data, ensure enough data points for trend display
-            let start = now - Duration::days(30);
+            // AWS: 30 days, Aliyun: 7 days (Aliyun requires per-day API calls which is slower)
+            let days = match account.provider {
+                crate::cloud::CloudProvider::Aliyun => 7,
+                _ => 30,
+            };
+            let start = now - Duration::days(days);
             let start_date = format!("{}-{:02}-{:02}", start.year(), start.month(), start.day());
             let end_date = format!("{}-{:02}-{:02}", now.year(), now.month(), now.day());
 
@@ -647,7 +600,6 @@ impl DashboardView {
             if let Ok(Some(cached)) =
                 crate::db::get_cached_cost_trend(&account.id, &start_date, &end_date)
             {
-                tracing::info!("Account {} cost trend using cached data", account.name);
                 let _ = tx.send(Ok(cached));
                 return;
             }
@@ -720,16 +672,9 @@ impl DashboardView {
 
                     match result {
                         Ok(trend) => {
-                            tracing::info!(
-                                "Successfully loaded cost trend for account {}: {} days",
-                                account_id_for_update,
-                                trend.daily_costs.len()
-                            );
                             this.cost_trends.insert(account_id_for_update, trend);
                         }
-                        Err(e) => {
-                            tracing::error!("Failed to load trend: {}", e);
-                        }
+                        Err(_) => {}
                     }
                     cx.notify();
                 })
@@ -801,13 +746,29 @@ impl DashboardView {
 impl Render for DashboardView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
+            .id("dashboard-root")
             .size_full()
-            .p_6()
             .v_flex()
-            .gap_6()
             .bg(cx.theme().background)
-            .child(self.render_header(cx))
-            .child(if self.loading {
+            // Fixed header area
+            .child(
+                div()
+                    .w_full()
+                    .flex_shrink_0()
+                    .p_6()
+                    .pb_0()
+                    .child(self.render_header(cx)),
+            )
+            // Scrollable content area
+            .child(
+                div()
+                    .id("dashboard-scroll-container")
+                    .flex_1()
+                    .w_full()
+                    .overflow_y_scrollbar()
+                    .p_6()
+                    .pt_4()
+                    .child(if self.loading {
                 div()
                     .size_full()
                     .flex()
@@ -826,6 +787,7 @@ impl Render for DashboardView {
                     .into_any_element()
             } else {
                 self.render_summary_cards(cx).into_any_element()
-            })
+            }),
+            )
     }
 }

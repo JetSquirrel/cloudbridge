@@ -36,7 +36,7 @@
 - **📊 Cost Visualization**
   - Monthly cost overview with month-over-month comparison
   - Per-service cost breakdown
-  - 30-day cost trend charts
+  - Cost trend charts 
   - Daily cost statistics (total, average, max, min)
 
 - **🔒 Security First**
@@ -230,6 +230,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **[⬆ Back to Top](#cloudbridge)**
 
-Made with ❤️ for the FinOps community
+Made with Github Copilot
 
 </div>
