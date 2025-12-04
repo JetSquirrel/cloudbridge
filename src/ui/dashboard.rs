@@ -769,25 +769,25 @@ impl Render for DashboardView {
                     .p_6()
                     .pt_4()
                     .child(if self.loading {
-                div()
-                    .size_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child("Loading...")
-                    .into_any_element()
-            } else if let Some(ref error) = self.error {
-                div()
-                    .size_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_color(gpui::red())
-                    .child(error.clone())
-                    .into_any_element()
-            } else {
-                self.render_summary_cards(cx).into_any_element()
-            }),
+                        div()
+                            .size_full()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child("Loading...")
+                            .into_any_element()
+                    } else if let Some(ref error) = self.error {
+                        div()
+                            .size_full()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_color(gpui::red())
+                            .child(error.clone())
+                            .into_any_element()
+                    } else {
+                        self.render_summary_cards(cx).into_any_element()
+                    }),
             )
     }
 }
