@@ -199,6 +199,7 @@ pub struct CostLineChart {
     height: f32,
 }
 
+#[allow(dead_code)]
 impl CostLineChart {
     pub fn new(daily_costs: Vec<DailyCost>, width: f32, height: f32) -> Self {
         Self {

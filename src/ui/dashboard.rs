@@ -681,11 +681,8 @@ impl DashboardView {
                     this.loading_trends
                         .insert(account_id_for_update.clone(), false);
 
-                    match result {
-                        Ok(trend) => {
-                            this.cost_trends.insert(account_id_for_update, trend);
-                        }
-                        Err(_) => {}
+                    if let Ok(trend) = result {
+                        this.cost_trends.insert(account_id_for_update, trend);
                     }
                     cx.notify();
                 })

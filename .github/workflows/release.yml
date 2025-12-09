@@ -23,14 +23,14 @@ jobs:
             target: x86_64-pc-windows-msvc
             artifact_name: cloudbridge.exe
             asset_name: cloudbridge-windows-x64.exe
-          - os: macos-13
-            target: x86_64-apple-darwin
-            artifact_name: cloudbridge
-            asset_name: cloudbridge-macos-x64
           - os: macos-14
             target: aarch64-apple-darwin
             artifact_name: cloudbridge
             asset_name: cloudbridge-macos-arm64
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            artifact_name: cloudbridge
+            asset_name: cloudbridge-linux-x64
 
     runs-on: ${{ matrix.os }}
 
@@ -76,6 +76,12 @@ jobs:
           # Install any required macOS dependencies
           brew install cmake
 
+      - name: Install Linux dependencies (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev cmake
+
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
 
@@ -85,8 +91,8 @@ jobs:
         run: |
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}" "${{ matrix.asset_name }}"
 
-      - name: Prepare artifact (macOS)
-        if: runner.os == 'macOS'
+      - name: Prepare artifact (macOS/Linux)
+        if: runner.os == 'macOS' || runner.os == 'Linux'
         run: |
           cp "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}" "${{ matrix.asset_name }}"
           chmod +x "${{ matrix.asset_name }}"
@@ -144,7 +150,7 @@ jobs:
           fail_on_unmatched_files: false
           files: |
             artifacts/cloudbridge-windows-x64.exe/cloudbridge-windows-x64.exe
-            artifacts/cloudbridge-macos-x64/cloudbridge-macos-x64
             artifacts/cloudbridge-macos-arm64/cloudbridge-macos-arm64
+            artifacts/cloudbridge-linux-x64/cloudbridge-linux-x64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
