@@ -27,10 +27,6 @@ jobs:
             target: aarch64-apple-darwin
             artifact_name: cloudbridge
             asset_name: cloudbridge-macos-arm64
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            artifact_name: cloudbridge
-            asset_name: cloudbridge-linux-x64
 
     runs-on: ${{ matrix.os }}
 
@@ -76,12 +72,6 @@ jobs:
           # Install any required macOS dependencies
           brew install cmake
 
-      - name: Install Linux dependencies (Linux only)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev cmake
-
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
 
@@ -91,8 +81,8 @@ jobs:
         run: |
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}" "${{ matrix.asset_name }}"
 
-      - name: Prepare artifact (macOS/Linux)
-        if: runner.os == 'macOS' || runner.os == 'Linux'
+      - name: Prepare artifact (macOS)
+        if: runner.os == 'macOS'
         run: |
           cp "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}" "${{ matrix.asset_name }}"
           chmod +x "${{ matrix.asset_name }}"
