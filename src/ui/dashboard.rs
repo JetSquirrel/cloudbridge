@@ -5,8 +5,8 @@ use gpui::*;
 use gpui_component::{button::*, scroll::ScrollableElement, *};
 use std::collections::HashMap;
 
-use super::chart::{CostChart, CostStats};
-use crate::cloud::{CostSummary, CostTrend, ServiceCost};
+use super::chart::{CostBarChart, CostStats, ServicePieChart};
+use crate::cloud::{CostSummary, CostTrend};
 
 /// Dashboard View
 pub struct DashboardView {
@@ -459,16 +459,26 @@ impl DashboardView {
             // Show service details when expanded
             .when(is_expanded, |el| {
                 el.child(div().w_full().h_px().bg(cx.theme().border).my_2())
+                    // Service breakdown section: pie chart with legend
                     .child(
                         div()
                             .text_sm()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(cx.theme().foreground)
                             .mb_2()
-                            .child("Service Cost Details (This Month)"),
+                            .child("Service Cost Breakdown (This Month)"),
                     )
-                    .child(Self::render_service_details_static(&details, cx))
-                    // Add cost trend chart
+                    .child(
+                        div()
+                            .w_full()
+                            // Pie chart with integrated legend (shows values + percentages)
+                            .child(
+                                ServicePieChart::donut(details.clone(), 80.0, 50.0)
+                                    .with_legend()
+                                    .render(cx),
+                            ),
+                    )
+                    // Cost trend chart section
                     .child(div().w_full().h_px().bg(cx.theme().border).my_3())
                     .child(
                         div()
@@ -476,7 +486,7 @@ impl DashboardView {
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(cx.theme().foreground)
                             .mb_2()
-                            .child("Cost Trend (This Month)"),
+                            .child("Cost Trend"),
                     )
                     .children(trend_chart)
             })
@@ -504,7 +514,8 @@ impl DashboardView {
 
         // Check for cached data
         if let Some(trend) = self.cost_trends.get(account_id) {
-            let chart = CostChart::new(trend.daily_costs.clone(), 550.0, 150.0);
+            // Use BarChart with labels for daily cost visualization
+            let bar_chart = CostBarChart::new(trend.daily_costs.clone(), 550.0, 150.0);
 
             // Calculate statistics from daily_costs
             let total: f64 = trend.daily_costs.iter().map(|d| d.amount).sum();
@@ -528,7 +539,7 @@ impl DashboardView {
                 .w_full()
                 .v_flex()
                 .gap_2()
-                .child(chart.render(cx))
+                .child(bar_chart.render(cx))
                 .child(stats.render(cx))
                 .into_any_element();
         }
@@ -683,63 +694,6 @@ impl DashboardView {
             .ok();
         })
         .detach();
-    }
-
-    /// Render service cost details list (static version, for closures)
-    fn render_service_details_static(details: &[ServiceCost], cx: &Context<Self>) -> AnyElement {
-        if details.is_empty() {
-            return div()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child("No cost data available")
-                .into_any_element();
-        }
-
-        div()
-            .w_full()
-            .v_flex()
-            .gap_1()
-            .children(
-                details
-                    .iter()
-                    .take(10)
-                    .map(|service| Self::render_service_row_static(service, cx)),
-            )
-            .when(details.len() > 10, |el| {
-                el.child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .mt_2()
-                        .child(format!("... and {} more services", details.len() - 10)),
-                )
-            })
-            .into_any_element()
-    }
-
-    /// Render single service cost row (static version)
-    fn render_service_row_static(service: &ServiceCost, cx: &Context<Self>) -> impl IntoElement {
-        div()
-            .w_full()
-            .h_flex()
-            .justify_between()
-            .items_center()
-            .py_1()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().foreground)
-                    .overflow_hidden()
-                    .max_w(px(400.0))
-                    .child(service.service.clone()),
-            )
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(cx.theme().foreground)
-                    .child(format!("${:.4}", service.amount)),
-            )
     }
 }
 

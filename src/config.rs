@@ -31,7 +31,9 @@ impl Default for ThemeConfig {
 
 /// Get application data directory
 pub fn get_app_data_dir() -> Result<PathBuf> {
-    let proj_dirs = ProjectDirs::from("com", "cloudbridge", "CloudBridge")
+    // Use simpler path: AppData/Roaming/CloudBridge/ on Windows
+    // "" for qualifier and organization to avoid nested folders
+    let proj_dirs = ProjectDirs::from("", "", "CloudBridge")
         .ok_or_else(|| anyhow::anyhow!("Unable to determine app data directory"))?;
 
     let data_dir = proj_dirs.data_dir().to_path_buf();
