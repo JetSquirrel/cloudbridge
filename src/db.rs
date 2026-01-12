@@ -10,6 +10,7 @@ use crate::cloud::{
 };
 use crate::config::get_database_path;
 use crate::crypto::get_crypto_manager;
+use crate::secret_store;
 
 lazy_static::lazy_static! {
     static ref DB_CONNECTION: Arc<Mutex<Option<Connection>>> = Arc::new(Mutex::new(None));
@@ -116,10 +117,15 @@ fn get_connection() -> Result<std::sync::MutexGuard<'static, Option<Connection>>
 
 /// Save cloud account
 pub fn save_account(account: &CloudAccount) -> Result<()> {
-    let crypto = get_crypto_manager()?;
-    let encrypted_ak = crypto.encrypt(&account.access_key_id)?;
-    let encrypted_sk = crypto.encrypt(&account.secret_access_key)?;
+    // Store secrets in OS keyring for better protection
+    secret_store::store_account_secrets(
+        &account.id,
+        &account.access_key_id,
+        &account.secret_access_key,
+    )?;
 
+    // Still keep an immutable record in DB, but do not store plaintext or encrypted secrets in DB anymore.
+    // Use empty strings as placeholders for access_key_id/secret_access_key to avoid leaking secrets.
     let db = get_connection()?;
     let conn = db.as_ref().unwrap();
 
@@ -133,8 +139,8 @@ pub fn save_account(account: &CloudAccount) -> Result<()> {
             account.id,
             account.name,
             format!("{:?}", account.provider),
-            encrypted_ak,
-            encrypted_sk,
+            "",
+            "",
             account.region,
             account.created_at.to_rfc3339(),
             account.last_synced_at.map(|dt| dt.to_rfc3339()),
@@ -163,6 +169,7 @@ pub fn get_all_accounts() -> Result<Vec<CloudAccount>> {
                 "Aliyun" => CloudProvider::Aliyun,
                 "Azure" => CloudProvider::Azure,
                 "GCP" => CloudProvider::GCP,
+                "DeepSeek" => CloudProvider::DeepSeek,
                 _ => CloudProvider::AWS,
             };
 
@@ -199,8 +206,30 @@ pub fn get_all_accounts() -> Result<Vec<CloudAccount>> {
         enabled,
     ) in accounts
     {
-        let access_key_id = crypto.decrypt(&encrypted_ak).unwrap_or_default();
-        let secret_access_key = crypto.decrypt(&encrypted_sk).unwrap_or_default();
+        // Try to load secrets from OS keyring first (migration path). If not present, fall back to
+        // decrypting existing values from DB and migrate them into keyring.
+        let (access_key_id, secret_access_key) = match secret_store::get_account_secrets(&id)? {
+            Some((ak, sk)) => (ak, sk),
+            None => {
+                // Attempt to decrypt stored values (may be legacy). If successful, migrate to keyring.
+                let ak_plain = crypto.decrypt(&encrypted_ak).unwrap_or_default();
+                let sk_plain = crypto.decrypt(&encrypted_sk).unwrap_or_default();
+
+                if !ak_plain.is_empty() || !sk_plain.is_empty() {
+                    if let Err(e) = secret_store::store_account_secrets(&id, &ak_plain, &sk_plain) {
+                        tracing::warn!("Failed to migrate secrets into keyring for {}: {}", id, e);
+                    } else {
+                        // Clear secrets in DB to avoid retention of encrypted blobs
+                        let _ = conn.execute(
+                            "UPDATE cloud_accounts SET access_key_id = ?, secret_access_key = ? WHERE id = ?",
+                            params!["", "", id],
+                        );
+                    }
+                }
+
+                (ak_plain, sk_plain)
+            }
+        };
         let created_at = DateTime::parse_from_rfc3339(&created_at_str)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now());
@@ -239,6 +268,11 @@ pub fn delete_account(account_id: &str) -> Result<()> {
         "DELETE FROM cloud_accounts WHERE id = ?",
         params![account_id],
     )?;
+
+    // Remove secrets from OS keyring as well
+    if let Err(e) = secret_store::delete_account_secrets(account_id) {
+        tracing::warn!("Failed to delete account secrets from keyring: {}", e);
+    }
 
     Ok(())
 }

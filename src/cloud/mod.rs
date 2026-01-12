@@ -2,6 +2,7 @@
 
 pub mod aliyun;
 pub mod aws;
+pub mod deepseek;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -16,6 +17,7 @@ pub enum CloudProvider {
     Aliyun,
     Azure,
     GCP,
+    DeepSeek,
 }
 
 impl CloudProvider {
@@ -27,6 +29,7 @@ impl CloudProvider {
             CloudProvider::Aliyun => "Alibaba Cloud",
             CloudProvider::Azure => "Microsoft Azure",
             CloudProvider::GCP => "Google Cloud Platform",
+            CloudProvider::DeepSeek => "DeepSeek",
         }
     }
 
@@ -37,6 +40,7 @@ impl CloudProvider {
             CloudProvider::Aliyun => "Aliyun",
             CloudProvider::Azure => "Azure",
             CloudProvider::GCP => "GCP",
+            CloudProvider::DeepSeek => "DeepSeek",
         }
     }
 }

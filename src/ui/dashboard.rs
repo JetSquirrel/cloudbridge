@@ -140,6 +140,35 @@ impl DashboardView {
                                     }
                                 }
                             }
+                            crate::cloud::CloudProvider::DeepSeek => {
+                                let service = crate::cloud::deepseek::DeepSeekService::new(
+                                    account.id.clone(),
+                                    account.name.clone(),
+                                    account.access_key_id.clone(),
+                                    account.secret_access_key.clone(),
+                                    account.region.clone(),
+                                );
+
+                                use crate::cloud::CloudService;
+                                match service.get_cost_summary() {
+                                    Ok(summary) => {
+                                        // Save to cache
+                                        if let Err(e) = crate::db::save_cost_summary_cache(&summary)
+                                        {
+                                            tracing::warn!("Failed to save cost cache: {}", e);
+                                        }
+                                        summaries.push(summary);
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(
+                                            "Failed to get DeepSeek {} balance: {}",
+                                            account.name,
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+                            
                             _ => {}
                         }
                     }
@@ -281,7 +310,7 @@ impl DashboardView {
                         cx,
                     )),
             )
-            // Per-account costs
+            // Per-account costs (split into cost accounts and balance accounts)
             .child(
                 div()
                     .text_xl()
@@ -290,18 +319,56 @@ impl DashboardView {
                     .mt_4()
                     .child("Cost Details by Account"),
             )
-            // Account cards - use v_flex layout for better expanded card handling
-            .child(
+            // Account cards for cost-type providers
+            .child({
+                let cost_summaries: Vec<&CostSummary> = self
+                    .summaries
+                    .iter()
+                    .filter(|s| !matches!(s.provider, crate::cloud::CloudProvider::DeepSeek))
+                    .collect();
+
                 div()
                     .w_full()
                     .v_flex()
                     .gap_4()
-                    .children(self.summaries.iter().enumerate().map(|(index, summary)| {
-                        let is_expanded =
-                            self.expanded_account.as_ref() == Some(&summary.account_id);
+                    .children(cost_summaries.into_iter().enumerate().map(|(index, summary)| {
+                        let is_expanded = self.expanded_account.as_ref() == Some(&summary.account_id);
                         self.render_account_card(summary, is_expanded, index, cx)
-                    })),
-            )
+                    }))
+            })
+            // Balance section for providers that report balances (DeepSeek)
+            .child({
+                let balance_summaries: Vec<&CostSummary> = self
+                    .summaries
+                    .iter()
+                    .filter(|s| matches!(s.provider, crate::cloud::CloudProvider::DeepSeek))
+                    .collect();
+
+                if balance_summaries.is_empty() {
+                    div()
+                } else {
+                    div()
+                        .w_full()
+                        .mt_6()
+                        .child(
+                            div()
+                                .text_xl()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(cx.theme().foreground)
+                                .child("Balance Details by Account"),
+                        )
+                        .child(
+                            div()
+                                .w_full()
+                                .v_flex()
+                                .gap_4()
+                                .children(balance_summaries.into_iter().enumerate().map(|(index, summary)| {
+                                    let is_expanded = self.expanded_account.as_ref() == Some(&summary.account_id);
+                                    self.render_account_card(summary, is_expanded, index, cx)
+                                })),
+                        )
+                }
+            })
     }
 
     fn render_stat_card(
@@ -421,22 +488,35 @@ impl DashboardView {
                 div()
                     .h_flex()
                     .justify_between()
-                    .child(
+                    .child({
+                        // Format per-account amount using account currency.
+                        let label = if matches!(summary.provider, crate::cloud::CloudProvider::DeepSeek) {
+                            "Balance"
+                        } else {
+                            "This Month"
+                        };
+
+                        let symbol = match summary.currency.as_str() {
+                            "CNY" => "¥",
+                            "USD" => "$",
+                            other => other,
+                        };
+
                         div()
                             .v_flex()
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child("This Month"),
+                                    .child(label),
                             )
                             .child(
                                 div()
                                     .text_lg()
                                     .font_weight(FontWeight::BOLD)
-                                    .child(format!("${:.2}", summary.current_month_cost)),
-                            ),
-                    )
+                                    .child(format!("{}{:.2}", symbol, summary.current_month_cost)),
+                            )
+                    })
                     .child(
                         div()
                             .v_flex()
@@ -599,10 +679,19 @@ impl DashboardView {
 
             let now = Utc::now();
             // AWS: 30 days, Aliyun: 7 days (Aliyun requires per-day API calls which is slower)
+            // DeepSeek: no trend data available
             let days = match account.provider {
                 crate::cloud::CloudProvider::Aliyun => 7,
+                crate::cloud::CloudProvider::DeepSeek => 0, // No trend data
                 _ => 30,
             };
+
+            // DeepSeek doesn't support trend data
+            if matches!(account.provider, crate::cloud::CloudProvider::DeepSeek) {
+                let _ = tx.send(Err("DeepSeek does not provide usage history".to_string()));
+                return;
+            }
+
             let start = now - Duration::days(days);
             let start_date = format!("{}-{:02}-{:02}", start.year(), start.month(), start.day());
             let end_date = format!("{}-{:02}-{:02}", now.year(), now.month(), now.day());

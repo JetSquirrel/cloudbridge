@@ -32,3 +32,28 @@ jobs:
         run: cargo clippy -- -D warnings
       - name: Check compilation
         run: cargo check
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      
+      # Audit dependencies for known vulnerabilities
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+      - name: Security audit
+        run: cargo audit
+      
+      # Check for outdated dependencies
+      - name: Install cargo-outdated
+        run: cargo install cargo-outdated
+      - name: Check outdated dependencies
+        run: cargo outdated --exit-code 1 || true  # Don't fail CI, just report
+      
+      # Detect unsafe code usage
+      - name: Install cargo-geiger
+        run: cargo install cargo-geiger
+      - name: Unsafe code report
+        run: cargo geiger --all-features || true  # Report only, don't fail

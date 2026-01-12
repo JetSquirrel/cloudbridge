@@ -101,20 +101,48 @@ impl AccountsView {
         cx: &mut Context<Self>,
     ) {
         self.selected_provider = provider;
-        // Update region placeholder based on cloud provider
-        self.region_input.update(cx, |state, cx| match provider {
+        // Update input placeholders based on cloud provider
+        match provider {
             CloudProvider::AWS => {
-                *state = InputState::new(window, cx)
-                    .placeholder("Region (optional, default us-east-1)")
-                    .default_value("us-east-1");
+                self.ak_input.update(cx, |state, cx| {
+                    *state = InputState::new(window, cx).placeholder("Access Key ID");
+                });
+                self.sk_input.update(cx, |state, cx| {
+                    *state = InputState::new(window, cx).placeholder("Secret Access Key");
+                });
+                self.region_input.update(cx, |state, cx| {
+                    *state = InputState::new(window, cx)
+                        .placeholder("Region (optional, default us-east-1)")
+                        .default_value("us-east-1");
+                });
             }
             CloudProvider::Aliyun => {
-                *state = InputState::new(window, cx)
-                    .placeholder("Region (optional, default cn-hangzhou)")
-                    .default_value("cn-hangzhou");
+                self.ak_input.update(cx, |state, cx| {
+                    *state = InputState::new(window, cx).placeholder("AccessKey ID");
+                });
+                self.sk_input.update(cx, |state, cx| {
+                    *state = InputState::new(window, cx).placeholder("AccessKey Secret");
+                });
+                self.region_input.update(cx, |state, cx| {
+                    *state = InputState::new(window, cx)
+                        .placeholder("Region (optional, default cn-hangzhou)")
+                        .default_value("cn-hangzhou");
+                });
             }
+            CloudProvider::DeepSeek => {
+                self.ak_input.update(cx, |state, cx| {
+                    *state = InputState::new(window, cx).placeholder("API Key");
+                });
+                self.sk_input.update(cx, |state, cx| {
+                    *state = InputState::new(window, cx).placeholder("(Not required, leave empty)");
+                });
+                self.region_input.update(cx, |state, cx| {
+                    *state = InputState::new(window, cx).placeholder("(Not required)");
+                });
+            }
+            
             _ => {}
-        });
+        }
         cx.notify();
     }
 
@@ -137,11 +165,12 @@ impl AccountsView {
             return;
         }
         if ak.is_empty() {
-            self.error = Some("Please enter Access Key ID".to_string());
+            self.error = Some("Please enter API Key".to_string());
             cx.notify();
             return;
         }
-        if sk.is_empty() {
+        // DeepSeek doesn't require secret key
+        if sk.is_empty() && !matches!(self.selected_provider, CloudProvider::DeepSeek) {
             self.error = Some("Please enter Secret Access Key".to_string());
             cx.notify();
             return;
@@ -201,6 +230,7 @@ impl AccountsView {
         let region = account.region.clone().unwrap_or_else(|| match provider {
             CloudProvider::AWS => "us-east-1".to_string(),
             CloudProvider::Aliyun => "cn-hangzhou".to_string(),
+            CloudProvider::DeepSeek => String::new(),
             _ => "us-east-1".to_string(),
         });
 
@@ -244,6 +274,20 @@ impl AccountsView {
                         Err(e) => Err(e.to_string()),
                     }
                 }
+                CloudProvider::DeepSeek => {
+                    let service = crate::cloud::deepseek::DeepSeekService::new(
+                        account_id,
+                        account_name,
+                        access_key_id,
+                        secret_access_key,
+                        Some(region),
+                    );
+                    match service.validate_credentials() {
+                        Ok(valid) => Ok(valid),
+                        Err(e) => Err(e.to_string()),
+                    }
+                }
+                
                 _ => Err("Unsupported cloud provider".to_string()),
             };
 
@@ -293,6 +337,7 @@ impl AccountsView {
     fn render_provider_selector(&self, cx: &Context<Self>) -> impl IntoElement {
         let is_aws_selected = matches!(self.selected_provider, CloudProvider::AWS);
         let is_aliyun_selected = matches!(self.selected_provider, CloudProvider::Aliyun);
+        let is_deepseek_selected = matches!(self.selected_provider, CloudProvider::DeepSeek);
 
         div()
             .h_flex()
@@ -340,6 +385,29 @@ impl AccountsView {
                         }),
                     )
                     .child("Aliyun"),
+            )
+            
+            .child(
+                div()
+                    .px_4()
+                    .py_2()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .when(is_deepseek_selected, |el| {
+                        el.bg(cx.theme().accent)
+                            .text_color(cx.theme().accent_foreground)
+                    })
+                    .when(!is_deepseek_selected, |el| {
+                        el.bg(cx.theme().muted)
+                            .text_color(cx.theme().muted_foreground)
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, window, cx| {
+                            this.set_provider(CloudProvider::DeepSeek, window, cx);
+                        }),
+                    )
+                    .child("DeepSeek"),
             )
     }
 

@@ -1,9 +1,9 @@
 [package]
 name = "cloudbridge"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "A cross-platform desktop application for multi-cloud cost management"
-authors = ["Jet Deng"]
+authors = ["JetSquirrel"]
 license = "MIT"
 repository = "https://github.com/JetSquirrel/cloudbridge"
 readme = "README.md"
@@ -40,6 +40,10 @@ serde_json = "1"
 aes-gcm = "0.10"
 base64 = "0.22"
 rand = "0.8"
+
+# OS keyring for secure secret storage (Windows Credential Manager / macOS Keychain / Linux Secret Service)
+# Using v2.3 for better stability on Windows
+keyring = "2.3"
 
 # Time handling
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }

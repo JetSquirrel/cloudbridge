@@ -2,6 +2,7 @@ mod app;
 mod cloud;
 mod config;
 mod crypto;
+mod secret_store;
 mod db;
 mod ui;
 
