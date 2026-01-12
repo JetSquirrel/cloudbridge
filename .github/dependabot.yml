@@ -1,0 +1,51 @@
+version: 2
+updates:
+  # Enable Cargo (Rust) dependency updates
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    # Group all GPUI-related packages together
+    groups:
+      gpui:
+        patterns:
+          - "gpui*"
+        update-types:
+          - "minor"
+          - "patch"
+    # Allow up to 5 open pull requests for cargo dependencies
+    open-pull-requests-limit: 5
+    # Add labels to pull requests
+    labels:
+      - "dependencies"
+      - "rust"
+    # Commit message prefix
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    # Ignore major version updates for stable dependencies
+    ignore:
+      # Keep gpui at 0.2.x for now (breaking changes expected in 1.0)
+      - dependency-name: "gpui"
+        update-types: ["version-update:semver-major"]
+    # Rebase strategy for pull requests
+    rebase-strategy: "auto"
+
+  # Enable GitHub Actions dependency updates
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
