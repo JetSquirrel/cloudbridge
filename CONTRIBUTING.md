@@ -74,6 +74,21 @@ cargo clippy
 - Write documentation for public APIs
 - Use meaningful variable and function names
 
+### Dependency Management
+
+This project uses [Dependabot](https://docs.github.com/en/code-security/dependabot) to automatically keep dependencies up to date:
+
+- Dependabot checks for updates to Cargo dependencies **weekly** (every Monday at 09:00 UTC)
+- GPUI-related packages (`gpui`, `gpui-component`, `gpui-component-assets`) are grouped together in PRs
+- Dependabot also monitors GitHub Actions for updates
+- All dependency update PRs are labeled with `dependencies` and `rust` or `github-actions`
+- Major version updates for `gpui` are currently ignored to avoid breaking changes
+
+When reviewing Dependabot PRs:
+- Check the changelog/release notes for breaking changes
+- Verify that the application builds successfully
+- Test critical functionality before merging
+
 ### Commit Messages
 
 - Use the present tense ("Add feature" not "Added feature")
