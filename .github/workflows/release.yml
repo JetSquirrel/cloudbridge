@@ -141,6 +141,5 @@ jobs:
           files: |
             artifacts/cloudbridge-windows-x64.exe/cloudbridge-windows-x64.exe
             artifacts/cloudbridge-macos-arm64/cloudbridge-macos-arm64
-            artifacts/cloudbridge-linux-x64/cloudbridge-linux-x64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
