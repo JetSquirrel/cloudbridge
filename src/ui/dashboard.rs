@@ -168,7 +168,7 @@ impl DashboardView {
                                     }
                                 }
                             }
-                            
+
                             _ => {}
                         }
                     }
@@ -327,14 +327,16 @@ impl DashboardView {
                     .filter(|s| !matches!(s.provider, crate::cloud::CloudProvider::DeepSeek))
                     .collect();
 
-                div()
-                    .w_full()
-                    .v_flex()
-                    .gap_4()
-                    .children(cost_summaries.into_iter().enumerate().map(|(index, summary)| {
-                        let is_expanded = self.expanded_account.as_ref() == Some(&summary.account_id);
-                        self.render_account_card(summary, is_expanded, index, cx)
-                    }))
+                div().w_full().v_flex().gap_4().children(
+                    cost_summaries
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, summary)| {
+                            let is_expanded =
+                                self.expanded_account.as_ref() == Some(&summary.account_id);
+                            self.render_account_card(summary, is_expanded, index, cx)
+                        }),
+                )
             })
             // Balance section for providers that report balances (DeepSeek)
             .child({
@@ -358,14 +360,15 @@ impl DashboardView {
                                 .child("Balance Details by Account"),
                         )
                         .child(
-                            div()
-                                .w_full()
-                                .v_flex()
-                                .gap_4()
-                                .children(balance_summaries.into_iter().enumerate().map(|(index, summary)| {
-                                    let is_expanded = self.expanded_account.as_ref() == Some(&summary.account_id);
-                                    self.render_account_card(summary, is_expanded, index, cx)
-                                })),
+                            div().w_full().v_flex().gap_4().children(
+                                balance_summaries.into_iter().enumerate().map(
+                                    |(index, summary)| {
+                                        let is_expanded = self.expanded_account.as_ref()
+                                            == Some(&summary.account_id);
+                                        self.render_account_card(summary, is_expanded, index, cx)
+                                    },
+                                ),
+                            ),
                         )
                 }
             })
@@ -490,11 +493,12 @@ impl DashboardView {
                     .justify_between()
                     .child({
                         // Format per-account amount using account currency.
-                        let label = if matches!(summary.provider, crate::cloud::CloudProvider::DeepSeek) {
-                            "Balance"
-                        } else {
-                            "This Month"
-                        };
+                        let label =
+                            if matches!(summary.provider, crate::cloud::CloudProvider::DeepSeek) {
+                                "Balance"
+                            } else {
+                                "This Month"
+                            };
 
                         let symbol = match summary.currency.as_str() {
                             "CNY" => "¥",

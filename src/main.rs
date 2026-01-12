@@ -2,8 +2,8 @@ mod app;
 mod cloud;
 mod config;
 mod crypto;
-mod secret_store;
 mod db;
+mod secret_store;
 mod ui;
 
 use gpui::*;

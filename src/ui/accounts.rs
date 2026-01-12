@@ -140,7 +140,7 @@ impl AccountsView {
                     *state = InputState::new(window, cx).placeholder("(Not required)");
                 });
             }
-            
+
             _ => {}
         }
         cx.notify();
@@ -287,7 +287,7 @@ impl AccountsView {
                         Err(e) => Err(e.to_string()),
                     }
                 }
-                
+
                 _ => Err("Unsupported cloud provider".to_string()),
             };
 
@@ -386,7 +386,6 @@ impl AccountsView {
                     )
                     .child("Aliyun"),
             )
-            
             .child(
                 div()
                     .px_4()

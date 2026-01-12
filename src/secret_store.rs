@@ -3,7 +3,11 @@ use keyring::Entry;
 
 const SERVICE_NAME: &str = "CloudBridge";
 
-pub fn store_account_secrets(account_id: &str, access_key_id: &str, secret_access_key: &str) -> Result<()> {
+pub fn store_account_secrets(
+    account_id: &str,
+    access_key_id: &str,
+    secret_access_key: &str,
+) -> Result<()> {
     let ak = Entry::new(&format!("{}:ak", SERVICE_NAME), account_id)?;
     ak.set_password(access_key_id)?;
 
