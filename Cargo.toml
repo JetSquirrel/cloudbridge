@@ -14,8 +14,8 @@ rust-version = "1.75"
 [dependencies]
 # GPUI framework
 gpui = "0.2"
-gpui-component = "0.5.0-preview1"
-gpui-component-assets = "0.5.0-preview1"
+gpui-component = "0.5.0"
+gpui-component-assets = "0.5.0"
 
 # Sync HTTP client (avoids aws-lc-sys compilation issues)
 ureq = { version = "3", features = ["json"] }
