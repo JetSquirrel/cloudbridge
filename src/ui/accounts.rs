@@ -104,40 +104,38 @@ impl AccountsView {
         // Update input placeholders based on cloud provider
         match provider {
             CloudProvider::AWS => {
-                self.ak_input.update(cx, |state, cx| {
-                    *state = InputState::new(window, cx).placeholder("Access Key ID");
+                self.ak_input.update(cx, |state, _cx| {
+                    state.set_placeholder("Access Key ID");
                 });
-                self.sk_input.update(cx, |state, cx| {
-                    *state = InputState::new(window, cx).placeholder("Secret Access Key");
+                self.sk_input.update(cx, |state, _cx| {
+                    state.set_placeholder("Secret Access Key");
                 });
-                self.region_input.update(cx, |state, cx| {
-                    *state = InputState::new(window, cx)
-                        .placeholder("Region (optional, default us-east-1)")
-                        .default_value("us-east-1");
+                self.region_input.update(cx, |state, _cx| {
+                    state.set_placeholder("Region (optional, default us-east-1)");
+                    state.set_default_value("us-east-1");
                 });
             }
             CloudProvider::Aliyun => {
-                self.ak_input.update(cx, |state, cx| {
-                    *state = InputState::new(window, cx).placeholder("AccessKey ID");
+                self.ak_input.update(cx, |state, _cx| {
+                    state.set_placeholder("AccessKey ID");
                 });
-                self.sk_input.update(cx, |state, cx| {
-                    *state = InputState::new(window, cx).placeholder("AccessKey Secret");
+                self.sk_input.update(cx, |state, _cx| {
+                    state.set_placeholder("AccessKey Secret");
                 });
-                self.region_input.update(cx, |state, cx| {
-                    *state = InputState::new(window, cx)
-                        .placeholder("Region (optional, default cn-hangzhou)")
-                        .default_value("cn-hangzhou");
+                self.region_input.update(cx, |state, _cx| {
+                    state.set_placeholder("Region (optional, default cn-hangzhou)");
+                    state.set_default_value("cn-hangzhou");
                 });
             }
             CloudProvider::DeepSeek => {
-                self.ak_input.update(cx, |state, cx| {
-                    *state = InputState::new(window, cx).placeholder("API Key");
+                self.ak_input.update(cx, |state, _cx| {
+                    state.set_placeholder("API Key");
                 });
-                self.sk_input.update(cx, |state, cx| {
-                    *state = InputState::new(window, cx).placeholder("(Not required, leave empty)");
+                self.sk_input.update(cx, |state, _cx| {
+                    state.set_placeholder("(Not required, leave empty)");
                 });
-                self.region_input.update(cx, |state, cx| {
-                    *state = InputState::new(window, cx).placeholder("(Not required)");
+                self.region_input.update(cx, |state, _cx| {
+                    state.set_placeholder("(Not required)");
                 });
             }
 
