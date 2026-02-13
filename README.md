@@ -63,12 +63,12 @@ Download the latest release for your platform from the [Releases](https://github
 | Platform | Download |
 |----------|----------|
 | Windows (x64) | `cloudbridge-windows-x64.exe` |
-| macOS (Intel) | `cloudbridge-macos-x64` |
-| macOS (Apple Silicon) | `cloudbridge-macos-arm64` |
+| macOS (Intel) | `cloudbridge-macos-x64.zip` |
+| macOS (Apple Silicon) | `cloudbridge-macos-arm64.zip` |
 
 > **Note for Windows users:** Windows SmartScreen may show a warning for unsigned executables. Click "More info" → "Run anyway" to proceed. The application is safe and [open source](https://github.com/JetSquirrel/cloudbridge).
 
-> **Note for macOS users:** You may need to right-click → "Open" the first time, or run `xattr -cr cloudbridge-macos-*` to remove quarantine flags.
+> **Note for macOS users:** Unzip the downloaded file first. If Finder reports the file as a text document or shows an encoding error, run `chmod +x cloudbridge-macos-*` and launch it from Terminal with `./cloudbridge-macos-*`. You may still need to right-click → "Open" the first time, or run `xattr -cr cloudbridge-macos-*` to remove quarantine flags.
 
 ### Prerequisites (for building from source)
 
