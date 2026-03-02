@@ -89,7 +89,7 @@ jobs:
           zip -j "${{ matrix.asset_name }}" "cloudbridge-macos-arm64"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset_name }}
           path: ${{ matrix.asset_name }}
