@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - TBD
+
+### Planned
+- Azure support
+- Google Cloud Platform support
+- Cost alerts and notifications
+- Budget tracking
+
+### Added
+- **DeepSeek Integration**
+  - DeepSeek API integration for balance queries
+  - Display account balance instead of cost for DeepSeek accounts
+  - Balance breakdown showing granted and topped-up balances
+  - Support for multiple currencies (CNY, USD)
+
+### Changed
+
+### Fixed
+
+## [0.1.1] - 2024-12-10
+
 ### Added
 - Initial release preparation
 - Comprehensive documentation

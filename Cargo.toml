@@ -1,6 +1,6 @@
 [package]
 name = "cloudbridge"
-version = "0.1.1"
+version = "0.2.0-dev"
 edition = "2021"
 description = "A cross-platform desktop application for multi-cloud cost management"
 authors = ["JetSquirrel"]

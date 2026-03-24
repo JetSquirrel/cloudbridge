@@ -31,6 +31,7 @@
 - **🌐 Multi-Cloud Support**
   - Amazon Web Services (AWS) - Full support
   - Alibaba Cloud (阿里云) - Full support
+  - DeepSeek - Full support (balance tracking)
   - Azure & GCP - Coming soon
 
 - **📊 Cost Visualization**
@@ -135,13 +136,22 @@ The compiled binary will be at:
 
 > **Note:** Alibaba Cloud billing API is free of charge.
 
+### DeepSeek Configuration
+
+1. Log in to [DeepSeek Platform](https://platform.deepseek.com/)
+2. Navigate to **API Keys** section
+3. Create a new API key
+4. Add the account in CloudBridge using the API key
+
+> **Note:** DeepSeek displays your account balance (including granted and topped-up balances) instead of cost data. The balance query API is free of charge.
+
 ## 🚀 Usage
 
 ### Adding a Cloud Account
 
 1. Launch CloudBridge
 2. Navigate to **Accounts** in the sidebar
-3. Select your cloud provider (AWS or Alibaba Cloud)
+3. Select your cloud provider (AWS, Alibaba Cloud, or DeepSeek)
 4. Enter account name and credentials
 5. Click **Validate & Add**
 
@@ -149,12 +159,12 @@ The compiled binary will be at:
 
 1. Go to **Dashboard**
 2. View the overview cards showing:
-   - Current month total cost
+   - Current month total cost (or balance for DeepSeek accounts)
    - Last month total cost
    - Month-over-month change
    - Active accounts count
-3. Click on any account card to expand service-level details
-4. Click **Trend** to view the 30-day cost chart
+3. Click on any account card to expand service-level details (or balance breakdown for DeepSeek)
+4. Click **Trend** to view the 30-day cost chart (not available for DeepSeek)
 
 ### Refreshing Data
 
@@ -163,7 +173,8 @@ The compiled binary will be at:
 
 ## 🗺️ Roadmap
 
-### v0.2.0 (Planned)
+### v0.2.0 (In Progress)
+- [x] DeepSeek support
 - [ ] Azure support
 - [ ] Google Cloud Platform support
 - [ ] Cost alerts and notifications
