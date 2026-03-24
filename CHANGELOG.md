@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Budget tracking
 
 ### Added
+- **DeepSeek Integration**
+  - DeepSeek API integration for balance queries
+  - Display account balance instead of cost for DeepSeek accounts
+  - Balance breakdown showing granted and topped-up balances
+  - Support for multiple currencies (CNY, USD)
 
 ### Changed
 
