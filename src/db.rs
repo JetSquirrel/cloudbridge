@@ -6,7 +6,8 @@ use duckdb::{params, Connection};
 use std::sync::{Arc, Mutex};
 
 use crate::cloud::{
-    CloudAccount, CloudProvider, CostData, CostSummary, CostTrend, DailyCost, ServiceCost,
+    BudgetInfo, BudgetStatus, CloudAccount, CloudProvider, CostData, CostSummary, CostTrend,
+    DailyCost, ServiceCost,
 };
 use crate::config::get_database_path;
 use crate::crypto::get_crypto_manager;
@@ -92,6 +93,22 @@ pub fn init_database() -> Result<()> {
             currency VARCHAR NOT NULL,
             cached_at VARCHAR NOT NULL,
             PRIMARY KEY (account_id, date)
+        )
+        "#,
+        [],
+    )?;
+
+    // Create budgets table
+    conn.execute(
+        r#"
+        CREATE TABLE IF NOT EXISTS budgets (
+            account_id VARCHAR PRIMARY KEY,
+            monthly_budget DOUBLE NOT NULL,
+            currency VARCHAR NOT NULL,
+            alert_threshold DOUBLE NOT NULL DEFAULT 80.0,
+            created_at VARCHAR NOT NULL,
+            updated_at VARCHAR NOT NULL,
+            FOREIGN KEY (account_id) REFERENCES cloud_accounts(id)
         )
         "#,
         [],
@@ -603,4 +620,174 @@ pub fn clear_all_cache() -> Result<()> {
 
     tracing::info!("Cleared all cost cache");
     Ok(())
+}
+
+// ==================== Budget Functions ====================
+
+/// Save or update budget for an account
+pub fn save_budget(budget: &BudgetInfo) -> Result<()> {
+    let db = get_connection()?;
+    let conn = db.as_ref().unwrap();
+
+    conn.execute(
+        r#"
+        INSERT OR REPLACE INTO budgets
+        (account_id, monthly_budget, currency, alert_threshold, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        "#,
+        params![
+            budget.account_id,
+            budget.monthly_budget,
+            budget.currency,
+            budget.alert_threshold,
+            budget.created_at.to_rfc3339(),
+            budget.updated_at.to_rfc3339(),
+        ],
+    )?;
+
+    tracing::info!("Saved budget for account {}", budget.account_id);
+    Ok(())
+}
+
+/// Get budget for an account
+pub fn get_budget(account_id: &str) -> Result<Option<BudgetInfo>> {
+    let db = get_connection()?;
+    let conn = db.as_ref().unwrap();
+
+    let mut stmt = conn.prepare(
+        "SELECT account_id, monthly_budget, currency, alert_threshold, created_at, updated_at
+         FROM budgets WHERE account_id = ?",
+    )?;
+
+    let result = stmt.query_row(params![account_id], |row| {
+        let created_at_str: String = row.get(4)?;
+        let updated_at_str: String = row.get(5)?;
+
+        let created_at = DateTime::parse_from_rfc3339(&created_at_str)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now());
+        let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now());
+
+        Ok(BudgetInfo {
+            account_id: row.get(0)?,
+            monthly_budget: row.get(1)?,
+            currency: row.get(2)?,
+            alert_threshold: row.get(3)?,
+            created_at,
+            updated_at,
+        })
+    });
+
+    match result {
+        Ok(budget) => Ok(Some(budget)),
+        Err(duckdb::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(anyhow::anyhow!("Failed to get budget: {}", e)),
+    }
+}
+
+/// Get all budgets
+pub fn get_all_budgets() -> Result<Vec<BudgetInfo>> {
+    let db = get_connection()?;
+    let conn = db.as_ref().unwrap();
+
+    let mut stmt = conn.prepare(
+        "SELECT account_id, monthly_budget, currency, alert_threshold, created_at, updated_at
+         FROM budgets",
+    )?;
+
+    let budgets = stmt
+        .query_map([], |row| {
+            let created_at_str: String = row.get(4)?;
+            let updated_at_str: String = row.get(5)?;
+
+            let created_at = DateTime::parse_from_rfc3339(&created_at_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+            let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+
+            Ok(BudgetInfo {
+                account_id: row.get(0)?,
+                monthly_budget: row.get(1)?,
+                currency: row.get(2)?,
+                alert_threshold: row.get(3)?,
+                created_at,
+                updated_at,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(budgets)
+}
+
+/// Delete budget for an account
+pub fn delete_budget(account_id: &str) -> Result<()> {
+    let db = get_connection()?;
+    let conn = db.as_ref().unwrap();
+
+    conn.execute("DELETE FROM budgets WHERE account_id = ?", params![account_id])?;
+
+    tracing::info!("Deleted budget for account {}", account_id);
+    Ok(())
+}
+
+/// Get budget status (compares budget with current costs)
+pub fn get_budget_status(account_id: &str) -> Result<Option<BudgetStatus>> {
+    // Get budget
+    let budget = match get_budget(account_id)? {
+        Some(b) => b,
+        None => return Ok(None),
+    };
+
+    // Get account info
+    let accounts = get_all_accounts()?;
+    let account = accounts
+        .iter()
+        .find(|a| a.id == account_id)
+        .ok_or_else(|| anyhow::anyhow!("Account not found"))?;
+
+    // Get cached cost summary
+    let cost_summary = get_cached_cost_summary_with_account(account_id, &account.name, &account.provider)?;
+
+    let current_cost = cost_summary
+        .map(|cs| cs.current_month_cost)
+        .unwrap_or(0.0);
+
+    // Calculate metrics
+    let percentage_used = if budget.monthly_budget > 0.0 {
+        (current_cost / budget.monthly_budget) * 100.0
+    } else {
+        0.0
+    };
+
+    let remaining = budget.monthly_budget - current_cost;
+    let alert_triggered = percentage_used >= budget.alert_threshold;
+
+    Ok(Some(BudgetStatus {
+        account_id: account_id.to_string(),
+        account_name: account.name.clone(),
+        monthly_budget: budget.monthly_budget,
+        current_cost,
+        currency: budget.currency,
+        percentage_used,
+        remaining,
+        alert_triggered,
+    }))
+}
+
+/// Get all budget statuses
+pub fn get_all_budget_statuses() -> Result<Vec<BudgetStatus>> {
+    let budgets = get_all_budgets()?;
+    let mut statuses = Vec::new();
+
+    for budget in budgets {
+        if let Some(status) = get_budget_status(&budget.account_id)? {
+            statuses.push(status);
+        }
+    }
+
+    Ok(statuses)
 }
