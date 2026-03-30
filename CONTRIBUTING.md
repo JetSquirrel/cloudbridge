@@ -69,8 +69,8 @@ cargo clippy
 ### Code Style
 
 - Follow Rust's official style guidelines
-- Run `cargo fmt` before committing (enforced by pre-commit hook)
-- Run `cargo clippy` to catch common mistakes (enforced by pre-commit hook)
+- Enable repo hooks (`git config core.hooksPath .githooks`); pre-commit automatically runs `cargo fmt`, re-stages formatted Rust files, and runs `cargo clippy`
+- Run `cargo fmt` / `cargo clippy` manually when you want fast feedback
 - Write documentation for public APIs
 - Use meaningful variable and function names
 

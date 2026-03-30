@@ -728,7 +728,10 @@ pub fn delete_budget(account_id: &str) -> Result<()> {
     let db = get_connection()?;
     let conn = db.as_ref().unwrap();
 
-    conn.execute("DELETE FROM budgets WHERE account_id = ?", params![account_id])?;
+    conn.execute(
+        "DELETE FROM budgets WHERE account_id = ?",
+        params![account_id],
+    )?;
 
     tracing::info!("Deleted budget for account {}", account_id);
     Ok(())
@@ -750,11 +753,10 @@ pub fn get_budget_status(account_id: &str) -> Result<Option<BudgetStatus>> {
         .ok_or_else(|| anyhow::anyhow!("Account not found"))?;
 
     // Get cached cost summary
-    let cost_summary = get_cached_cost_summary_with_account(account_id, &account.name, &account.provider)?;
+    let cost_summary =
+        get_cached_cost_summary_with_account(account_id, &account.name, &account.provider)?;
 
-    let current_cost = cost_summary
-        .map(|cs| cs.current_month_cost)
-        .unwrap_or(0.0);
+    let current_cost = cost_summary.map(|cs| cs.current_month_cost).unwrap_or(0.0);
 
     // Calculate metrics
     let percentage_used = if budget.monthly_budget > 0.0 {
