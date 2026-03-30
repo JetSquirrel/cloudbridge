@@ -137,6 +137,44 @@ pub struct CostTrend {
     pub daily_costs: Vec<DailyCost>,
 }
 
+/// Budget information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BudgetInfo {
+    /// Account ID
+    pub account_id: String,
+    /// Monthly budget amount
+    pub monthly_budget: f64,
+    /// Currency
+    pub currency: String,
+    /// Alert threshold (percentage, e.g., 80.0 for 80%)
+    pub alert_threshold: f64,
+    /// Created time
+    pub created_at: DateTime<Utc>,
+    /// Updated time
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Budget status (comparison of budget vs actual)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BudgetStatus {
+    /// Account ID
+    pub account_id: String,
+    /// Account name
+    pub account_name: String,
+    /// Monthly budget
+    pub monthly_budget: f64,
+    /// Current month actual cost
+    pub current_cost: f64,
+    /// Currency
+    pub currency: String,
+    /// Percentage used (0-100+)
+    pub percentage_used: f64,
+    /// Remaining budget (can be negative if over budget)
+    pub remaining: f64,
+    /// Whether alert threshold is exceeded
+    pub alert_triggered: bool,
+}
+
 /// Cloud service provider trait (sync version, using ureq)
 pub trait CloudService: Send + Sync {
     /// Validate credentials
