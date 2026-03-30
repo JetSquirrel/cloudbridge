@@ -1,22 +1,23 @@
 #!/bin/sh
-# Pre-commit hook to check Rust code formatting
+# Pre-commit hook to format and lint Rust code automatically
 
-echo "Running cargo fmt check..."
-cargo fmt --check
-if [ $? -ne 0 ]; then
-    echo ""
-    echo "ERROR: Code formatting issues found!"
-    echo "Please run 'cargo fmt' before committing."
-    exit 1
+set -e
+
+STAGED_RUST_FILES=$(git diff --cached --name-only --diff-filter=ACM -- '*.rs')
+
+echo "Formatting Rust code (cargo fmt)..."
+cargo fmt
+
+if [ -n "$STAGED_RUST_FILES" ]; then
+    printf '%s\n' "$STAGED_RUST_FILES" | while IFS= read -r file; do
+        [ -n "$file" ] && git add "$file"
+    done
+    echo "Re-staged formatted Rust files."
+else
+    echo "No staged Rust files detected; formatted workspace."
 fi
 
 echo "Running cargo clippy..."
 cargo clippy -- -D warnings
-if [ $? -ne 0 ]; then
-    echo ""
-    echo "ERROR: Clippy warnings found!"
-    echo "Please fix the issues before committing."
-    exit 1
-fi
 
 echo "Pre-commit checks passed!"
