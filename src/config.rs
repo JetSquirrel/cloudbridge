@@ -6,27 +6,37 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+/// Default data refresh interval, in minutes
+pub const DEFAULT_REFRESH_INTERVAL_MINUTES: u32 = 60;
+
 /// Application configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     /// Encryption key (for encrypting AK/SK)
     pub encryption_key: Option<String>,
     /// Theme settings
     pub theme: ThemeConfig,
-    /// Data refresh interval (minutes)
+    /// Data refresh interval (minutes).
+    ///
+    /// Persisted but not acted on yet: nothing schedules a refresh from it,
+    /// so it has no Settings UI either. Wire both up together.
     pub refresh_interval_minutes: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ThemeConfig {
-    /// Whether to use dark mode
-    pub dark_mode: bool,
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            encryption_key: None,
+            theme: ThemeConfig::default(),
+            refresh_interval_minutes: DEFAULT_REFRESH_INTERVAL_MINUTES,
+        }
+    }
 }
 
-impl Default for ThemeConfig {
-    fn default() -> Self {
-        Self { dark_mode: true }
-    }
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ThemeConfig {
+    /// Whether to use dark mode. Defaults to light.
+    pub dark_mode: bool,
 }
 
 /// Get application data directory
@@ -64,7 +74,12 @@ pub fn load_config() -> Result<AppConfig> {
 
     if config_path.exists() {
         let content = fs::read_to_string(&config_path)?;
-        let config: AppConfig = serde_json::from_str(&content)?;
+        let mut config: AppConfig = serde_json::from_str(&content)?;
+        // Configs written before AppConfig had a real Default stored 0 here,
+        // which is not a usable interval.
+        if config.refresh_interval_minutes == 0 {
+            config.refresh_interval_minutes = DEFAULT_REFRESH_INTERVAL_MINUTES;
+        }
         Ok(config)
     } else {
         // Return default config

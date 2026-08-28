@@ -24,8 +24,17 @@ impl SettingsView {
         }
     }
 
-    fn toggle_dark_mode(&mut self, cx: &mut Context<Self>) {
-        self.config.theme.dark_mode = !self.config.theme.dark_mode;
+    fn set_dark_mode(&mut self, dark: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.config.theme.dark_mode = dark;
+        Theme::change(
+            if dark {
+                ThemeMode::Dark
+            } else {
+                ThemeMode::Light
+            },
+            Some(window),
+            cx,
+        );
         self.save_config(cx);
     }
 
@@ -103,33 +112,10 @@ impl Render for SettingsView {
                         .child(
                             Switch::new("dark-mode")
                                 .checked(dark_mode)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.toggle_dark_mode(cx);
+                                .on_click(cx.listener(|this, checked: &bool, window, cx| {
+                                    this.set_dark_mode(*checked, window, cx);
                                 })),
                         ),
-                    cx,
-                ),
-            )
-            // Data settings
-            .child(
-                self.render_section(
-                    "Data",
-                    div().v_flex().gap_3().child(
-                        div().h_flex().justify_between().items_center().child(
-                            div()
-                                .v_flex()
-                                .child(div().child("Data Refresh Interval"))
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(format!(
-                                            "{} minutes",
-                                            self.config.refresh_interval_minutes
-                                        )),
-                                ),
-                        ),
-                    ),
                     cx,
                 ),
             )
@@ -149,7 +135,7 @@ impl Render for SettingsView {
                                         .text_color(cx.theme().muted_foreground)
                                         .child("Version:"),
                                 )
-                                .child(div().child("0.1.0")),
+                                .child(div().child(env!("CARGO_PKG_VERSION"))),
                         )
                         .child(
                             div()

@@ -46,7 +46,7 @@ impl CloudBridgeApp {
             .w(px(220.0))
             .h_full()
             .border_r_1()
-            .border_color(cx.theme().border)
+            .border_color(cx.theme().sidebar_border)
             .bg(cx.theme().sidebar)
             .p_4()
             .v_flex()
@@ -55,11 +55,11 @@ impl CloudBridgeApp {
                 div()
                     .text_xl()
                     .font_weight(FontWeight::BOLD)
-                    .text_color(cx.theme().foreground)
+                    .text_color(cx.theme().sidebar_foreground)
                     .child("CloudBridge")
                     .pb_4()
                     .border_b_1()
-                    .border_color(cx.theme().border)
+                    .border_color(cx.theme().sidebar_border)
                     .mb_4(),
             )
             .child(self.nav_item(
@@ -92,16 +92,18 @@ impl CloudBridgeApp {
         is_active: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
+        // Mirrors gpui-component's own SidebarMenuItem: `accent` is a surface
+        // token, so the active label has to use `sidebar_accent_foreground`.
         let bg = if is_active {
-            cx.theme().accent.opacity(0.1)
+            cx.theme().sidebar_accent
         } else {
             transparent_black()
         };
 
         let text_color = if is_active {
-            cx.theme().accent
+            cx.theme().sidebar_accent_foreground
         } else {
-            cx.theme().foreground
+            cx.theme().sidebar_foreground
         };
 
         div()
@@ -111,7 +113,7 @@ impl CloudBridgeApp {
             .rounded_md()
             .cursor_pointer()
             .bg(bg)
-            .hover(|s| s.bg(cx.theme().accent.opacity(0.05)))
+            .hover(|s| s.bg(cx.theme().sidebar_accent.opacity(0.8)))
             .text_color(text_color)
             .child(label)
             .on_click(cx.listener(move |this, _, _, cx| {

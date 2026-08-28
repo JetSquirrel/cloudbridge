@@ -138,6 +138,8 @@ pub struct CostTrend {
 }
 
 /// Budget information
+// TODO(v0.2.0): drop this allow once the budget UI is wired up
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetInfo {
     /// Account ID
@@ -155,6 +157,8 @@ pub struct BudgetInfo {
 }
 
 /// Budget status (comparison of budget vs actual)
+// TODO(v0.2.0): drop this allow once the budget UI is wired up
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetStatus {
     /// Account ID

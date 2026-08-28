@@ -130,6 +130,25 @@ Helps debug common GPUI framework issues.
 - Performance optimization
 - Memory leak prevention
 
+### 8. GPUI Component Library (`gpui-component/`)
+Upstream skill vendored from [longbridge/gpui-component](https://github.com/longbridge/gpui-component/tree/main/skills/gpui-component). Covers the component library CloudBridge builds its UI on (`gpui-component 0.5.0-preview1`).
+
+**Use when:**
+- Building or changing UI with library components (Button, Input, Select, Dialog, Tabs, Sidebar, Table, ...)
+- Choosing the right component for a UI need
+- Wiring component state or theming
+- Making layout, spacing, hierarchy, interaction-state, or interface-copy decisions
+- Making architecture, state-ownership, or public API decisions
+
+**Key Topics:**
+- Component catalog with imports and stateless/stateful notes
+- Setup patterns (`gpui_component::init`, `Root::new`)
+- [design-guides.md](gpui-component/references/design-guides.md) — normative design rules
+- [coding-guides.md](gpui-component/references/coding-guides.md) — crate layering, `RenderOnce` vs `Entity<T>`, focus, async
+- [usage.md](gpui-component/references/usage.md), [style-guide.md](gpui-component/references/style-guide.md)
+
+**Note:** This is a copy of upstream content — refresh it from the source repo rather than editing in place.
+
 ## How to Use Skills
 
 Skills are reference documents that provide:

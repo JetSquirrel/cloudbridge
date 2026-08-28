@@ -625,6 +625,7 @@ pub fn clear_all_cache() -> Result<()> {
 // ==================== Budget Functions ====================
 
 /// Save or update budget for an account
+#[allow(dead_code)] // TODO(v0.2.0): remove once the budget UI calls this
 pub fn save_budget(budget: &BudgetInfo) -> Result<()> {
     let db = get_connection()?;
     let conn = db.as_ref().unwrap();
@@ -650,6 +651,7 @@ pub fn save_budget(budget: &BudgetInfo) -> Result<()> {
 }
 
 /// Get budget for an account
+#[allow(dead_code)] // TODO(v0.2.0): remove once the budget UI calls this
 pub fn get_budget(account_id: &str) -> Result<Option<BudgetInfo>> {
     let db = get_connection()?;
     let conn = db.as_ref().unwrap();
@@ -688,6 +690,7 @@ pub fn get_budget(account_id: &str) -> Result<Option<BudgetInfo>> {
 }
 
 /// Get all budgets
+#[allow(dead_code)] // TODO(v0.2.0): remove once the budget UI calls this
 pub fn get_all_budgets() -> Result<Vec<BudgetInfo>> {
     let db = get_connection()?;
     let conn = db.as_ref().unwrap();
@@ -724,17 +727,22 @@ pub fn get_all_budgets() -> Result<Vec<BudgetInfo>> {
 }
 
 /// Delete budget for an account
+#[allow(dead_code)] // TODO(v0.2.0): remove once the budget UI calls this
 pub fn delete_budget(account_id: &str) -> Result<()> {
     let db = get_connection()?;
     let conn = db.as_ref().unwrap();
 
-    conn.execute("DELETE FROM budgets WHERE account_id = ?", params![account_id])?;
+    conn.execute(
+        "DELETE FROM budgets WHERE account_id = ?",
+        params![account_id],
+    )?;
 
     tracing::info!("Deleted budget for account {}", account_id);
     Ok(())
 }
 
 /// Get budget status (compares budget with current costs)
+#[allow(dead_code)] // TODO(v0.2.0): remove once the budget UI calls this
 pub fn get_budget_status(account_id: &str) -> Result<Option<BudgetStatus>> {
     // Get budget
     let budget = match get_budget(account_id)? {
@@ -750,11 +758,10 @@ pub fn get_budget_status(account_id: &str) -> Result<Option<BudgetStatus>> {
         .ok_or_else(|| anyhow::anyhow!("Account not found"))?;
 
     // Get cached cost summary
-    let cost_summary = get_cached_cost_summary_with_account(account_id, &account.name, &account.provider)?;
+    let cost_summary =
+        get_cached_cost_summary_with_account(account_id, &account.name, &account.provider)?;
 
-    let current_cost = cost_summary
-        .map(|cs| cs.current_month_cost)
-        .unwrap_or(0.0);
+    let current_cost = cost_summary.map(|cs| cs.current_month_cost).unwrap_or(0.0);
 
     // Calculate metrics
     let percentage_used = if budget.monthly_budget > 0.0 {
@@ -779,6 +786,7 @@ pub fn get_budget_status(account_id: &str) -> Result<Option<BudgetStatus>> {
 }
 
 /// Get all budget statuses
+#[allow(dead_code)] // TODO(v0.2.0): remove once the budget UI calls this
 pub fn get_all_budget_statuses() -> Result<Vec<BudgetStatus>> {
     let budgets = get_all_budgets()?;
     let mut statuses = Vec::new();
