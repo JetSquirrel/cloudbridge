@@ -173,24 +173,36 @@ The compiled binary will be at:
 
 ## 🗺️ Roadmap
 
-### v0.2.0 (In Progress)
-- [x] DeepSeek support
-- [ ] Azure support
-- [ ] Google Cloud Platform support
-- [ ] Cost alerts and notifications
-- [ ] Budget tracking
+CloudBridge is becoming a personal finance platform for everything an
+individual developer spends on infrastructure and AI — public cloud, model
+provider APIs, token plans and subscriptions — in one ledger, one currency,
+on one machine. See **[docs/roadmap.md](docs/roadmap.md)** for the detailed
+plan and its rationale.
 
-### v0.3.0 (Planned)
-- [ ] Export reports (CSV, PDF)
-- [ ] Cost forecasting
-- [ ] Tag-based cost allocation
-- [ ] Multi-currency support
+### P0 — FOCUS normalization (in progress)
+- [ ] Source registry replacing the hardcoded provider enum
+- [ ] `fct_charge` fact table, batch-tracked transactional ingest
+- [ ] Split fetch from normalize, raw Parquet layer
+- [ ] AWS / Alibaba Cloud / DeepSeek mapped to FOCUS columns
+- [ ] Cross-currency totals via a rate table and reporting currency
 
-### Future
+### P1
+- [ ] Bill file export channel (S3 / OSS + Parquet)
+- [ ] Tag-based allocation with an explicit "unallocated" node
+- [ ] Sankey cost flow
+
+### P2
+- [ ] Three-tier anomaly detection with attribution
+- [ ] Budget alerts
+- [ ] Month-end snapshot freezing
+
+### P3
 - [ ] Linux native builds
-- [ ] Cost optimization recommendations
-- [ ] Team collaboration features
-- [ ] API for integrations
+- [ ] Pluggable source adapters
+- [ ] Local coding-agent token usage (reserved extension point)
+
+Explicitly **out of scope**: multi-user or shared deployments, invoice
+reconciliation, a general chargeback rule engine, team collaboration.
 
 ## 📁 Data Storage
 
