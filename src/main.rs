@@ -35,6 +35,19 @@ fn main() {
         // Initialize GPUI Component
         gpui_component::init(cx);
 
+        // Apply the persisted theme before the first window opens, so the app
+        // does not flash the default appearance on startup.
+        let dark_mode = config::load_config().unwrap_or_default().theme.dark_mode;
+        Theme::change(
+            if dark_mode {
+                ThemeMode::Dark
+            } else {
+                ThemeMode::Light
+            },
+            None,
+            cx,
+        );
+
         cx.spawn(async move |cx| {
             // Initialize database
             if let Err(e) = db::init_database() {

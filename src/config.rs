@@ -33,16 +33,10 @@ impl Default for AppConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ThemeConfig {
-    /// Whether to use dark mode
+    /// Whether to use dark mode. Defaults to light.
     pub dark_mode: bool,
-}
-
-impl Default for ThemeConfig {
-    fn default() -> Self {
-        Self { dark_mode: true }
-    }
 }
 
 /// Get application data directory

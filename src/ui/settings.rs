@@ -24,8 +24,17 @@ impl SettingsView {
         }
     }
 
-    fn toggle_dark_mode(&mut self, cx: &mut Context<Self>) {
-        self.config.theme.dark_mode = !self.config.theme.dark_mode;
+    fn set_dark_mode(&mut self, dark: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.config.theme.dark_mode = dark;
+        Theme::change(
+            if dark {
+                ThemeMode::Dark
+            } else {
+                ThemeMode::Light
+            },
+            Some(window),
+            cx,
+        );
         self.save_config(cx);
     }
 
@@ -103,8 +112,8 @@ impl Render for SettingsView {
                         .child(
                             Switch::new("dark-mode")
                                 .checked(dark_mode)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.toggle_dark_mode(cx);
+                                .on_click(cx.listener(|this, checked: &bool, window, cx| {
+                                    this.set_dark_mode(*checked, window, cx);
                                 })),
                         ),
                     cx,
