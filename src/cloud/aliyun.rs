@@ -7,7 +7,7 @@ use serde::Deserialize;
 use sha1::Sha1;
 use std::collections::BTreeMap;
 
-use super::{CloudProvider, CloudService, CostData, CostSummary, ServiceCost};
+use super::{CloudService, CostData, CostSummary, ServiceCost, SourceId};
 
 type HmacSha1 = Hmac<Sha1>;
 
@@ -287,7 +287,7 @@ impl CloudService for AliyunCloudService {
         Ok(CostSummary {
             account_id: self.account_id.clone(),
             account_name: self.account_name.clone(),
-            provider: CloudProvider::Aliyun,
+            source_id: SourceId::from("Aliyun"),
             current_month_cost,
             last_month_cost,
             currency: "CNY".to_string(),

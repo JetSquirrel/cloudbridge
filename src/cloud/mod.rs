@@ -1,48 +1,30 @@
-//! Cloud provider module
+//! Billing sources: accounts, the data they report, and the client trait.
 
 pub mod aliyun;
 pub mod aws;
 pub mod deepseek;
+pub mod registry;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Cloud provider type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[allow(clippy::upper_case_acronyms)]
-pub enum CloudProvider {
-    #[default]
-    AWS,
-    Aliyun,
-    Azure,
-    GCP,
-    DeepSeek,
-}
+pub use registry::{SourceDescriptor, SourceId};
 
-impl CloudProvider {
-    /// Get full name of cloud provider
-    #[allow(dead_code)]
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            CloudProvider::AWS => "Amazon Web Services",
-            CloudProvider::Aliyun => "Alibaba Cloud",
-            CloudProvider::Azure => "Microsoft Azure",
-            CloudProvider::GCP => "Google Cloud Platform",
-            CloudProvider::DeepSeek => "DeepSeek",
-        }
-    }
+/// Shown in place of a source's name when its id is not in the registry.
+/// Accounts like that are filtered out on load, so this is a backstop.
+const UNKNOWN_SOURCE: &str = "Unknown";
 
-    /// Get short name of cloud provider
-    pub fn short_name(&self) -> &'static str {
-        match self {
-            CloudProvider::AWS => "AWS",
-            CloudProvider::Aliyun => "Aliyun",
-            CloudProvider::Azure => "Azure",
-            CloudProvider::GCP => "GCP",
-            CloudProvider::DeepSeek => "DeepSeek",
-        }
-    }
+/// The credentials and identity a [`CloudService`] is built from.
+///
+/// Bundled into one struct so [`SourceDescriptor::build`] can be a plain
+/// function pointer.
+pub struct SourceContext {
+    pub account_id: String,
+    pub account_name: String,
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    pub region: Option<String>,
 }
 
 /// Cloud account information
@@ -52,8 +34,8 @@ pub struct CloudAccount {
     pub id: String,
     /// Account name (user-defined)
     pub name: String,
-    /// Cloud provider
-    pub provider: CloudProvider,
+    /// Billing source this account belongs to; see [`registry`].
+    pub source_id: SourceId,
     /// Access Key ID (encrypted storage)
     pub access_key_id: String,
     /// Secret Access Key (encrypted storage)
@@ -66,6 +48,31 @@ pub struct CloudAccount {
     pub last_synced_at: Option<DateTime<Utc>>,
     /// Is enabled
     pub enabled: bool,
+}
+
+impl CloudAccount {
+    /// The descriptor for this account's source, or `None` if the stored id
+    /// is not registered in this build.
+    pub fn descriptor(&self) -> Option<&'static SourceDescriptor> {
+        self.source_id.descriptor()
+    }
+
+    /// Short label for the source, for badges and log lines.
+    pub fn short_name(&self) -> &'static str {
+        self.descriptor().map_or(UNKNOWN_SOURCE, |s| s.short_name)
+    }
+
+    /// Credentials in the shape [`SourceDescriptor::build`] expects, with the
+    /// source's default region filled in when the account stored none.
+    pub fn context(&self, descriptor: &SourceDescriptor) -> SourceContext {
+        SourceContext {
+            account_id: self.id.clone(),
+            account_name: self.name.clone(),
+            access_key_id: self.access_key_id.clone(),
+            secret_access_key: self.secret_access_key.clone(),
+            region: descriptor.region_or_default(self.region.clone()),
+        }
+    }
 }
 
 /// Cost data
@@ -90,8 +97,8 @@ pub struct CostSummary {
     pub account_id: String,
     /// Account name
     pub account_name: String,
-    /// Cloud provider
-    pub provider: CloudProvider,
+    /// Billing source this summary came from
+    pub source_id: SourceId,
     /// Current month cost
     pub current_month_cost: f64,
     /// Last month cost
@@ -104,6 +111,24 @@ pub struct CostSummary {
     pub current_month_details: Vec<ServiceCost>,
     /// Last month service cost details
     pub last_month_details: Vec<ServiceCost>,
+}
+
+impl CostSummary {
+    fn descriptor(&self) -> Option<&'static SourceDescriptor> {
+        self.source_id.descriptor()
+    }
+
+    /// Short label for the source, for badges.
+    pub fn short_name(&self) -> &'static str {
+        self.descriptor().map_or(UNKNOWN_SOURCE, |s| s.short_name)
+    }
+
+    /// Whether this is a point-in-time balance rather than a period cost.
+    /// The dashboard lists the two kinds in separate sections and labels
+    /// their amounts differently.
+    pub fn is_snapshot(&self) -> bool {
+        self.descriptor().is_some_and(SourceDescriptor::is_snapshot)
+    }
 }
 
 /// Service cost detail

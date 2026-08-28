@@ -73,7 +73,7 @@ impl DashboardView {
                         match crate::db::get_cached_cost_summary_with_account(
                             &account.id,
                             &account.name,
-                            &account.provider,
+                            &account.source_id,
                         ) {
                             Ok(Some(cached)) => {
                                 summaries.push(cached);
@@ -83,93 +83,27 @@ impl DashboardView {
                             Err(_) => {}
                         }
 
-                        match account.provider {
-                            crate::cloud::CloudProvider::AWS => {
-                                let service = crate::cloud::aws::AwsCloudService::new(
-                                    account.id.clone(),
-                                    account.name.clone(),
-                                    account.access_key_id.clone(),
-                                    account.secret_access_key.clone(),
-                                    account.region.clone(),
-                                );
+                        let Some(descriptor) = account.descriptor() else {
+                            continue;
+                        };
+                        let service = (descriptor.build)(account.context(descriptor));
 
-                                use crate::cloud::CloudService;
-                                match service.get_cost_summary() {
-                                    Ok(summary) => {
-                                        // Save to cache
-                                        if let Err(e) = crate::db::save_cost_summary_cache(&summary)
-                                        {
-                                            tracing::warn!("Failed to save cost cache: {}", e);
-                                        }
-                                        summaries.push(summary);
-                                    }
-                                    Err(e) => {
-                                        tracing::error!(
-                                            "Failed to get cost for {}: {}",
-                                            account.name,
-                                            e
-                                        );
-                                    }
+                        match service.get_cost_summary() {
+                            Ok(summary) => {
+                                // Save to cache
+                                if let Err(e) = crate::db::save_cost_summary_cache(&summary) {
+                                    tracing::warn!("Failed to save cost cache: {}", e);
                                 }
+                                summaries.push(summary);
                             }
-                            crate::cloud::CloudProvider::Aliyun => {
-                                let service = crate::cloud::aliyun::AliyunCloudService::new(
-                                    account.id.clone(),
-                                    account.name.clone(),
-                                    account.access_key_id.clone(),
-                                    account.secret_access_key.clone(),
-                                    account.region.clone(),
+                            Err(e) => {
+                                tracing::error!(
+                                    "Failed to get {} cost for {}: {}",
+                                    descriptor.short_name,
+                                    account.name,
+                                    e
                                 );
-
-                                use crate::cloud::CloudService;
-                                match service.get_cost_summary() {
-                                    Ok(summary) => {
-                                        // Save to cache
-                                        if let Err(e) = crate::db::save_cost_summary_cache(&summary)
-                                        {
-                                            tracing::warn!("Failed to save cost cache: {}", e);
-                                        }
-                                        summaries.push(summary);
-                                    }
-                                    Err(e) => {
-                                        tracing::error!(
-                                            "Failed to get Aliyun {} cost: {}",
-                                            account.name,
-                                            e
-                                        );
-                                    }
-                                }
                             }
-                            crate::cloud::CloudProvider::DeepSeek => {
-                                let service = crate::cloud::deepseek::DeepSeekService::new(
-                                    account.id.clone(),
-                                    account.name.clone(),
-                                    account.access_key_id.clone(),
-                                    account.secret_access_key.clone(),
-                                    account.region.clone(),
-                                );
-
-                                use crate::cloud::CloudService;
-                                match service.get_cost_summary() {
-                                    Ok(summary) => {
-                                        // Save to cache
-                                        if let Err(e) = crate::db::save_cost_summary_cache(&summary)
-                                        {
-                                            tracing::warn!("Failed to save cost cache: {}", e);
-                                        }
-                                        summaries.push(summary);
-                                    }
-                                    Err(e) => {
-                                        tracing::error!(
-                                            "Failed to get DeepSeek {} balance: {}",
-                                            account.name,
-                                            e
-                                        );
-                                    }
-                                }
-                            }
-
-                            _ => {}
                         }
                     }
                     let _ = tx.send(Ok(summaries));
@@ -319,13 +253,10 @@ impl DashboardView {
                     .mt_4()
                     .child("Cost Details by Account"),
             )
-            // Account cards for cost-type providers
+            // Sources that report a period cost
             .child({
-                let cost_summaries: Vec<&CostSummary> = self
-                    .summaries
-                    .iter()
-                    .filter(|s| !matches!(s.provider, crate::cloud::CloudProvider::DeepSeek))
-                    .collect();
+                let cost_summaries: Vec<&CostSummary> =
+                    self.summaries.iter().filter(|s| !s.is_snapshot()).collect();
 
                 div().w_full().v_flex().gap_4().children(
                     cost_summaries
@@ -338,13 +269,10 @@ impl DashboardView {
                         }),
                 )
             })
-            // Balance section for providers that report balances (DeepSeek)
+            // Sources that report a point-in-time balance instead
             .child({
-                let balance_summaries: Vec<&CostSummary> = self
-                    .summaries
-                    .iter()
-                    .filter(|s| matches!(s.provider, crate::cloud::CloudProvider::DeepSeek))
-                    .collect();
+                let balance_summaries: Vec<&CostSummary> =
+                    self.summaries.iter().filter(|s| s.is_snapshot()).collect();
 
                 if balance_summaries.is_empty() {
                     div()
@@ -483,7 +411,7 @@ impl DashboardView {
                             .rounded_md()
                             .bg(cx.theme().accent.opacity(0.1))
                             .text_color(cx.theme().accent)
-                            .child(summary.provider.short_name()),
+                            .child(summary.short_name()),
                     ),
             )
             // Cost overview
@@ -493,12 +421,11 @@ impl DashboardView {
                     .justify_between()
                     .child({
                         // Format per-account amount using account currency.
-                        let label =
-                            if matches!(summary.provider, crate::cloud::CloudProvider::DeepSeek) {
-                                "Balance"
-                            } else {
-                                "This Month"
-                            };
+                        let label = if summary.is_snapshot() {
+                            "Balance"
+                        } else {
+                            "This Month"
+                        };
 
                         let symbol = match summary.currency.as_str() {
                             "CNY" => "¥",
@@ -681,21 +608,20 @@ impl DashboardView {
         std::thread::spawn(move || {
             use chrono::{Datelike, Duration, Utc};
 
-            let now = Utc::now();
-            // AWS: 30 days, Aliyun: 7 days (Aliyun requires per-day API calls which is slower)
-            // DeepSeek: no trend data available
-            let days = match account.provider {
-                crate::cloud::CloudProvider::Aliyun => 7,
-                crate::cloud::CloudProvider::DeepSeek => 0, // No trend data
-                _ => 30,
+            let Some(descriptor) = account.descriptor() else {
+                let _ = tx.send(Err("Unknown billing source".to_string()));
+                return;
             };
 
-            // DeepSeek doesn't support trend data
-            if matches!(account.provider, crate::cloud::CloudProvider::DeepSeek) {
-                let _ = tx.send(Err("DeepSeek does not provide usage history".to_string()));
+            let Some(days) = descriptor.trend_window_days() else {
+                let _ = tx.send(Err(format!(
+                    "{} does not provide usage history",
+                    descriptor.display_name
+                )));
                 return;
-            }
+            };
 
+            let now = Utc::now();
             let start = now - Duration::days(days);
             let start_date = format!("{}-{:02}-{:02}", start.year(), start.month(), start.day());
             let end_date = format!("{}-{:02}-{:02}", now.year(), now.month(), now.day());
@@ -708,55 +634,20 @@ impl DashboardView {
                 return;
             }
 
-            match account.provider {
-                crate::cloud::CloudProvider::AWS => {
-                    let service = crate::cloud::aws::AwsCloudService::new(
-                        account.id.clone(),
-                        account.name.clone(),
-                        account.access_key_id.clone(),
-                        account.secret_access_key.clone(),
-                        account.region.clone(),
-                    );
-
-                    use crate::cloud::CloudService;
-                    match service.get_cost_trend(&start_date, &end_date) {
-                        Ok(trend) => {
-                            // Save to cache
-                            if let Err(e) = crate::db::save_cost_trend_cache(&trend) {
-                                tracing::warn!("Failed to save trend cache: {}", e);
-                            }
-                            let _ = tx.send(Ok(trend));
-                        }
-                        Err(e) => {
-                            let _ = tx.send(Err(format!("Failed to get trend data: {}", e)));
-                        }
+            let service = (descriptor.build)(account.context(descriptor));
+            match service.get_cost_trend(&start_date, &end_date) {
+                Ok(trend) => {
+                    // Save to cache
+                    if let Err(e) = crate::db::save_cost_trend_cache(&trend) {
+                        tracing::warn!("Failed to save trend cache: {}", e);
                     }
+                    let _ = tx.send(Ok(trend));
                 }
-                crate::cloud::CloudProvider::Aliyun => {
-                    let service = crate::cloud::aliyun::AliyunCloudService::new(
-                        account.id.clone(),
-                        account.name.clone(),
-                        account.access_key_id.clone(),
-                        account.secret_access_key.clone(),
-                        account.region.clone(),
-                    );
-
-                    use crate::cloud::CloudService;
-                    match service.get_cost_trend(&start_date, &end_date) {
-                        Ok(trend) => {
-                            // Save to cache
-                            if let Err(e) = crate::db::save_cost_trend_cache(&trend) {
-                                tracing::warn!("Failed to save trend cache: {}", e);
-                            }
-                            let _ = tx.send(Ok(trend));
-                        }
-                        Err(e) => {
-                            let _ = tx.send(Err(format!("Failed to get Aliyun trend data: {}", e)));
-                        }
-                    }
-                }
-                _ => {
-                    let _ = tx.send(Err("This cloud provider is not supported".to_string()));
+                Err(e) => {
+                    let _ = tx.send(Err(format!(
+                        "Failed to get {} trend data: {}",
+                        descriptor.short_name, e
+                    )));
                 }
             }
         });

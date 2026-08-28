@@ -6,7 +6,7 @@ use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use super::{CloudProvider, CloudService, CostData, CostSummary};
+use super::{CloudService, CostData, CostSummary, SourceId};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -664,7 +664,7 @@ impl CloudService for AwsCloudService {
         Ok(CostSummary {
             account_id: self.account_id.clone(),
             account_name: self.account_name.clone(),
-            provider: CloudProvider::AWS,
+            source_id: SourceId::from("AWS"),
             current_month_cost,
             last_month_cost,
             currency,

@@ -6,8 +6,8 @@ use duckdb::{params, Connection};
 use std::sync::{Arc, Mutex};
 
 use crate::cloud::{
-    BudgetInfo, BudgetStatus, CloudAccount, CloudProvider, CostData, CostSummary, CostTrend,
-    DailyCost, ServiceCost,
+    BudgetInfo, BudgetStatus, CloudAccount, CostData, CostSummary, CostTrend, DailyCost,
+    ServiceCost, SourceId,
 };
 use crate::config::get_database_path;
 use crate::crypto::get_crypto_manager;
@@ -31,6 +31,8 @@ pub fn init_database() -> Result<()> {
         CREATE TABLE IF NOT EXISTS cloud_accounts (
             id VARCHAR PRIMARY KEY,
             name VARCHAR NOT NULL,
+            -- Holds a registry SourceId. Column name predates the registry;
+            -- PR2 rebuilds this schema, so it is not worth a migration now.
             provider VARCHAR NOT NULL,
             access_key_id VARCHAR NOT NULL,
             secret_access_key VARCHAR NOT NULL,
@@ -155,7 +157,7 @@ pub fn save_account(account: &CloudAccount) -> Result<()> {
         params![
             account.id,
             account.name,
-            format!("{:?}", account.provider),
+            account.source_id.as_str(),
             "",
             "",
             account.region,
@@ -180,15 +182,7 @@ pub fn get_all_accounts() -> Result<Vec<CloudAccount>> {
 
     let accounts = stmt
         .query_map([], |row| {
-            let provider_str: String = row.get(2)?;
-            let provider = match provider_str.as_str() {
-                "AWS" => CloudProvider::AWS,
-                "Aliyun" => CloudProvider::Aliyun,
-                "Azure" => CloudProvider::Azure,
-                "GCP" => CloudProvider::GCP,
-                "DeepSeek" => CloudProvider::DeepSeek,
-                _ => CloudProvider::AWS,
-            };
+            let source_id = SourceId::from(row.get::<_, String>(2)?);
 
             let encrypted_ak: String = row.get(3)?;
             let encrypted_sk: String = row.get(4)?;
@@ -199,7 +193,7 @@ pub fn get_all_accounts() -> Result<Vec<CloudAccount>> {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
-                provider,
+                source_id,
                 encrypted_ak,
                 encrypted_sk,
                 row.get::<_, Option<String>>(5)?,
@@ -214,7 +208,7 @@ pub fn get_all_accounts() -> Result<Vec<CloudAccount>> {
     for (
         id,
         name,
-        provider,
+        source_id,
         encrypted_ak,
         encrypted_sk,
         region,
@@ -223,6 +217,20 @@ pub fn get_all_accounts() -> Result<Vec<CloudAccount>> {
         enabled,
     ) in accounts
     {
+        // An id with no descriptor comes from a build that knew a source this
+        // one does not. Skip the row rather than guessing: silently reading it
+        // as some other provider would sign requests with the wrong scheme and
+        // file the resulting costs under the wrong source.
+        if source_id.descriptor().is_none() {
+            tracing::warn!(
+                "Skipping account {} ({}): no billing source registered under '{}'",
+                name,
+                id,
+                source_id.as_str()
+            );
+            continue;
+        }
+
         // Try to load secrets from OS keyring first (migration path). If not present, fall back to
         // decrypting existing values from DB and migrate them into keyring.
         let (access_key_id, secret_access_key) = match secret_store::get_account_secrets(&id)? {
@@ -257,7 +265,7 @@ pub fn get_all_accounts() -> Result<Vec<CloudAccount>> {
         result.push(CloudAccount {
             id,
             name,
-            provider,
+            source_id,
             access_key_id,
             secret_access_key,
             region,
@@ -359,7 +367,7 @@ pub fn get_all_cost_summaries() -> Result<Vec<CostSummary>> {
         summaries.push(CostSummary {
             account_id: account.id,
             account_name: account.name,
-            provider: account.provider,
+            source_id: account.source_id,
             current_month_cost: 0.0,
             last_month_cost: 0.0,
             currency: "USD".to_string(),
@@ -375,11 +383,11 @@ pub fn get_all_cost_summaries() -> Result<Vec<CostSummary>> {
 // ==================== Cache Functions ====================
 
 /// Check if cost summary cache is valid
-/// account_name and provider are passed by the caller to avoid deadlock when acquiring lock while holding database lock
+/// account_name and source_id are passed by the caller to avoid deadlock when acquiring lock while holding database lock
 pub fn get_cached_cost_summary_with_account(
     account_id: &str,
     account_name: &str,
-    provider: &CloudProvider,
+    source_id: &SourceId,
 ) -> Result<Option<CostSummary>> {
     let db = get_connection()?;
     let conn = db.as_ref().unwrap();
@@ -444,7 +452,7 @@ pub fn get_cached_cost_summary_with_account(
             Ok(Some(CostSummary {
                 account_id: account_id.to_string(),
                 account_name: account_name.to_string(),
-                provider: *provider,
+                source_id: source_id.clone(),
                 current_month_cost: current,
                 last_month_cost: last,
                 currency,
@@ -759,7 +767,7 @@ pub fn get_budget_status(account_id: &str) -> Result<Option<BudgetStatus>> {
 
     // Get cached cost summary
     let cost_summary =
-        get_cached_cost_summary_with_account(account_id, &account.name, &account.provider)?;
+        get_cached_cost_summary_with_account(account_id, &account.name, &account.source_id)?;
 
     let current_cost = cost_summary.map(|cs| cs.current_month_cost).unwrap_or(0.0);
 

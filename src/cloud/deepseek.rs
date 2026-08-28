@@ -3,7 +3,7 @@
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
 
-use super::{CloudProvider, CloudService, CostData, CostSummary, CostTrend, ServiceCost};
+use super::{CloudService, CostData, CostSummary, CostTrend, ServiceCost, SourceId};
 
 /// DeepSeek balance info
 #[derive(Debug, Deserialize)]
@@ -125,7 +125,7 @@ impl CloudService for DeepSeekService {
         Ok(CostSummary {
             account_id: self.account_id.clone(),
             account_name: self.account_name.clone(),
-            provider: CloudProvider::DeepSeek,
+            source_id: SourceId::from("DeepSeek"),
             current_month_cost: total,
             last_month_cost: 0.0,
             currency: balance_info.currency.clone(),

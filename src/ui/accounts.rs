@@ -10,7 +10,8 @@ use gpui_component::{
 };
 use uuid::Uuid;
 
-use crate::cloud::{CloudAccount, CloudProvider};
+use crate::cloud::registry::{self, SourceDescriptor};
+use crate::cloud::CloudAccount;
 use crate::db;
 
 /// Account Management View
@@ -19,8 +20,6 @@ pub struct AccountsView {
     accounts: Vec<CloudAccount>,
     /// Whether to show add dialog
     show_add_dialog: bool,
-    /// New account form
-    new_account_form: NewAccountForm,
     /// Error message
     error: Option<String>,
     /// Success message
@@ -30,19 +29,8 @@ pub struct AccountsView {
     ak_input: Entity<InputState>,
     sk_input: Entity<InputState>,
     region_input: Entity<InputState>,
-    /// Currently selected cloud provider
-    selected_provider: CloudProvider,
-}
-
-/// New account form data (internal use)
-#[derive(Default, Clone)]
-#[allow(dead_code)]
-struct NewAccountForm {
-    name: String,
-    provider: CloudProvider,
-    access_key_id: String,
-    secret_access_key: String,
-    region: String,
+    /// Billing source selected in the add dialog
+    selected_source: &'static SourceDescriptor,
 }
 
 impl AccountsView {
@@ -59,14 +47,13 @@ impl AccountsView {
         let mut view = Self {
             accounts: Vec::new(),
             show_add_dialog: false,
-            new_account_form: NewAccountForm::default(),
             error: None,
             success: None,
             name_input,
             ak_input,
             sk_input,
             region_input,
-            selected_provider: CloudProvider::AWS,
+            selected_source: registry::default_source(),
         };
 
         view.load_accounts();
@@ -87,60 +74,33 @@ impl AccountsView {
 
     fn show_add_dialog(&mut self, cx: &mut Context<Self>) {
         self.show_add_dialog = true;
-        self.new_account_form = NewAccountForm::default();
-        self.selected_provider = CloudProvider::AWS;
+        self.selected_source = registry::default_source();
         self.error = None;
         self.success = None;
         cx.notify();
     }
 
-    fn set_provider(
+    fn set_source(
         &mut self,
-        provider: CloudProvider,
+        source: &'static SourceDescriptor,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.selected_provider = provider;
-        // Update input placeholders based on cloud provider
-        match provider {
-            CloudProvider::AWS => {
-                self.ak_input.update(cx, |state, cx| {
-                    state.set_placeholder("Access Key ID", window, cx);
-                });
-                self.sk_input.update(cx, |state, cx| {
-                    state.set_placeholder("Secret Access Key", window, cx);
-                });
-                self.region_input.update(cx, |state, cx| {
-                    state.set_placeholder("Region (optional, default us-east-1)", window, cx);
-                    state.set_value("us-east-1", window, cx);
-                });
-            }
-            CloudProvider::Aliyun => {
-                self.ak_input.update(cx, |state, cx| {
-                    state.set_placeholder("AccessKey ID", window, cx);
-                });
-                self.sk_input.update(cx, |state, cx| {
-                    state.set_placeholder("AccessKey Secret", window, cx);
-                });
-                self.region_input.update(cx, |state, cx| {
-                    state.set_placeholder("Region (optional, default cn-hangzhou)", window, cx);
-                    state.set_value("cn-hangzhou", window, cx);
-                });
-            }
-            CloudProvider::DeepSeek => {
-                self.ak_input.update(cx, |state, cx| {
-                    state.set_placeholder("API Key", window, cx);
-                });
-                self.sk_input.update(cx, |state, cx| {
-                    state.set_placeholder("(Not required, leave empty)", window, cx);
-                });
-                self.region_input.update(cx, |state, cx| {
-                    state.set_placeholder("(Not required)", window, cx);
-                });
-            }
+        self.selected_source = source;
 
-            _ => {}
-        }
+        // Every label comes from the descriptor, so a new source needs no
+        // change here.
+        self.ak_input.update(cx, |state, cx| {
+            state.set_placeholder(source.access_key_label, window, cx);
+        });
+        self.sk_input.update(cx, |state, cx| {
+            state.set_placeholder(source.secret_key_placeholder(), window, cx);
+        });
+        self.region_input.update(cx, |state, cx| {
+            state.set_placeholder(source.region_placeholder(), window, cx);
+            state.set_value(source.default_region.unwrap_or_default(), window, cx);
+        });
+
         cx.notify();
     }
 
@@ -167,8 +127,7 @@ impl AccountsView {
             cx.notify();
             return;
         }
-        // DeepSeek doesn't require secret key
-        if sk.is_empty() && !matches!(self.selected_provider, CloudProvider::DeepSeek) {
+        if sk.is_empty() && self.selected_source.needs_secret_key() {
             self.error = Some("Please enter Secret Access Key".to_string());
             cx.notify();
             return;
@@ -177,7 +136,7 @@ impl AccountsView {
         let account = CloudAccount {
             id: Uuid::new_v4().to_string(),
             name,
-            provider: self.selected_provider,
+            source_id: self.selected_source.source_id(),
             access_key_id: ak,
             secret_access_key: sk,
             region: if region.is_empty() {
@@ -218,77 +177,31 @@ impl AccountsView {
     }
 
     fn validate_account(&mut self, account: &CloudAccount, cx: &mut Context<Self>) {
-        let account_name = account.name.clone();
-        let access_key_id = account.access_key_id.clone();
-        let secret_access_key = account.secret_access_key.clone();
-        let account_id = account.id.clone();
-        let provider = account.provider;
+        let Some(descriptor) = account.descriptor() else {
+            self.error = Some(format!(
+                "Account {} uses an unknown billing source",
+                account.name
+            ));
+            self.success = None;
+            cx.notify();
+            return;
+        };
 
-        // Set default region based on cloud provider
-        let region = account.region.clone().unwrap_or_else(|| match provider {
-            CloudProvider::AWS => "us-east-1".to_string(),
-            CloudProvider::Aliyun => "cn-hangzhou".to_string(),
-            CloudProvider::DeepSeek => String::new(),
-            _ => "us-east-1".to_string(),
-        });
+        let account_name = account.name.clone();
+        let context = account.context(descriptor);
 
         // Show validating status
         self.success = Some(format!("Validating account {}...", account_name));
         self.error = None;
         cx.notify();
 
-        let account_name_clone = account_name.clone();
-
         // Use standard thread to handle sync HTTP requests
         let (tx, rx) = std::sync::mpsc::channel::<Result<bool, String>>();
 
         std::thread::spawn(move || {
-            use crate::cloud::CloudService;
-
-            let result: Result<bool, String> = match provider {
-                CloudProvider::AWS => {
-                    let service = crate::cloud::aws::AwsCloudService::new(
-                        account_id,
-                        account_name,
-                        access_key_id,
-                        secret_access_key,
-                        Some(region),
-                    );
-                    match service.validate_credentials() {
-                        Ok(valid) => Ok(valid),
-                        Err(e) => Err(e.to_string()),
-                    }
-                }
-                CloudProvider::Aliyun => {
-                    let service = crate::cloud::aliyun::AliyunCloudService::new(
-                        account_id,
-                        account_name,
-                        access_key_id,
-                        secret_access_key,
-                        Some(region),
-                    );
-                    match service.validate_credentials() {
-                        Ok(valid) => Ok(valid),
-                        Err(e) => Err(e.to_string()),
-                    }
-                }
-                CloudProvider::DeepSeek => {
-                    let service = crate::cloud::deepseek::DeepSeekService::new(
-                        account_id,
-                        account_name,
-                        access_key_id,
-                        secret_access_key,
-                        Some(region),
-                    );
-                    match service.validate_credentials() {
-                        Ok(valid) => Ok(valid),
-                        Err(e) => Err(e.to_string()),
-                    }
-                }
-
-                _ => Err("Unsupported cloud provider".to_string()),
-            };
-
+            let result = (descriptor.build)(context)
+                .validate_credentials()
+                .map_err(|e| e.to_string());
             let _ = tx.send(result);
         });
 
@@ -305,17 +218,13 @@ impl AccountsView {
                 this.update(cx, |this, cx| {
                     match validation_result {
                         Ok(true) => {
-                            this.success = Some(format!(
-                                "Account {} validated successfully!",
-                                account_name_clone
-                            ));
+                            this.success =
+                                Some(format!("Account {} validated successfully!", account_name));
                             this.error = None;
                         }
                         Ok(false) => {
-                            this.error = Some(format!(
-                                "Account {} credentials invalid",
-                                account_name_clone
-                            ));
+                            this.error =
+                                Some(format!("Account {} credentials invalid", account_name));
                             this.success = None;
                         }
                         Err(e) => {
@@ -332,80 +241,35 @@ impl AccountsView {
         .detach();
     }
 
-    fn render_provider_selector(&self, cx: &Context<Self>) -> impl IntoElement {
-        let is_aws_selected = matches!(self.selected_provider, CloudProvider::AWS);
-        let is_aliyun_selected = matches!(self.selected_provider, CloudProvider::Aliyun);
-        let is_deepseek_selected = matches!(self.selected_provider, CloudProvider::DeepSeek);
-
+    fn render_source_selector(&self, cx: &Context<Self>) -> impl IntoElement {
         div()
             .h_flex()
             .gap_2()
-            .child(
+            .children(registry::all().iter().map(|source| {
+                let is_selected = source.id == self.selected_source.id;
+
                 div()
+                    .id(SharedString::from(source.id))
                     .px_4()
                     .py_2()
                     .rounded_md()
                     .cursor_pointer()
-                    .when(is_aws_selected, |el| {
+                    .when(is_selected, |el| {
                         el.bg(cx.theme().accent)
                             .text_color(cx.theme().accent_foreground)
                     })
-                    .when(!is_aws_selected, |el| {
+                    .when(!is_selected, |el| {
                         el.bg(cx.theme().muted)
                             .text_color(cx.theme().muted_foreground)
                     })
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|this, _, window, cx| {
-                            this.set_provider(CloudProvider::AWS, window, cx);
+                        cx.listener(move |this, _, window, cx| {
+                            this.set_source(source, window, cx);
                         }),
                     )
-                    .child("AWS"),
-            )
-            .child(
-                div()
-                    .px_4()
-                    .py_2()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .when(is_aliyun_selected, |el| {
-                        el.bg(cx.theme().accent)
-                            .text_color(cx.theme().accent_foreground)
-                    })
-                    .when(!is_aliyun_selected, |el| {
-                        el.bg(cx.theme().muted)
-                            .text_color(cx.theme().muted_foreground)
-                    })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, window, cx| {
-                            this.set_provider(CloudProvider::Aliyun, window, cx);
-                        }),
-                    )
-                    .child("Aliyun"),
-            )
-            .child(
-                div()
-                    .px_4()
-                    .py_2()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .when(is_deepseek_selected, |el| {
-                        el.bg(cx.theme().accent)
-                            .text_color(cx.theme().accent_foreground)
-                    })
-                    .when(!is_deepseek_selected, |el| {
-                        el.bg(cx.theme().muted)
-                            .text_color(cx.theme().muted_foreground)
-                    })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, window, cx| {
-                            this.set_provider(CloudProvider::DeepSeek, window, cx);
-                        }),
-                    )
-                    .child("DeepSeek"),
-            )
+                    .child(source.short_name)
+            }))
     }
 
     fn render_header(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -450,6 +314,7 @@ impl AccountsView {
     fn render_account_row(&self, account: &CloudAccount, cx: &Context<Self>) -> impl IntoElement {
         let account_id = account.id.clone();
         let account_for_validate = account.clone();
+        let short_name = account.short_name();
 
         div()
             .w_full()
@@ -476,7 +341,7 @@ impl AccountsView {
                             .bg(cx.theme().accent.opacity(0.1))
                             .text_color(cx.theme().accent)
                             .text_center()
-                            .child(account.provider.short_name()),
+                            .child(short_name),
                     )
                     .child(
                         div()
@@ -585,7 +450,7 @@ impl AccountsView {
                                     .v_flex()
                                     .gap_1()
                                     .child(div().text_sm().child("Cloud Provider"))
-                                    .child(self.render_provider_selector(cx)),
+                                    .child(self.render_source_selector(cx)),
                             )
                             .child(
                                 div()
