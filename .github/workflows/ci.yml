@@ -32,6 +32,8 @@ jobs:
         run: cargo clippy -- -D warnings
       - name: Check compilation
         run: cargo check
+      - name: Tests
+        run: cargo test
 
   security:
     runs-on: ubuntu-latest
