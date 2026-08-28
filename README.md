@@ -241,6 +241,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **[⬆ Back to Top](#cloudbridge)**
 
-Made with Github Copilot
-
 </div>
