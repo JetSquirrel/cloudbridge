@@ -76,7 +76,7 @@ impl AwsCloudService {
         all_headers.push(("x-amz-content-sha256".to_string(), payload_hash.clone()));
 
         // Sort by lowercase key
-        all_headers.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+        all_headers.sort_by_key(|(name, _)| name.to_lowercase());
 
         let canonical_headers: String = all_headers
             .iter()
@@ -363,7 +363,7 @@ impl AwsCloudService {
         all_headers.push(("x-amz-content-sha256".to_string(), payload_hash.clone()));
 
         // Sort by lowercase key
-        all_headers.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+        all_headers.sort_by_key(|(name, _)| name.to_lowercase());
 
         let canonical_headers: String = all_headers
             .iter()
