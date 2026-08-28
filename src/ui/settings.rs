@@ -110,29 +110,6 @@ impl Render for SettingsView {
                     cx,
                 ),
             )
-            // Data settings
-            .child(
-                self.render_section(
-                    "Data",
-                    div().v_flex().gap_3().child(
-                        div().h_flex().justify_between().items_center().child(
-                            div()
-                                .v_flex()
-                                .child(div().child("Data Refresh Interval"))
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(format!(
-                                            "{} minutes",
-                                            self.config.refresh_interval_minutes
-                                        )),
-                                ),
-                        ),
-                    ),
-                    cx,
-                ),
-            )
             // About
             .child(
                 self.render_section(
@@ -149,7 +126,7 @@ impl Render for SettingsView {
                                         .text_color(cx.theme().muted_foreground)
                                         .child("Version:"),
                                 )
-                                .child(div().child("0.1.0")),
+                                .child(div().child(env!("CARGO_PKG_VERSION"))),
                         )
                         .child(
                             div()
