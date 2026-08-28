@@ -6,12 +6,39 @@
     <meta name="description" content="CloudBridge - A cross-platform desktop application for multi-cloud cost management and visualization. Securely manage AWS, Alibaba Cloud, and DeepSeek costs with intelligent caching and a modern UI.">
     <meta name="keywords" content="cloud cost management, multi-cloud, AWS cost explorer, Alibaba Cloud billing, DeepSeek, FinOps, cost optimization">
     <meta name="theme-color" content="#3B82F6">
+    <link rel="canonical" href="https://jetsquirrel.github.io/cloudbridge/">
     <meta property="og:title" content="CloudBridge - Multi-Cloud Cost Management">
     <meta property="og:description" content="Securely visualize and analyze costs across AWS, Alibaba Cloud, and DeepSeek. All data stays on your machine, encrypted.">
     <meta property="og:type" content="website">
+    <meta property="og:url" content="https://jetsquirrel.github.io/cloudbridge/">
     <meta property="og:image" content="https://raw.githubusercontent.com/JetSquirrel/cloudbridge/main/images/cloudbridge.png">
+    <meta property="og:image:width" content="1920">
+    <meta property="og:image:height" content="1200">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="CloudBridge - Multi-Cloud Cost Management">
+    <meta name="twitter:description" content="Securely visualize and analyze costs across AWS, Alibaba Cloud, and DeepSeek. All data stays on your machine, encrypted.">
+    <meta name="twitter:image" content="https://raw.githubusercontent.com/JetSquirrel/cloudbridge/main/images/cloudbridge.png">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌉</text></svg>">
     <title>CloudBridge - Multi-Cloud Cost Management</title>
+
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "CloudBridge",
+        "url": "https://jetsquirrel.github.io/cloudbridge/",
+        "downloadUrl": "https://github.com/JetSquirrel/cloudbridge/releases",
+        "operatingSystem": "Windows, macOS",
+        "applicationCategory": "FinanceApplication",
+        "description": "A cross-platform desktop application for multi-cloud cost management and visualization. Securely manage AWS, Alibaba Cloud, and DeepSeek costs with intelligent caching and a modern UI.",
+        "license": "https://opensource.org/licenses/MIT",
+        "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "USD"
+        }
+    }
+    </script>
 
     <!-- Outfit Font -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -138,7 +165,13 @@
             list-style: none;
             overflow-x: auto;
             white-space: nowrap;
+            min-width: 0;
+            scrollbar-width: none;
             -webkit-overflow-scrolling: touch;
+        }
+
+        .nav-links::-webkit-scrollbar {
+            display: none;
         }
 
         .nav-links a {
@@ -288,9 +321,9 @@
         .platform-badge {
             display: inline-flex;
             align-items: center;
-            gap: 0.5rem;
             padding: 0.5rem 1rem;
             background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
             border-radius: var(--radius-md);
             font-size: 0.875rem;
             font-weight: 600;
@@ -812,8 +845,9 @@
                         <a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer" class="btn btn-outline">View on GitHub</a>
                     </div>
                     <div class="hero-badges">
-                        <span class="platform-badge">🪟 Windows</span>
-                        <span class="platform-badge">🍎 macOS (Intel &amp; Apple Silicon)</span>
+                        <span class="platform-badge">Windows</span>
+                        <span class="platform-badge">macOS (Intel &amp; Apple Silicon)</span>
+                        <span class="platform-badge">Free &amp; Open Source</span>
                     </div>
                 </div>
             </div>
@@ -822,7 +856,7 @@
         <!-- Screenshot Section -->
         <section class="screenshot">
             <div class="container">
-                <img src="cloudbridge.png" alt="CloudBridge dashboard showing monthly cost overview, per-service breakdown, and cost trend charts" width="1920" height="1200" loading="lazy">
+                <img src="cloudbridge.png" alt="CloudBridge dashboard showing monthly cost overview, per-service breakdown, and cost trend charts" width="1920" height="1200" loading="lazy" decoding="async">
             </div>
         </section>
 
