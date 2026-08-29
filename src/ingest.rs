@@ -106,6 +106,10 @@ fn persist(batch: &RawBatch) -> Result<PathBuf> {
 }
 
 /// Replace the period in the ledger with what the normalizer produced.
+///
+/// Balances go in first. A source that reports only a balance reports no
+/// purchases either, so its purchases are derived from the movement
+/// between observations — including the one just made.
 fn record(batch: &RawBatch, normalized: &Normalized, raw_path: &Path) -> Result<IngestOutcome> {
     let key = PeriodKey::new(
         batch.provider.clone(),
@@ -113,28 +117,35 @@ fn record(batch: &RawBatch, normalized: &Normalized, raw_path: &Path) -> Result<
         batch.period.label(),
     );
 
-    ledger::replace_period(
-        &key,
-        &batch.batch_id,
-        &normalized.charges,
-        Some(&raw_path.to_string_lossy()),
-    )?;
-
     for balance in &normalized.balances {
         ledger::record_balance(balance)?;
     }
+
+    let mut charges = normalized.charges.clone();
+    if !normalized.balances.is_empty() {
+        // Recomputed on every ingest rather than written once, because
+        // replacing the period clears whatever was there before.
+        charges.extend(ledger::top_up_charges(&key)?);
+    }
+
+    ledger::replace_period(
+        &key,
+        &batch.batch_id,
+        &charges,
+        Some(&raw_path.to_string_lossy()),
+    )?;
 
     tracing::info!(
         "Ingested {} {}: {} charge(s), {} balance(s)",
         batch.provider,
         batch.period.label(),
-        normalized.charges.len(),
+        charges.len(),
         normalized.balances.len()
     );
 
     Ok(IngestOutcome {
         batch_id: batch.batch_id.clone(),
-        charges: normalized.charges.len(),
+        charges: charges.len(),
         balances: normalized.balances.len(),
         raw_path: raw_path.to_path_buf(),
     })

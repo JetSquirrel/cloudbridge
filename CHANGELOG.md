@@ -38,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `charge_category` comes from the record type, so credits, refunds,
     taxes and support fees are each labelled as themselves instead of all
     reading as usage; amounts keep their sign
+- **Alibaba Cloud and DeepSeek land in the ledger** (roadmap P0/PR5)
+  - Each Alibaba Cloud voucher, coupon and discount becomes its own
+    `Credit` row beside a gross usage charge, so a product's rows sum to
+    what was actually charged; an unexplained gap becomes one `Adjustment`
+    row instead of vanishing
+  - DeepSeek balances are recorded as snapshots, and a rise in the
+    topped-up balance between observations is derived as a `Purchase`
 - **DeepSeek Integration**
   - DeepSeek API integration for balance queries
   - Display account balance instead of cost for DeepSeek accounts

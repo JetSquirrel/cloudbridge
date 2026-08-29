@@ -31,18 +31,18 @@ carry their weight for a personal ledger:
 
 ## Where we are
 
-PR1 through PR4 have landed. A source is a registry row rather than an
+PR1 through PR5 have landed. A source is a registry row rather than an
 enum variant; `billing.duckdb` holds `fct_charge`, `ingest_batch`,
 `fct_balance_snapshot` and `dim_fx_rate` behind a transactional
 whole-period write; every source fetches raw payloads to Parquet and
 normalizes them through a pure function, tested against a recorded
-response; and AWS lands as real FOCUS rows, with credits, refunds, taxes
-and fees each labelled as themselves.
+response; and all three sources land as real FOCUS rows.
 
-What is left in P0 is Alibaba Cloud and DeepSeek (PR5) and the read path
-(PR6). The dashboard still reads the two per-account cache tables in
-`cloudbridge.duckdb` — they go away in PR5, when the last source writes
-through the ledger.
+What is left in P0 is the read path (PR6). Nothing reads the ledger yet:
+the dashboard still calls each provider's display method and caches the
+result in the two per-account tables in `cloudbridge.duckdb`. Those go
+away with PR6, not before — they are the only thing feeding the UI until
+it reads through `v_charge_normalized`.
 
 One of the three structural problems is still open:
 
@@ -162,17 +162,36 @@ Three decisions worth recording:
   the unit `N/A`: a quantity like that is not stored, because it cannot be
   added to anything.
 
-### PR5 · Alibaba Cloud and DeepSeek
+### PR5 · Alibaba Cloud and DeepSeek — landed
 
 Alibaba Cloud `QueryBillOverview`: `PretaxAmount` to `billed_cost`,
 `PretaxGrossAmount` to `list_cost`, each voucher/deduction as its own
 `Credit` row. Currency CNY.
+
+As landed, the usage row carries the **gross** amount and each deduction
+is a negative `Credit` beside it. Putting the net amount on the usage row
+*and* the deductions next to it would count them twice — Alibaba Cloud
+reports both figures on the same line, unlike AWS, which bills the
+discount as a line of its own. Decomposed this way a product's rows sum to
+`PretaxAmount`, which is what was actually charged, and a total stays a
+plain sum. Where the named deductions do not close the gap between gross
+and net, the remainder becomes one `Adjustment` row rather than
+disappearing.
 
 DeepSeek reports a balance, which is state, not a charge. It moves to
 `fct_balance_snapshot`; only top-ups become `fct_charge` rows with
 `charge_category = Purchase`. The current code stuffs the balance into
 `current_month_cost`, which is semantically wrong and blocks any correct
 total.
+
+Top-ups are *derived*, not stored: a rise in the topped-up balance between
+two consecutive observations is the only evidence of a purchase such a
+source gives, and re-ingesting a period recomputes them, since replacing a
+period clears what was there. The first observation of an account yields
+nothing — a balance that was simply there the first time it was looked at
+was not witnessed being paid for. The display path still reports the
+balance as `current_month_cost`; that is PR6's to fix, along with
+everything else the dashboard reads.
 
 ### PR6 · Read through views, fix cross-currency
 

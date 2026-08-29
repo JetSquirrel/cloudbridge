@@ -232,6 +232,129 @@ pub fn record_balance(snapshot: &BalanceSnapshot) -> Result<()> {
     with_connection(|conn| write_balance(conn, snapshot))
 }
 
+/// Purchases derived from the balance history of one period.
+///
+/// A source that only reports a balance never reports a purchase: what it
+/// publishes is state — what is left — not what was bought. A rise in the
+/// topped-up balance between two consecutive observations is money that
+/// went in, and it is the only evidence of a purchase such a source gives.
+///
+/// Derived rather than stored, so that re-ingesting a period recomputes
+/// them: [`replace_period`] clears the period first, and a top-up that was
+/// only ever written once would not survive that.
+///
+/// The first observation of an account produces nothing. A balance that is
+/// simply *there* the first time it is looked at was not witnessed being
+/// paid for, and inventing a purchase for it would put the whole opening
+/// balance into whichever month the account happened to be added.
+pub fn top_up_charges(key: &PeriodKey) -> Result<Vec<Charge>> {
+    with_connection(|conn| derive_top_ups(conn, key))
+}
+
+fn derive_top_ups(conn: &Connection, key: &PeriodKey) -> Result<Vec<Charge>> {
+    let (period_start, period_end) = period_bounds(&key.billing_period)?;
+
+    // Everything up to the end of the period, so the observation that
+    // precedes the period can serve as the baseline for the first rise
+    // inside it.
+    let mut stmt = conn.prepare(
+        "SELECT currency, CAST(observed_at AS VARCHAR), topped_up_balance
+         FROM fct_balance_snapshot
+         WHERE provider = ? AND account_id = ? AND observed_at < CAST(? AS TIMESTAMP)
+         ORDER BY currency, observed_at",
+    )?;
+
+    let rows = stmt
+        .query_map(
+            params![
+                key.provider,
+                key.account_id,
+                period_end.format(TIMESTAMP_FORMAT).to_string()
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<f64>>(2)?,
+                ))
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut charges = Vec::new();
+    let mut previous: Option<(String, f64)> = None;
+
+    for (currency, observed_at, topped_up) in rows {
+        let observed_at = parse_timestamp(&observed_at)?;
+        let Some(topped_up) = topped_up else {
+            // Nothing to compare against, and nothing to compare from.
+            previous = None;
+            continue;
+        };
+
+        let baseline = previous
+            .take()
+            .filter(|(seen_currency, _)| seen_currency == &currency);
+        previous = Some((currency.clone(), topped_up));
+
+        let Some((_, before)) = baseline else {
+            continue;
+        };
+        let added = topped_up - before;
+        if added <= 0.0 || observed_at < period_start {
+            // A falling topped-up balance is consumption, not a purchase.
+            continue;
+        }
+
+        charges.push(Charge {
+            charge_category: ChargeCategory::Purchase,
+            charge_description: Some("Top-up".to_string()),
+            billed_cost: Some(added),
+            ..Charge::new(observed_at, observed_at, currency)
+        });
+    }
+
+    Ok(charges)
+}
+
+/// First instant of a `YYYY-MM` period and of the one after it.
+fn period_bounds(billing_period: &str) -> Result<(DateTime<Utc>, DateTime<Utc>)> {
+    let (year, month) = billing_period
+        .split_once('-')
+        .ok_or_else(|| anyhow!("Not a YYYY-MM billing period: {:?}", billing_period))?;
+    let year: i32 = year.parse()?;
+    let month: u32 = month.parse()?;
+
+    let start = chrono::NaiveDate::from_ymd_opt(year, month, 1)
+        .ok_or_else(|| anyhow!("Not a real billing period: {:?}", billing_period))?;
+    let next = if month == 12 {
+        chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
+    } else {
+        chrono::NaiveDate::from_ymd_opt(year, month + 1, 1)
+    }
+    .expect("the month after a real one exists");
+
+    Ok((
+        start
+            .and_hms_opt(0, 0, 0)
+            .expect("midnight exists")
+            .and_utc(),
+        next.and_hms_opt(0, 0, 0)
+            .expect("midnight exists")
+            .and_utc(),
+    ))
+}
+
+/// Parse a timestamp as DuckDB renders it, `YYYY-MM-DD HH:MM:SS` in UTC.
+fn parse_timestamp(value: &str) -> Result<DateTime<Utc>> {
+    let stamp = value.split('.').next().unwrap_or(value);
+    Ok(
+        chrono::NaiveDateTime::parse_from_str(stamp, TIMESTAMP_FORMAT)
+            .map_err(|e| anyhow!("Unexpected timestamp {:?} in the ledger: {}", value, e))?
+            .and_utc(),
+    )
+}
+
 fn write_period(
     conn: &mut Connection,
     key: &PeriodKey,
@@ -610,6 +733,93 @@ mod tests {
         assert_eq!(basis, "absent");
         assert_eq!(unit, "Tokens");
         assert_eq!(cost, None);
+    }
+
+    fn balance(day: u32, topped_up: f64) -> BalanceSnapshot {
+        BalanceSnapshot {
+            provider: "DeepSeek".to_string(),
+            account_id: "acct-3".to_string(),
+            observed_at: at(day),
+            balance: topped_up + 5.0,
+            granted_balance: Some(5.0),
+            topped_up_balance: Some(topped_up),
+            currency: "CNY".to_string(),
+        }
+    }
+
+    fn deepseek_key() -> PeriodKey {
+        PeriodKey::new("DeepSeek", "acct-3", "2026-08")
+    }
+
+    #[test]
+    fn a_rise_in_the_topped_up_balance_is_a_purchase() {
+        let mut conn = conn();
+
+        write_balance(&mut conn, &balance(1, 20.0)).unwrap();
+        write_balance(&mut conn, &balance(2, 100.0)).unwrap();
+        // Spending brings it back down; that is not a purchase.
+        write_balance(&mut conn, &balance(3, 60.0)).unwrap();
+        write_balance(&mut conn, &balance(4, 160.0)).unwrap();
+
+        let charges = derive_top_ups(&conn, &deepseek_key()).unwrap();
+
+        assert_eq!(charges.len(), 2);
+        assert_eq!(charges[0].billed_cost, Some(80.0));
+        assert_eq!(charges[1].billed_cost, Some(100.0));
+        assert!(charges
+            .iter()
+            .all(|charge| charge.charge_category == ChargeCategory::Purchase));
+        assert_eq!(charges[0].billing_currency, "CNY");
+        assert_eq!(charges[0].charge_period_start, at(2));
+    }
+
+    #[test]
+    fn the_first_observation_of_an_account_is_not_a_purchase() {
+        let mut conn = conn();
+        write_balance(&mut conn, &balance(1, 500.0)).unwrap();
+
+        // A balance that was simply there the first time it was looked at
+        // was not witnessed being paid for.
+        assert!(derive_top_ups(&conn, &deepseek_key()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_top_up_across_a_month_boundary_belongs_to_the_month_it_was_seen_in() {
+        let mut conn = conn();
+
+        let july = BalanceSnapshot {
+            observed_at: Utc.with_ymd_and_hms(2026, 7, 31, 12, 0, 0).unwrap(),
+            ..balance(1, 20.0)
+        };
+        write_balance(&mut conn, &july).unwrap();
+        write_balance(&mut conn, &balance(1, 120.0)).unwrap();
+
+        // July has the baseline but no rise of its own.
+        let in_july =
+            derive_top_ups(&conn, &PeriodKey::new("DeepSeek", "acct-3", "2026-07")).unwrap();
+        assert!(in_july.is_empty());
+
+        let in_august = derive_top_ups(&conn, &deepseek_key()).unwrap();
+        assert_eq!(in_august.len(), 1);
+        assert_eq!(in_august[0].billed_cost, Some(100.0));
+    }
+
+    #[test]
+    fn balances_in_different_currencies_do_not_derive_purchases_from_each_other() {
+        let mut conn = conn();
+
+        write_balance(&mut conn, &balance(1, 20.0)).unwrap();
+        write_balance(
+            &mut conn,
+            &BalanceSnapshot {
+                currency: "USD".to_string(),
+                topped_up_balance: Some(300.0),
+                ..balance(1, 300.0)
+            },
+        )
+        .unwrap();
+
+        assert!(derive_top_ups(&conn, &deepseek_key()).unwrap().is_empty());
     }
 
     #[test]

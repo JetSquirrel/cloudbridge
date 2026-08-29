@@ -12,7 +12,7 @@ use super::{
     BillingPeriod, BillingSource, CostData, CostSummary, Normalized, RawBatch, ServiceCost,
     SourceId,
 };
-use crate::ledger::Charge;
+use crate::ledger::{Charge, ChargeCategory};
 
 type HmacSha1 = Hmac<Sha1>;
 
@@ -412,17 +412,25 @@ fn parse_bill_overview(response: &BillOverviewResponse) -> (f64, Vec<ServiceCost
 /// Name the bill overview payload is stored under in a raw batch.
 const PART_BILL_OVERVIEW: &str = "bill_overview";
 
+/// Description given to the row that closes the gap when the named
+/// deductions do not add up to the difference between gross and net.
+const UNRECONCILED: &str = "Unreconciled";
+
+/// Half a fen. Below this the gap is rounding, not a missing deduction.
+const RECONCILIATION_TOLERANCE: f64 = 0.005;
+
 /// Turn a fetched `QueryBillOverview` payload into ledger rows.
 ///
 /// Pure — every input is in `batch`. The overview is per product for the
-/// whole month, so one row covers the entire billing period; instance-level
-/// detail arrives with the bill export channel in P1.
+/// whole month, so one row covers the entire billing period;
+/// instance-level detail arrives with the bill export channel in P1.
 ///
-/// `PretaxAmount` is what was charged after discounts and vouchers, so it
-/// is `billed_cost`, and `PretaxGrossAmount` is the undiscounted figure, so
-/// it is `list_cost`. The difference between them is a deduction that PR5
-/// will emit as its own `Credit` row; until then it is visible as the gap
-/// between the two columns rather than being invented as a charge.
+/// Each product becomes a `Usage` charge at its **gross** amount plus one
+/// `Credit` row per deduction that reduced it. Alibaba Cloud reports both
+/// figures on one line, and putting the net amount on the usage row *and*
+/// the deductions beside it would count them twice. Decomposed this way
+/// the rows sum to `PretaxAmount` — what was actually charged — while
+/// still saying what the discount was worth and where it came from.
 pub fn normalize(batch: &RawBatch) -> Result<Normalized> {
     let part = batch
         .part(PART_BILL_OVERVIEW)
@@ -451,26 +459,61 @@ pub fn normalize(batch: &RawBatch) -> Result<Normalized> {
 
     let mut charges = Vec::new();
     for item in items {
-        let billed = item.pretax_amount.unwrap_or(0.0);
-        let list = item.pretax_gross_amount.unwrap_or(0.0);
-        // A product with nothing on either side of the discount was not
+        let net = item.pretax_amount.unwrap_or(0.0);
+        let gross = item.pretax_gross_amount.unwrap_or(0.0);
+        // A product with nothing on either side of the deductions was not
         // used this month.
-        if billed == 0.0 && list == 0.0 {
+        if net == 0.0 && gross == 0.0 {
             continue;
         }
 
-        charges.push(Charge {
-            service_name: item.product_name,
+        let currency = item.currency.clone().unwrap_or_else(|| "CNY".to_string());
+        let template = || Charge {
+            service_name: item.product_name.clone(),
             // ProductCode is stable across locales; ProductName is not.
-            service_category: item.product_code,
-            billed_cost: Some(billed),
-            list_cost: Some(list),
-            ..Charge::new(
-                start,
-                end,
-                item.currency.unwrap_or_else(|| "CNY".to_string()),
-            )
+            service_category: item.product_code.clone(),
+            ..Charge::new(start, end, currency.clone())
+        };
+
+        charges.push(Charge {
+            billed_cost: Some(gross),
+            list_cost: Some(gross),
+            ..template()
         });
+
+        let mut deducted = 0.0;
+        for (name, amount) in item.deductions() {
+            if amount == 0.0 {
+                continue;
+            }
+            deducted += amount;
+            charges.push(Charge {
+                charge_category: ChargeCategory::Credit,
+                charge_description: Some(name.to_string()),
+                billed_cost: Some(-amount),
+                ..template()
+            });
+        }
+
+        // Anything left between gross, the deductions we know the names of,
+        // and the net figure is money the bill accounts for and this parser
+        // does not. Recording it keeps the total honest and makes the gap
+        // visible instead of losing it.
+        let residual = gross - deducted - net;
+        if residual.abs() > RECONCILIATION_TOLERANCE {
+            tracing::warn!(
+                "Alibaba Cloud bill for {} does not reconcile: {:.2} {} unaccounted for",
+                item.product_name.as_deref().unwrap_or("?"),
+                residual,
+                currency
+            );
+            charges.push(Charge {
+                charge_category: ChargeCategory::Adjustment,
+                charge_description: Some(UNRECONCILED.to_string()),
+                billed_cost: Some(-residual),
+                ..template()
+            });
+        }
     }
 
     Ok(Normalized {
@@ -525,10 +568,39 @@ struct BillOverviewItems {
 struct BillOverviewItem {
     product_code: Option<String>,
     product_name: Option<String>,
+    /// `Subscription` (prepaid) or `PayAsYouGo`.
+    subscription_type: Option<String>,
+    /// What was charged, after every deduction below.
     pretax_amount: Option<f64>,
+    /// What it would have cost before any of them.
     #[serde(rename = "PretaxGrossAmount")]
     pretax_gross_amount: Option<f64>,
+    /// Negotiated or activity discount.
+    invoice_discount: Option<f64>,
+    /// Coupons (代金券), cash coupons and stored-value cards.
+    deducted_by_coupons: Option<f64>,
+    deducted_by_cash_coupons: Option<f64>,
+    deducted_by_prepaid_card: Option<f64>,
     currency: Option<String>,
+}
+
+impl BillOverviewItem {
+    /// The deductions between the gross and the net amount, each named as
+    /// Alibaba Cloud names it.
+    fn deductions(&self) -> [(&'static str, f64); 4] {
+        [
+            ("InvoiceDiscount", self.invoice_discount.unwrap_or(0.0)),
+            ("DeductedByCoupons", self.deducted_by_coupons.unwrap_or(0.0)),
+            (
+                "DeductedByCashCoupons",
+                self.deducted_by_cash_coupons.unwrap_or(0.0),
+            ),
+            (
+                "DeductedByPrepaidCard",
+                self.deducted_by_prepaid_card.unwrap_or(0.0),
+            ),
+        ]
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -572,7 +644,7 @@ struct InstanceBillItem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ledger::{ChargeCategory, CostBasis};
+    use crate::ledger::CostBasis;
 
     /// One recorded QueryBillOverview response.
     const BILL_OVERVIEW: &str = include_str!("testdata/aliyun_bill_overview.json");
@@ -588,21 +660,109 @@ mod tests {
         }
     }
 
+    /// Rows for one product, in the order the normalizer emitted them.
+    fn rows<'a>(normalized: &'a Normalized, product: &str) -> Vec<&'a Charge> {
+        normalized
+            .charges
+            .iter()
+            .filter(|charge| charge.service_category.as_deref() == Some(product))
+            .collect()
+    }
+
     #[test]
-    fn a_recorded_overview_normalizes_to_one_charge_per_product() {
+    fn a_product_becomes_a_gross_usage_charge() {
         let normalized = normalize(&recorded_batch(BILL_OVERVIEW)).unwrap();
 
-        // The unused CDN product is dropped.
-        assert_eq!(normalized.charges.len(), 2);
+        let oss = rows(&normalized, "oss");
+        assert_eq!(oss.len(), 1, "nothing was deducted from OSS");
 
-        let ecs = &normalized.charges[0];
-        assert_eq!(ecs.service_name.as_deref(), Some("云服务器 ECS"));
-        assert_eq!(ecs.service_category.as_deref(), Some("ecs"));
-        assert_eq!(ecs.billed_cost, Some(288.45));
-        assert_eq!(ecs.list_cost, Some(320.5));
-        assert_eq!(ecs.billing_currency, "CNY");
-        assert_eq!(ecs.charge_category, ChargeCategory::Usage);
-        assert_eq!(ecs.cost_basis, CostBasis::Authoritative);
+        let charge = oss[0];
+        assert_eq!(charge.service_name.as_deref(), Some("对象存储 OSS"));
+        assert_eq!(charge.billed_cost, Some(42.0));
+        assert_eq!(charge.list_cost, Some(42.0));
+        assert_eq!(charge.billing_currency, "CNY");
+        assert_eq!(charge.charge_category, ChargeCategory::Usage);
+        assert_eq!(charge.cost_basis, CostBasis::Authoritative);
+
+        // The unused CDN product is dropped entirely.
+        assert!(rows(&normalized, "cdn").is_empty());
+    }
+
+    #[test]
+    fn each_deduction_becomes_its_own_credit_row() {
+        let normalized = normalize(&recorded_batch(BILL_OVERVIEW)).unwrap();
+        let ecs = rows(&normalized, "ecs");
+
+        assert_eq!(ecs[0].billed_cost, Some(320.5));
+        assert_eq!(ecs[0].charge_category, ChargeCategory::Usage);
+
+        let credits: Vec<(&str, Option<f64>)> = ecs[1..]
+            .iter()
+            .map(|charge| {
+                (
+                    charge.charge_description.as_deref().unwrap(),
+                    charge.billed_cost,
+                )
+            })
+            .collect();
+        assert_eq!(
+            credits,
+            vec![
+                ("InvoiceDiscount", Some(-22.05)),
+                ("DeductedByCoupons", Some(-10.0)),
+            ]
+        );
+        assert!(ecs[1..]
+            .iter()
+            .all(|charge| charge.charge_category == ChargeCategory::Credit));
+    }
+
+    #[test]
+    fn a_products_rows_sum_to_what_was_actually_charged() {
+        let normalized = normalize(&recorded_batch(BILL_OVERVIEW)).unwrap();
+
+        // PretaxAmount for ECS is 288.45, for OSS 42.00, for RDS 62.00.
+        for (product, charged) in [("ecs", 288.45), ("oss", 42.0), ("rds", 62.0)] {
+            let total: f64 = rows(&normalized, product)
+                .iter()
+                .filter_map(|charge| charge.billed_cost)
+                .sum();
+            assert!(
+                (total - charged).abs() < 1e-9,
+                "{product}: {total} != {charged}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_deduction_this_parser_cannot_name_is_still_accounted_for() {
+        let normalized = normalize(&recorded_batch(BILL_OVERVIEW)).unwrap();
+        let rds = rows(&normalized, "rds");
+
+        // RDS: 100.00 gross, 30.00 off a stored-value card, 62.00 charged.
+        // The remaining 8.00 is a deduction under a name this parser does
+        // not know; it is recorded rather than dropped.
+        let unreconciled = rds
+            .iter()
+            .find(|charge| charge.charge_description.as_deref() == Some(UNRECONCILED))
+            .expect("the gap is recorded");
+        assert_eq!(unreconciled.billed_cost, Some(-8.0));
+        assert_eq!(unreconciled.charge_category, ChargeCategory::Adjustment);
+    }
+
+    #[test]
+    fn rounding_does_not_produce_a_reconciliation_row() {
+        let normalized = normalize(&recorded_batch(
+            r#"{"Code":"Success","Data":{"Items":{"Item":[
+                 {"ProductCode":"ecs","ProductName":"ECS","PretaxGrossAmount":10.0,
+                  "InvoiceDiscount":0.001,"PretaxAmount":9.999,"Currency":"CNY"}]}}}"#,
+        ))
+        .unwrap();
+
+        assert!(normalized
+            .charges
+            .iter()
+            .all(|charge| charge.charge_description.as_deref() != Some(UNRECONCILED)));
     }
 
     #[test]
