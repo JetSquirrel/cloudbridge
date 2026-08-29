@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="CloudBridge - A cross-platform desktop application for multi-cloud cost management and visualization. Securely manage AWS, Alibaba Cloud, and DeepSeek costs with intelligent caching and a modern UI.">
     <meta name="keywords" content="cloud cost management, multi-cloud, AWS cost explorer, Alibaba Cloud billing, DeepSeek, FinOps, cost optimization">
-    <meta name="theme-color" content="#3B82F6">
+    <meta name="theme-color" content="#0E1420">
     <link rel="canonical" href="https://jetsquirrel.github.io/cloudbridge/">
     <meta property="og:title" content="CloudBridge - Multi-Cloud Cost Management">
     <meta property="og:description" content="Securely visualize and analyze costs across AWS, Alibaba Cloud, and DeepSeek. All data stays on your machine, encrypted.">
@@ -40,10 +40,10 @@
     }
     </script>
 
-    <!-- Outfit Font -->
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 
     <style>
         /* Reset & Base */
@@ -58,56 +58,73 @@
         }
 
         body {
-            font-family: 'Outfit', sans-serif;
-            color: #111827;
-            background: #FFFFFF;
+            font-family: 'IBM Plex Sans', sans-serif;
+            color: #47536B;
+            background: #FAFBFC;
             line-height: 1.6;
             overflow-x: hidden;
         }
 
         /* Design Tokens */
         :root {
-            --bg-white: #FFFFFF;
-            --fg-gray-900: #111827;
-            --fg-gray-600: #4B5563;
-            --primary: #3B82F6;
-            --primary-dark: #2563EB;
-            --secondary: #10B981;
-            --accent: #F59E0B;
-            --muted: #F3F4F6;
-            --border: #E5E7EB;
-            --radius-md: 6px;
-            --radius-lg: 8px;
-            --nav-height: 5rem;
+            --ink: #0E1420;
+            --panel: #151E30;
+            --paper: #FAFBFC;
+            --hairline: #E3E8EF;
+            --hairline-dark: #263349;
+            --fg-strong: #101828;
+            --fg-body: #47536B;
+            --fg-faint: #7A8699;
+            --signal: #2F6FED;
+            --signal-dark: #1F5BD8;
+            --aws: #E8830C;
+            --aliyun: #E14D43;
+            --deepseek: #4D6BFE;
+            --local: #2FA97C;
+            --radius: 6px;
+            --nav-height: 4.5rem;
+            --font-display: 'Space Grotesk', sans-serif;
+            --font-mono: 'IBM Plex Mono', monospace;
         }
 
         /* Typography */
         h1, h2, h3 {
-            font-weight: 800;
+            font-family: var(--font-display);
+            color: var(--fg-strong);
             letter-spacing: -0.02em;
-            line-height: 1.1;
+            line-height: 1.08;
         }
 
         h1 {
-            font-size: 4rem;
+            font-size: 3.75rem;
+            font-weight: 700;
         }
 
         h2 {
-            font-size: 3rem;
+            font-size: 2.25rem;
+            font-weight: 700;
         }
 
         h3 {
-            font-size: 1.5rem;
+            font-size: 1.125rem;
+            font-weight: 600;
         }
 
-        p {
-            font-weight: 400;
-            font-size: 1.125rem;
+        .mono {
+            font-family: var(--font-mono);
+        }
+
+        .eyebrow {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            font-weight: 500;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
         }
 
         /* Container */
         .container {
-            max-width: 1280px;
+            max-width: 1200px;
             margin: 0 auto;
             padding: 0 2rem;
         }
@@ -117,12 +134,13 @@
             position: absolute;
             left: -9999px;
             top: 0;
-            background: var(--fg-gray-900);
-            color: var(--bg-white);
+            background: var(--ink);
+            color: #fff;
             padding: 0.75rem 1.25rem;
             z-index: 200;
             text-decoration: none;
-            border-radius: 0 0 var(--radius-md) 0;
+            font-family: var(--font-mono);
+            font-size: 0.875rem;
         }
 
         .skip-link:focus {
@@ -131,15 +149,15 @@
 
         /* Navigation */
         nav {
-            background: var(--bg-white);
-            padding: 0 1rem;
+            background: var(--paper);
+            border-bottom: 1px solid var(--hairline);
             height: var(--nav-height);
             display: flex;
             align-items: center;
+            padding: 0 1rem;
             position: sticky;
             top: 0;
             z-index: 100;
-            border-bottom: 2px solid var(--border);
         }
 
         nav .container {
@@ -151,12 +169,24 @@
         }
 
         .logo {
-            font-size: 1.5rem;
-            font-weight: 800;
-            color: var(--primary);
+            display: inline-flex;
+            align-items: center;
+            gap: 0.6rem;
+            font-family: var(--font-display);
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--fg-strong);
             text-decoration: none;
             letter-spacing: -0.02em;
             white-space: nowrap;
+        }
+
+        .logo::before {
+            content: '';
+            width: 0.6rem;
+            height: 0.6rem;
+            background: var(--local);
+            flex-shrink: 0;
         }
 
         .nav-links {
@@ -175,17 +205,17 @@
         }
 
         .nav-links a {
-            color: var(--fg-gray-900);
+            font-family: var(--font-mono);
+            color: var(--fg-body);
             text-decoration: none;
-            font-weight: 600;
-            font-size: 0.875rem;
+            font-size: 0.8125rem;
+            letter-spacing: 0.08em;
             text-transform: uppercase;
-            letter-spacing: 0.05em;
-            transition: color 0.2s;
+            transition: color 0.15s;
         }
 
         .nav-links a:hover {
-            color: var(--primary);
+            color: var(--signal);
         }
 
         /* Buttons */
@@ -193,15 +223,15 @@
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            padding: 0.875rem 1.75rem;
-            border-radius: var(--radius-md);
+            padding: 0.8rem 1.6rem;
+            border-radius: var(--radius);
+            font-family: var(--font-display);
             font-weight: 600;
-            font-size: 1rem;
+            font-size: 0.9375rem;
             text-decoration: none;
-            text-align: center;
-            transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+            border: 1px solid transparent;
             cursor: pointer;
-            border: 2px solid transparent;
+            transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
         }
 
         .btn:hover {
@@ -209,24 +239,23 @@
         }
 
         .btn-primary {
-            background: var(--primary);
-            color: var(--bg-white);
+            background: var(--signal);
+            color: #fff;
         }
 
         .btn-primary:hover {
-            background: var(--primary-dark);
-            box-shadow: 0 6px 16px rgba(59, 130, 246, 0.3);
+            background: var(--signal-dark);
         }
 
         .btn-outline {
             background: transparent;
-            color: var(--primary);
-            border-color: var(--primary);
+            color: var(--signal);
+            border-color: var(--signal);
         }
 
         .btn-outline:hover {
-            background: var(--primary);
-            color: var(--bg-white);
+            background: var(--signal);
+            color: #fff;
         }
 
         /* Anchored sections clear the sticky nav */
@@ -234,419 +263,423 @@
             scroll-margin-top: calc(var(--nav-height) + 1rem);
         }
 
-        /* Hero Section */
+        /* Hero */
         .hero {
-            background: var(--primary);
-            color: var(--bg-white);
-            padding: 8rem 0;
+            background: var(--ink);
+            color: #C4CEDE;
+            padding: 6.5rem 0;
             position: relative;
-            overflow: hidden;
         }
 
-        .hero::before {
-            content: '';
-            position: absolute;
-            width: 600px;
-            height: 600px;
-            border-radius: 50%;
-            background: rgba(255, 255, 255, 0.05);
-            top: -200px;
-            right: -100px;
+        .hero-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+            gap: 4rem;
+            align-items: center;
         }
 
-        .hero::after {
-            content: '';
-            position: absolute;
-            width: 400px;
-            height: 400px;
-            border-radius: var(--radius-lg);
-            background: rgba(255, 255, 255, 0.03);
-            bottom: -100px;
-            left: -50px;
-            transform: rotate(45deg);
-        }
-
-        .hero .container {
-            position: relative;
-            z-index: 2;
-        }
-
-        .hero-content {
-            max-width: 800px;
-        }
-
-        .hero h1 {
+        .hero .eyebrow {
+            color: var(--local);
+            display: block;
             margin-bottom: 1.5rem;
         }
 
-        .hero p {
-            font-size: 1.5rem;
-            margin-bottom: 3rem;
-            opacity: 0.95;
+        .hero h1 {
+            color: #fff;
+            margin-bottom: 1.5rem;
+        }
+
+        .hero h1 .accent {
+            color: var(--local);
+        }
+
+        .hero-sub {
+            font-size: 1.125rem;
+            max-width: 34rem;
+            margin-bottom: 2.5rem;
         }
 
         .hero-buttons {
             display: flex;
             gap: 1rem;
             flex-wrap: wrap;
-        }
-
-        .hero .btn-primary {
-            background: var(--bg-white);
-            color: var(--primary);
-        }
-
-        .hero .btn-primary:hover {
-            background: var(--muted);
-            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+            margin-bottom: 2rem;
         }
 
         .hero .btn-outline {
-            border-color: var(--bg-white);
-            color: var(--bg-white);
+            color: #C4CEDE;
+            border-color: var(--hairline-dark);
         }
 
         .hero .btn-outline:hover {
-            background: var(--bg-white);
-            color: var(--primary);
+            background: #fff;
+            border-color: #fff;
+            color: var(--ink);
         }
 
         .hero-badges {
             display: flex;
-            gap: 0.75rem;
+            gap: 0.5rem;
             flex-wrap: wrap;
-            margin-top: 2rem;
         }
 
-        .platform-badge {
-            display: inline-flex;
-            align-items: center;
-            padding: 0.5rem 1rem;
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: var(--radius-md);
-            font-size: 0.875rem;
-            font-weight: 600;
+        .hero-badges span {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--fg-faint);
+            border: 1px solid var(--hairline-dark);
+            border-radius: var(--radius);
+            padding: 0.3rem 0.7rem;
         }
 
-        /* Screenshot Section */
-        .screenshot {
-            background: var(--bg-white);
-            padding: 4rem 0 0;
+        /* Convergence chart (signature) */
+        .converge {
+            background: var(--panel);
+            border: 1px solid var(--hairline-dark);
+            border-radius: var(--radius);
+            padding: 1.5rem 1.5rem 1rem;
         }
 
-        .screenshot img {
+        .converge svg {
             display: block;
             width: 100%;
-            max-width: 1080px;
-            margin: 0 auto;
-            border: 1px solid var(--border);
-            border-radius: var(--radius-lg);
-            box-shadow: 0 24px 64px rgba(17, 24, 39, 0.12);
+            height: auto;
         }
 
-        /* Stats Section */
-        .stats {
-            background: var(--bg-white);
-            padding: 4rem 0;
+        .converge .stream {
+            fill: none;
+            stroke-width: 2;
+            stroke-dasharray: 1000;
+            stroke-dashoffset: 1000;
+            animation: draw 1.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
         }
 
-        .stats-grid {
+        .converge .stream.aws { stroke: var(--aws); animation-delay: 0.15s; }
+        .converge .stream.aliyun { stroke: var(--aliyun); animation-delay: 0.35s; }
+        .converge .stream.deepseek { stroke: var(--deepseek); animation-delay: 0.55s; }
+        .converge .stream.merged { stroke: var(--local); stroke-width: 2.5; animation-delay: 1.1s; }
+
+        @keyframes draw {
+            to { stroke-dashoffset: 0; }
+        }
+
+        .converge text {
+            font-family: var(--font-mono);
+        }
+
+        .converge .fade-in {
+            opacity: 0;
+            animation: fade 0.6s ease forwards;
+        }
+
+        @keyframes fade {
+            to { opacity: 1; }
+        }
+
+        .converge figcaption {
+            font-family: var(--font-mono);
+            font-size: 0.6875rem;
+            color: var(--fg-faint);
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--hairline-dark);
+            margin-top: 0.75rem;
+        }
+
+        /* Ledger strip */
+        .ledger-strip {
+            background: var(--paper);
+            border-bottom: 1px solid var(--hairline);
+        }
+
+        .ledger-strip .row {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 2rem;
+            grid-template-columns: repeat(4, 1fr);
         }
 
-        .stat-card {
-            text-align: center;
-            padding: 2rem;
+        .ledger-cell {
+            padding: 2rem 1.5rem;
+            border-left: 1px solid var(--hairline);
         }
 
-        .stat-number {
-            font-size: 4rem;
-            font-weight: 800;
-            line-height: 1;
-            margin-bottom: 0.5rem;
+        .ledger-cell:first-child {
+            border-left: none;
+            padding-left: 0;
+        }
+
+        .ledger-cell .value {
+            font-family: var(--font-display);
+            font-size: 1.875rem;
+            font-weight: 700;
+            color: var(--fg-strong);
+            letter-spacing: -0.02em;
+            line-height: 1.1;
             white-space: nowrap;
         }
 
-        .stat-card:nth-child(odd) .stat-number {
-            color: var(--primary);
-        }
-
-        .stat-card:nth-child(2) .stat-number {
-            color: var(--secondary);
-        }
-
-        .stat-card:nth-child(3) .stat-number {
-            color: var(--accent);
-        }
-
-        .stat-label {
-            font-size: 1rem;
-            font-weight: 600;
+        .ledger-cell .label {
+            font-family: var(--font-mono);
+            font-size: 0.6875rem;
+            letter-spacing: 0.12em;
             text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--fg-gray-900);
+            color: var(--fg-faint);
+            margin-top: 0.35rem;
         }
 
-        /* Features Section */
-        .features {
-            background: var(--muted);
-            padding: 8rem 0;
+        /* Sections */
+        .section {
+            padding: 6rem 0;
         }
 
-        .section-header {
-            text-align: center;
-            margin-bottom: 4rem;
-        }
-
-        .section-header h2 {
-            margin-bottom: 1rem;
-        }
-
-        .section-header p {
-            font-size: 1.25rem;
-            color: var(--fg-gray-600);
-            max-width: 600px;
-            margin: 0 auto;
-        }
-
-        .features-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        .section-head {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
             gap: 2rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--hairline);
+            margin-bottom: 0;
         }
 
-        .feature-card {
-            background: var(--bg-white);
-            padding: 2rem;
-            border-radius: var(--radius-lg);
-            border: 1px solid var(--border);
-            transition: transform 0.15s ease, box-shadow 0.15s ease;
+        .section-head .eyebrow {
+            color: var(--fg-faint);
         }
 
-        .feature-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 12px 32px rgba(17, 24, 39, 0.08);
+        /* App window (screenshot) */
+        .app-window {
+            margin-top: 3rem;
+            border: 1px solid var(--hairline);
+            border-radius: var(--radius);
+            overflow: hidden;
+            background: var(--ink);
+            box-shadow: 0 24px 64px rgba(14, 20, 32, 0.14);
         }
 
-        .feature-icon {
-            width: 4rem;
-            height: 4rem;
-            border-radius: 50%;
+        .app-chrome {
             display: flex;
             align-items: center;
-            justify-content: center;
-            margin-bottom: 1.5rem;
-            font-size: 2rem;
-            background: var(--bg-white);
+            gap: 0.5rem;
+            padding: 0.65rem 1rem;
+            border-bottom: 1px solid var(--hairline-dark);
         }
 
-        .feature-card:nth-child(3n+1) .feature-icon {
-            color: var(--primary);
-            border: 2px solid var(--primary);
-        }
-
-        .feature-card:nth-child(3n+2) .feature-icon {
-            color: var(--secondary);
-            border: 2px solid var(--secondary);
-        }
-
-        .feature-card:nth-child(3n) .feature-icon {
-            color: var(--accent);
-            border: 2px solid var(--accent);
-        }
-
-        .feature-card h3 {
-            margin-bottom: 1rem;
-        }
-
-        .feature-card p {
-            color: var(--fg-gray-600);
-            font-size: 1rem;
-        }
-
-        /* How It Works Section */
-        .how-it-works {
-            background: #1F2937;
-            color: var(--bg-white);
-            padding: 8rem 0;
-            position: relative;
-        }
-
-        .how-it-works::before {
-            content: '';
-            position: absolute;
-            width: 500px;
-            height: 500px;
+        .app-chrome .dot {
+            width: 0.65rem;
+            height: 0.65rem;
             border-radius: 50%;
-            background: rgba(59, 130, 246, 0.05);
-            top: -150px;
-            left: -150px;
+            background: var(--hairline-dark);
         }
 
-        .how-it-works .section-header p {
-            color: #D1D5DB;
+        .app-chrome .app-title {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--fg-faint);
+            margin-left: 0.75rem;
         }
 
-        .steps-grid {
+        .app-window img {
+            display: block;
+            width: 100%;
+            height: auto;
+        }
+
+        /* Features ledger */
+        .ledger {
+            border-top: 1px solid var(--hairline);
+        }
+
+        .ledger-row {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 3rem;
-            position: relative;
-            z-index: 2;
+            grid-template-columns: minmax(220px, 320px) 1fr;
+            gap: 2rem;
+            padding: 1.75rem 0;
+            border-bottom: 1px solid var(--hairline);
+            align-items: baseline;
+        }
+
+        .ledger-row .tag {
+            font-family: var(--font-mono);
+            font-size: 0.6875rem;
+            font-weight: 500;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--signal);
+            display: block;
+            margin-bottom: 0.5rem;
+        }
+
+        .ledger-row p {
+            font-size: 1rem;
+            max-width: 44rem;
+        }
+
+        /* Steps */
+        .steps {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0;
+            border: 1px solid var(--hairline);
+            border-radius: var(--radius);
+            margin-top: 3rem;
+            background: #fff;
         }
 
         .step {
-            text-align: center;
+            padding: 2rem;
+            border-left: 1px solid var(--hairline);
         }
 
-        .step-number {
-            width: 5rem;
-            height: 5rem;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: 0 auto 1.5rem;
-            font-size: 2rem;
-            font-weight: 800;
+        .step:first-child {
+            border-left: none;
         }
 
-        .step:nth-child(1) .step-number {
-            background: var(--primary);
-        }
-
-        .step:nth-child(2) .step-number {
-            background: var(--secondary);
-        }
-
-        .step:nth-child(3) .step-number {
-            background: var(--accent);
-        }
-
-        .step h3 {
+        .step .num {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: var(--local);
+            letter-spacing: 0.12em;
+            display: block;
             margin-bottom: 1rem;
         }
 
+        .step h3 {
+            margin-bottom: 0.6rem;
+        }
+
         .step p {
-            color: #D1D5DB;
+            font-size: 0.9375rem;
         }
 
-        /* Download Section */
+        /* Download manifest */
         .download {
-            background: var(--secondary);
-            color: var(--bg-white);
-            padding: 8rem 0;
-            text-align: center;
-            position: relative;
-            overflow: hidden;
+            background: var(--ink);
+            color: #C4CEDE;
         }
 
-        .download::before {
-            content: '';
-            position: absolute;
-            width: 700px;
-            height: 700px;
-            border-radius: var(--radius-lg);
-            background: rgba(255, 255, 255, 0.03);
-            top: -200px;
-            right: -200px;
-            transform: rotate(25deg);
-        }
-
-        .download .container {
-            position: relative;
-            z-index: 2;
+        .download .section-head {
+            border-bottom-color: var(--hairline-dark);
         }
 
         .download h2 {
-            margin-bottom: 1.5rem;
+            color: #fff;
         }
 
-        .download > .container > p {
-            font-size: 1.5rem;
-            margin-bottom: 3rem;
-            opacity: 0.95;
+        .download .eyebrow {
+            color: var(--fg-faint);
         }
 
-        .download-buttons {
-            display: flex;
-            gap: 1rem;
-            justify-content: center;
-            flex-wrap: wrap;
+        .download-sub {
+            margin-top: 1.5rem;
+            font-size: 1.0625rem;
         }
 
-        .download .btn {
-            min-width: 220px;
+        .manifest {
+            margin-top: 2.5rem;
+            border: 1px solid var(--hairline-dark);
+            border-radius: var(--radius);
+            background: var(--panel);
         }
 
-        .download .btn-primary {
-            background: var(--bg-white);
-            color: var(--secondary);
+        .manifest-row {
+            display: grid;
+            grid-template-columns: 8rem 6rem 1fr auto;
+            gap: 1.5rem;
+            align-items: center;
+            padding: 1.1rem 1.5rem;
+            border-bottom: 1px solid var(--hairline-dark);
         }
 
-        .download .btn-primary:hover {
-            background: var(--muted);
-            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+        .manifest-row:last-child {
+            border-bottom: none;
         }
 
-        .download-notes {
-            max-width: 640px;
-            margin: 2.5rem auto 0;
-            text-align: left;
-            font-size: 0.875rem;
-            opacity: 0.9;
+        .manifest-row .m-platform {
+            font-family: var(--font-display);
+            font-weight: 600;
+            color: #fff;
         }
 
-        .download-notes p {
-            font-size: 0.875rem;
-            margin-bottom: 0.75rem;
-        }
-
-        .download-notes code {
-            background: rgba(255, 255, 255, 0.15);
-            padding: 0.1rem 0.4rem;
-            border-radius: 4px;
+        .manifest-row .m-arch {
+            font-family: var(--font-mono);
             font-size: 0.8125rem;
+            color: var(--fg-faint);
         }
 
-        .download-notes a {
-            color: var(--bg-white);
+        .manifest-row .m-file {
+            font-family: var(--font-mono);
+            font-size: 0.8125rem;
+            color: #8FA0BC;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .manifest-row .m-link {
+            font-family: var(--font-mono);
+            font-size: 0.8125rem;
+            font-weight: 500;
+            color: var(--local);
+            text-decoration: none;
+            letter-spacing: 0.06em;
+        }
+
+        .manifest-row .m-link:hover {
             text-decoration: underline;
         }
 
-        /* FAQ Section */
-        .faq {
-            background: var(--bg-white);
-            padding: 8rem 0;
+        .manifest-row .m-link::after {
+            content: ' ↓';
         }
 
+        .download-notes {
+            margin-top: 2rem;
+            font-size: 0.875rem;
+            color: #8FA0BC;
+            max-width: 46rem;
+        }
+
+        .download-notes p {
+            margin-bottom: 0.6rem;
+        }
+
+        .download-notes code {
+            font-family: var(--font-mono);
+            font-size: 0.8125rem;
+            background: var(--panel);
+            border: 1px solid var(--hairline-dark);
+            padding: 0.05rem 0.4rem;
+            border-radius: 4px;
+        }
+
+        .download-notes a {
+            color: #fff;
+        }
+
+        /* FAQ */
         .faq-list {
-            max-width: 800px;
-            margin: 0 auto;
+            max-width: 56rem;
         }
 
         .faq-item {
-            border-bottom: 2px solid var(--border);
+            border-bottom: 1px solid var(--hairline);
         }
 
-        .faq-item:last-child {
-            border-bottom: none;
+        .faq-item:first-child {
+            border-top: 1px solid var(--hairline);
         }
 
         .faq-item summary {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            gap: 1rem;
-            padding: 1.75rem 0;
+            gap: 1.5rem;
+            padding: 1.4rem 0;
             cursor: pointer;
             list-style: none;
-            font-size: 1.375rem;
-            font-weight: 700;
-            color: var(--fg-gray-900);
+            font-family: var(--font-display);
+            font-size: 1.0625rem;
+            font-weight: 600;
+            color: var(--fg-strong);
             transition: color 0.15s ease;
         }
 
@@ -656,69 +689,64 @@
 
         .faq-item summary::after {
             content: '+';
+            font-family: var(--font-mono);
+            font-weight: 400;
+            color: var(--fg-faint);
             flex-shrink: 0;
-            width: 2rem;
-            height: 2rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border: 2px solid var(--border);
-            border-radius: 50%;
-            font-size: 1.25rem;
-            font-weight: 600;
-            color: var(--fg-gray-600);
-            transition: border-color 0.15s ease, color 0.15s ease;
         }
 
         .faq-item summary:hover {
-            color: var(--primary);
+            color: var(--signal);
         }
 
         .faq-item[open] summary::after {
             content: '−';
-            border-color: var(--primary);
-            color: var(--primary);
+            color: var(--signal);
         }
 
         .faq-answer {
-            color: var(--fg-gray-600);
-            line-height: 1.8;
-            padding: 0 3rem 1.75rem 0;
+            padding: 0 4rem 1.5rem 0;
+            font-size: 0.9375rem;
+            line-height: 1.75;
         }
 
         .faq-answer a {
-            color: var(--primary);
+            color: var(--signal);
         }
 
         .faq-answer code {
-            background: var(--muted);
-            padding: 0.1rem 0.4rem;
+            font-family: var(--font-mono);
+            font-size: 0.8125rem;
+            background: #fff;
+            border: 1px solid var(--hairline);
+            padding: 0.05rem 0.4rem;
             border-radius: 4px;
-            font-size: 0.875rem;
         }
 
         /* Footer */
         footer {
-            background: #1F2937;
-            color: var(--bg-white);
+            background: var(--ink);
+            color: #8FA0BC;
             padding: 4rem 0 2rem;
+            border-top: 1px solid var(--hairline-dark);
         }
 
-        .footer-content {
+        .footer-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            grid-template-columns: 1.5fr 1fr 1fr 1fr;
             gap: 3rem;
             margin-bottom: 3rem;
         }
 
-        .footer-section h3 {
-            margin-bottom: 1.5rem;
-            font-size: 1.25rem;
+        .footer-grid h3 {
+            color: #fff;
+            font-size: 0.9375rem;
+            margin-bottom: 1.25rem;
         }
 
-        .footer-section p {
-            color: #D1D5DB;
-            font-size: 1rem;
+        .footer-grid p {
+            font-size: 0.9375rem;
+            max-width: 20rem;
         }
 
         .footer-links {
@@ -726,67 +754,110 @@
         }
 
         .footer-links li {
-            margin-bottom: 0.75rem;
+            margin-bottom: 0.6rem;
         }
 
         .footer-links a {
-            color: #D1D5DB;
+            color: #8FA0BC;
             text-decoration: none;
-            transition: color 0.2s;
+            font-size: 0.9375rem;
+            transition: color 0.15s;
         }
 
         .footer-links a:hover {
-            color: var(--primary);
+            color: #fff;
         }
 
         .footer-bottom {
-            text-align: center;
-            padding-top: 2rem;
-            border-top: 1px solid #374151;
-            color: #9CA3AF;
+            border-top: 1px solid var(--hairline-dark);
+            padding-top: 1.5rem;
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--fg-faint);
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            flex-wrap: wrap;
         }
 
         /* Responsive */
+        @media (max-width: 900px) {
+            .hero-grid {
+                grid-template-columns: 1fr;
+                gap: 3rem;
+            }
+
+            .footer-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
         @media (max-width: 768px) {
             h1 {
                 font-size: 2.5rem;
             }
 
             h2 {
-                font-size: 2rem;
+                font-size: 1.75rem;
             }
 
             .hero {
                 padding: 4rem 0;
             }
 
-            .hero p {
-                font-size: 1.125rem;
-            }
-
-            .stat-number {
-                font-size: 3rem;
-            }
-
-            .features,
-            .how-it-works,
-            .download,
-            .faq {
-                padding: 4rem 0;
+            .section {
+                padding: 3.5rem 0;
             }
 
             .nav-links {
                 gap: 1.25rem;
             }
 
-            .hero-buttons,
-            .download-buttons {
-                flex-direction: column;
-                align-items: stretch;
+            .ledger-strip .row {
+                grid-template-columns: 1fr 1fr;
             }
 
-            .faq-item summary {
-                font-size: 1.125rem;
+            .ledger-cell {
+                padding: 1.25rem 1rem;
+            }
+
+            .ledger-cell:nth-child(odd) {
+                border-left: none;
+                padding-left: 0;
+            }
+
+            .ledger-row {
+                grid-template-columns: 1fr;
+                gap: 0.5rem;
+            }
+
+            .steps {
+                grid-template-columns: 1fr;
+            }
+
+            .step {
+                border-left: none;
+                border-top: 1px solid var(--hairline);
+            }
+
+            .step:first-child {
+                border-top: none;
+            }
+
+            .manifest-row {
+                grid-template-columns: 1fr auto;
+                gap: 0.35rem 1rem;
+            }
+
+            .manifest-row .m-arch,
+            .manifest-row .m-file {
+                grid-column: 1;
+            }
+
+            .manifest-row .m-link {
+                grid-column: 2;
+                grid-row: 1 / span 3;
+                align-self: center;
             }
 
             .faq-answer {
@@ -798,20 +869,26 @@
         a:focus-visible,
         button:focus-visible,
         summary:focus-visible {
-            outline: 2px solid var(--primary);
+            outline: 2px solid var(--signal);
             outline-offset: 2px;
         }
 
-        /* Smooth animations */
+        /* Reduced motion */
         @media (prefers-reduced-motion: reduce) {
             html {
                 scroll-behavior: auto;
             }
 
-            * {
+            *, *::before, *::after {
                 animation-duration: 0.01ms !important;
                 animation-iteration-count: 1 !important;
                 transition-duration: 0.01ms !important;
+            }
+
+            .converge .stream,
+            .converge .fade-in {
+                stroke-dashoffset: 0;
+                opacity: 1;
             }
         }
     </style>
@@ -834,133 +911,189 @@
     </nav>
 
     <main id="main">
-        <!-- Hero Section -->
+        <!-- Hero -->
         <section class="hero">
             <div class="container">
-                <div class="hero-content">
-                    <h1>Multi-Cloud Cost Management Made Simple</h1>
-                    <p>Securely visualize and analyze costs across AWS, Alibaba Cloud, and DeepSeek. All data stays on your machine, encrypted.</p>
-                    <div class="hero-buttons">
-                        <a href="#download" class="btn btn-primary">Download</a>
-                        <a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer" class="btn btn-outline">View on GitHub</a>
+                <div class="hero-grid">
+                    <div>
+                        <span class="eyebrow">Local-first cost console</span>
+                        <h1>Every cloud bill.<br>One machine.<br><span class="accent">Nowhere else.</span></h1>
+                        <p class="hero-sub">CloudBridge reads AWS, Alibaba Cloud, and DeepSeek billing into one encrypted local database, then draws the trends. No sign-up, no sync, no telemetry.</p>
+                        <div class="hero-buttons">
+                            <a href="#download" class="btn btn-primary">Download</a>
+                            <a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer" class="btn btn-outline">View on GitHub</a>
+                        </div>
+                        <div class="hero-badges">
+                            <span>Windows</span>
+                            <span>macOS · Intel &amp; Apple Silicon</span>
+                            <span>Free &amp; Open Source</span>
+                        </div>
                     </div>
-                    <div class="hero-badges">
-                        <span class="platform-badge">Windows</span>
-                        <span class="platform-badge">macOS (Intel &amp; Apple Silicon)</span>
-                        <span class="platform-badge">Free &amp; Open Source</span>
+                    <figure class="converge">
+                        <svg viewBox="0 0 560 320" role="img" aria-label="Diagram: cost data streams from AWS, Alibaba Cloud, and DeepSeek converging into one encrypted local database">
+                            <!-- source labels -->
+                            <text x="0" y="46" font-size="11" fill="#7A8699" letter-spacing="1.5">AWS</text>
+                            <text x="0" y="66" font-size="15" fill="#E8830C" font-weight="500">$182.40</text>
+                            <text x="0" y="166" font-size="11" fill="#7A8699" letter-spacing="1.5">ALIBABA</text>
+                            <text x="0" y="186" font-size="15" fill="#E14D43" font-weight="500">$96.10</text>
+                            <text x="0" y="286" font-size="11" fill="#7A8699" letter-spacing="1.5">DEEPSEEK</text>
+                            <text x="0" y="306" font-size="15" fill="#4D6BFE" font-weight="500">$12.00</text>
+                            <!-- streams -->
+                            <path class="stream aws" d="M 120 60 C 230 60, 300 172, 408 172" />
+                            <path class="stream aliyun" d="M 120 180 L 408 180" />
+                            <path class="stream deepseek" d="M 120 300 C 230 300, 300 188, 408 188" />
+                            <!-- merge node -->
+                            <circle class="fade-in" cx="414" cy="180" r="5" fill="#2FA97C" style="animation-delay: 1s" />
+                            <!-- merged stream -->
+                            <path class="stream merged" d="M 424 180 L 480 180" />
+                            <!-- local store -->
+                            <g class="fade-in" style="animation-delay: 1.6s">
+                                <rect x="484" y="146" width="76" height="68" fill="none" stroke="#2FA97C" stroke-width="1.5" rx="4" />
+                                <text x="522" y="172" font-size="10" fill="#2FA97C" text-anchor="middle">LOCAL</text>
+                                <text x="522" y="188" font-size="10" fill="#7A8699" text-anchor="middle">AES-256</text>
+                                <text x="522" y="240" font-size="11" fill="#7A8699" text-anchor="middle" letter-spacing="1">THIS MONTH</text>
+                                <text x="522" y="262" font-size="17" fill="#fff" text-anchor="middle" font-weight="500">$290.50</text>
+                            </g>
+                        </svg>
+                        <figcaption>sample data — cloudbridge.duckdb, encrypted at rest</figcaption>
+                    </figure>
+                </div>
+            </div>
+        </section>
+
+        <!-- Ledger strip -->
+        <section class="ledger-strip" aria-label="Key facts">
+            <div class="container">
+                <div class="row">
+                    <div class="ledger-cell">
+                        <div class="value">03</div>
+                        <div class="label">Cloud Providers</div>
+                    </div>
+                    <div class="ledger-cell">
+                        <div class="value">100%</div>
+                        <div class="label">Local Storage</div>
+                    </div>
+                    <div class="ledger-cell">
+                        <div class="value">6h</div>
+                        <div class="label">Smart Caching</div>
+                    </div>
+                    <div class="ledger-cell">
+                        <div class="value">AES-256</div>
+                        <div class="label">Encryption</div>
                     </div>
                 </div>
             </div>
         </section>
 
-        <!-- Screenshot Section -->
-        <section class="screenshot">
+        <!-- Screenshot -->
+        <section class="section" style="padding-bottom: 0;">
             <div class="container">
-                <img src="cloudbridge.png" alt="CloudBridge dashboard showing monthly cost overview, per-service breakdown, and cost trend charts" width="1920" height="1200" loading="lazy" decoding="async">
+                <div class="section-head">
+                    <h2>The dashboard</h2>
+                    <span class="eyebrow">GPUI · native</span>
+                </div>
+                <figure class="app-window">
+                    <div class="app-chrome">
+                        <span class="dot"></span>
+                        <span class="dot"></span>
+                        <span class="dot"></span>
+                        <span class="app-title">CloudBridge — Dashboard</span>
+                    </div>
+                    <img src="cloudbridge.png" alt="CloudBridge dashboard showing monthly cost overview, per-service breakdown, and cost trend charts" width="1920" height="1200" loading="lazy" decoding="async">
+                </figure>
             </div>
         </section>
 
-        <!-- Stats Section -->
-        <section class="stats">
+        <!-- Features -->
+        <section id="features" class="section">
             <div class="container">
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-number">3</div>
-                        <div class="stat-label">Cloud Providers</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number">100%</div>
-                        <div class="stat-label">Local Storage</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number">6h</div>
-                        <div class="stat-label">Smart Caching</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number">AES-256</div>
-                        <div class="stat-label">Encryption</div>
-                    </div>
+                <div class="section-head">
+                    <h2>Features</h2>
+                    <span class="eyebrow">what it does</span>
                 </div>
-            </div>
-        </section>
-
-        <!-- Features Section -->
-        <section id="features" class="features">
-            <div class="container">
-                <div class="section-header">
-                    <h2>Powerful Features</h2>
-                </div>
-                <div class="features-grid">
-                    <div class="feature-card">
-                        <div class="feature-icon">🌐</div>
-                        <h3>Multi-Cloud Support</h3>
-                        <p>AWS, Alibaba Cloud, and DeepSeek balance tracking in one place. Azure and GCP are coming soon.</p>
+                <div class="ledger">
+                    <div class="ledger-row">
+                        <div><span class="tag">Multi-cloud</span><h3>Three providers, one place</h3></div>
+                        <p>AWS, Alibaba Cloud, and DeepSeek balance tracking in a single dashboard. Azure and GCP are coming soon.</p>
                     </div>
-                    <div class="feature-card">
-                        <div class="feature-icon">📊</div>
-                        <h3>Cost Visualization</h3>
+                    <div class="ledger-row">
+                        <div><span class="tag">Charts</span><h3>Cost visualization</h3></div>
                         <p>Monthly overview, per-service breakdown, and 30-day trends — readable at a glance.</p>
                     </div>
-                    <div class="feature-card">
-                        <div class="feature-icon">🔒</div>
-                        <h3>Security First</h3>
+                    <div class="ledger-row">
+                        <div><span class="tag">Security</span><h3>Encrypted and local</h3></div>
                         <p>AES-256-GCM encryption for all credentials. Your data never leaves your machine. No cloud sync, no telemetry.</p>
                     </div>
-                    <div class="feature-card">
-                        <div class="feature-icon">⚡</div>
-                        <h3>Smart Caching</h3>
+                    <div class="ledger-row">
+                        <div><span class="tag">Cache</span><h3>Smart caching</h3></div>
                         <p>Results are cached for 6 hours to minimize API calls — AWS bills Cost Explorer per request. Refresh manually anytime.</p>
                     </div>
-                    <div class="feature-card">
-                        <div class="feature-icon">🎨</div>
-                        <h3>Modern UI</h3>
+                    <div class="ledger-row">
+                        <div><span class="tag">Interface</span><h3>Modern UI</h3></div>
                         <p>Built with GPUI, Zed's GPU-accelerated framework. Native performance, dark theme by default.</p>
                     </div>
-                    <div class="feature-card">
-                        <div class="feature-icon">💰</div>
-                        <h3>Cost Analytics</h3>
+                    <div class="ledger-row">
+                        <div><span class="tag">Analytics</span><h3>Cost analytics</h3></div>
                         <p>Daily totals, averages, highs, and lows, with month-over-month comparison.</p>
                     </div>
                 </div>
             </div>
         </section>
 
-        <!-- How It Works Section -->
-        <section id="how-it-works" class="how-it-works">
+        <!-- How It Works -->
+        <section id="how-it-works" class="section" style="padding-top: 0;">
             <div class="container">
-                <div class="section-header">
-                    <h2>How It Works</h2>
-                    <p>From download to your first cost chart in three steps.</p>
+                <div class="section-head">
+                    <h2>How it works</h2>
+                    <span class="eyebrow">three steps</span>
                 </div>
-                <div class="steps-grid">
+                <div class="steps">
                     <div class="step">
-                        <div class="step-number">1</div>
-                        <h3>Download &amp; Install</h3>
+                        <span class="num">01</span>
+                        <h3>Download &amp; install</h3>
                         <p>Download the build for your platform and run it. No installer, no sign-up.</p>
                     </div>
                     <div class="step">
-                        <div class="step-number">2</div>
-                        <h3>Add Cloud Accounts</h3>
+                        <span class="num">02</span>
+                        <h3>Add cloud accounts</h3>
                         <p>Enter your cloud provider credentials. They're encrypted with AES-256-GCM and stored locally on your machine.</p>
                     </div>
                     <div class="step">
-                        <div class="step-number">3</div>
-                        <h3>Visualize Costs</h3>
+                        <span class="num">03</span>
+                        <h3>Visualize costs</h3>
                         <p>Open the dashboard for monthly totals and trends. Results are cached for 6 hours to minimize API costs.</p>
                     </div>
                 </div>
             </div>
         </section>
 
-        <!-- Download Section -->
-        <section id="download" class="download">
+        <!-- Download -->
+        <section id="download" class="section download">
             <div class="container">
-                <h2>Ready to Get Started?</h2>
-                <p>Free, open source, and no account required. Pick your platform:</p>
-                <div class="download-buttons">
-                    <a href="https://github.com/JetSquirrel/cloudbridge/releases/latest/download/cloudbridge-windows-x64.exe" class="btn btn-primary" aria-label="Download CloudBridge executable for Windows 64-bit">Windows (x64)</a>
-                    <a href="https://github.com/JetSquirrel/cloudbridge/releases/latest/download/cloudbridge-macos-arm64.zip" class="btn btn-primary" aria-label="Download CloudBridge for macOS Apple Silicon">macOS (Apple Silicon)</a>
-                    <a href="https://github.com/JetSquirrel/cloudbridge/releases/latest/download/cloudbridge-macos-x64.zip" class="btn btn-primary" aria-label="Download CloudBridge for macOS Intel">macOS (Intel)</a>
+                <div class="section-head">
+                    <h2>Release manifest</h2>
+                    <span class="eyebrow">free · open source · no account</span>
+                </div>
+                <p class="download-sub">Pick your platform:</p>
+                <div class="manifest">
+                    <div class="manifest-row">
+                        <span class="m-platform">Windows</span>
+                        <span class="m-arch">x64</span>
+                        <code class="m-file">cloudbridge-windows-x64.exe</code>
+                        <a class="m-link" href="https://github.com/JetSquirrel/cloudbridge/releases/latest/download/cloudbridge-windows-x64.exe" aria-label="Download CloudBridge executable for Windows 64-bit">Download</a>
+                    </div>
+                    <div class="manifest-row">
+                        <span class="m-platform">macOS</span>
+                        <span class="m-arch">arm64</span>
+                        <code class="m-file">cloudbridge-macos-arm64.zip</code>
+                        <a class="m-link" href="https://github.com/JetSquirrel/cloudbridge/releases/latest/download/cloudbridge-macos-arm64.zip" aria-label="Download CloudBridge for macOS Apple Silicon">Download</a>
+                    </div>
+                    <div class="manifest-row">
+                        <span class="m-platform">macOS</span>
+                        <span class="m-arch">x64</span>
+                        <code class="m-file">cloudbridge-macos-x64.zip</code>
+                        <a class="m-link" href="https://github.com/JetSquirrel/cloudbridge/releases/latest/download/cloudbridge-macos-x64.zip" aria-label="Download CloudBridge for macOS Intel">Download</a>
+                    </div>
                 </div>
                 <div class="download-notes">
                     <p><strong>Windows:</strong> SmartScreen may warn about unsigned executables. Click "More info" → "Run anyway" to proceed.</p>
@@ -970,13 +1103,14 @@
             </div>
         </section>
 
-        <!-- FAQ Section -->
-        <section id="faq" class="faq">
+        <!-- FAQ -->
+        <section id="faq" class="section">
             <div class="container">
-                <div class="section-header">
-                    <h2>Frequently Asked Questions</h2>
+                <div class="section-head">
+                    <h2>FAQ</h2>
+                    <span class="eyebrow">answers</span>
                 </div>
-                <div class="faq-list">
+                <div class="faq-list" style="margin-top: 2rem;">
                     <details class="faq-item">
                         <summary>Is CloudBridge free to use?</summary>
                         <div class="faq-answer">Yes! CloudBridge is completely free and open source under the MIT license. You only pay for your cloud provider's API costs (AWS Cost Explorer charges $0.01 per request; Alibaba Cloud and DeepSeek APIs are free).</div>
@@ -1013,12 +1147,12 @@
     <!-- Footer -->
     <footer>
         <div class="container">
-            <div class="footer-content">
-                <div class="footer-section">
+            <div class="footer-grid">
+                <div>
                     <h3>CloudBridge</h3>
                     <p>Multi-cloud cost management made simple. Secure, local-first, and open source.</p>
                 </div>
-                <div class="footer-section">
+                <div>
                     <h3>Resources</h3>
                     <ul class="footer-links">
                         <li><a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer">GitHub Repository</a></li>
@@ -1028,7 +1162,7 @@
                         <li><a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">Contributing</a></li>
                     </ul>
                 </div>
-                <div class="footer-section">
+                <div>
                     <h3>Community</h3>
                     <ul class="footer-links">
                         <li><a href="https://github.com/JetSquirrel/cloudbridge/issues" target="_blank" rel="noopener noreferrer">Report an Issue</a></li>
@@ -1036,7 +1170,7 @@
                         <li><a href="https://github.com/JetSquirrel/cloudbridge/pulls" target="_blank" rel="noopener noreferrer">Pull Requests</a></li>
                     </ul>
                 </div>
-                <div class="footer-section">
+                <div>
                     <h3>Legal</h3>
                     <ul class="footer-links">
                         <li><a href="https://github.com/JetSquirrel/cloudbridge/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a></li>
@@ -1045,7 +1179,8 @@
                 </div>
             </div>
             <div class="footer-bottom">
-                <p>&copy; 2024-2026 CloudBridge. Released under MIT License.</p>
+                <span>&copy; 2024-2026 CloudBridge. Released under MIT License.</span>
+                <span>AWS · Alibaba Cloud · DeepSeek</span>
             </div>
         </div>
     </footer>

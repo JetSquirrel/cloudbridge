@@ -4,14 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex">
-    <meta name="theme-color" content="#3B82F6">
+    <meta name="theme-color" content="#0E1420">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌉</text></svg>">
     <title>Page Not Found - CloudBridge</title>
 
-    <!-- Outfit Font -->
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 
     <style>
         * {
@@ -21,9 +21,9 @@
         }
 
         body {
-            font-family: 'Outfit', sans-serif;
-            color: #111827;
-            background: #FFFFFF;
+            font-family: 'IBM Plex Sans', sans-serif;
+            color: #47536B;
+            background: #FAFBFC;
             line-height: 1.6;
             min-height: 100vh;
             display: flex;
@@ -31,28 +31,41 @@
         }
 
         :root {
-            --primary: #3B82F6;
-            --primary-dark: #2563EB;
-            --fg-gray-600: #4B5563;
-            --border: #E5E7EB;
-            --radius-md: 6px;
+            --ink: #0E1420;
+            --hairline: #E3E8EF;
+            --fg-strong: #101828;
+            --fg-faint: #7A8699;
+            --signal: #2F6FED;
+            --signal-dark: #1F5BD8;
+            --local: #2FA97C;
+            --radius: 6px;
         }
 
         nav {
-            padding: 0 1rem;
-            height: 5rem;
+            height: 4.5rem;
             display: flex;
             align-items: center;
             justify-content: center;
-            border-bottom: 2px solid var(--border);
+            border-bottom: 1px solid var(--hairline);
         }
 
         .logo {
-            font-size: 1.5rem;
-            font-weight: 800;
-            color: var(--primary);
+            display: inline-flex;
+            align-items: center;
+            gap: 0.6rem;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--fg-strong);
             text-decoration: none;
             letter-spacing: -0.02em;
+        }
+
+        .logo::before {
+            content: '';
+            width: 0.6rem;
+            height: 0.6rem;
+            background: var(--local);
         }
 
         main {
@@ -64,31 +77,32 @@
             padding: 4rem 2rem;
         }
 
-        h1 {
-            font-size: 6rem;
-            font-weight: 800;
-            letter-spacing: -0.02em;
+        .code {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 5rem;
+            font-weight: 500;
+            color: var(--local);
             line-height: 1;
-            color: var(--primary);
-            margin-bottom: 1rem;
+            margin-bottom: 1.25rem;
         }
 
-        h2 {
-            font-size: 1.75rem;
+        h1 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 1.5rem;
             font-weight: 700;
             letter-spacing: -0.02em;
-            margin-bottom: 1rem;
+            color: var(--fg-strong);
+            margin-bottom: 0.75rem;
         }
 
         p {
-            color: var(--fg-gray-600);
-            max-width: 32rem;
+            max-width: 30rem;
             margin: 0 auto 2.5rem;
         }
 
         .links {
             display: flex;
-            gap: 1rem;
+            gap: 0.75rem;
             justify-content: center;
             flex-wrap: wrap;
         }
@@ -97,12 +111,13 @@
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            padding: 0.875rem 1.75rem;
-            border-radius: var(--radius-md);
+            padding: 0.8rem 1.6rem;
+            border-radius: var(--radius);
+            font-family: 'Space Grotesk', sans-serif;
             font-weight: 600;
-            font-size: 1rem;
+            font-size: 0.9375rem;
             text-decoration: none;
-            border: 2px solid transparent;
+            border: 1px solid transparent;
             transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease;
         }
 
@@ -111,32 +126,32 @@
         }
 
         .btn-primary {
-            background: var(--primary);
-            color: #FFFFFF;
+            background: var(--signal);
+            color: #fff;
         }
 
         .btn-primary:hover {
-            background: var(--primary-dark);
+            background: var(--signal-dark);
         }
 
         .btn-outline {
-            color: var(--primary);
-            border-color: var(--primary);
+            color: var(--signal);
+            border-color: var(--signal);
         }
 
         .btn-outline:hover {
-            background: var(--primary);
-            color: #FFFFFF;
+            background: var(--signal);
+            color: #fff;
         }
 
         a:focus-visible {
-            outline: 2px solid var(--primary);
+            outline: 2px solid var(--signal);
             outline-offset: 2px;
         }
 
         @media (max-width: 768px) {
-            h1 {
-                font-size: 4rem;
+            .code {
+                font-size: 3.5rem;
             }
         }
     </style>
@@ -147,8 +162,8 @@
     </nav>
     <main>
         <div>
-            <h1>404</h1>
-            <h2>This page moved or never existed.</h2>
+            <div class="code">404</div>
+            <h1>This page moved or never existed.</h1>
             <p>The link may be outdated, or the URL may have a typo. Here's where you can go instead:</p>
             <div class="links">
                 <a href="/cloudbridge/" class="btn btn-primary">Home</a>
