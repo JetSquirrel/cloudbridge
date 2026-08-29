@@ -45,6 +45,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     row instead of vanishing
   - DeepSeek balances are recorded as snapshots, and a rise in the
     topped-up balance between observations is derived as a `Purchase`
+- **The dashboard reads the ledger** (roadmap P0/PR6)
+  - Totals come from `v_charge_normalized`, which converts each charge at a
+    rate dated no later than the charge itself, so cross-cloud figures are
+    in one currency instead of adding dollars to yuan
+  - Reporting currency is a setting; switching it rebuilds a view and
+    rewrites nothing
+  - Charges in a currency no rate covers are reported on the dashboard
+    rather than being counted at par
 - **DeepSeek Integration**
   - DeepSeek API integration for balance queries
   - Display account balance instead of cost for DeepSeek accounts
@@ -52,6 +60,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Support for multiple currencies (CNY, USD)
 
 ### Changed
+- The response cache tables are gone (application schema v2). A refresh
+  checks when a period was last ingested, which the ledger already records
+- A billing source only fetches and normalizes now; `get_cost_summary` and
+  `get_cost_trend` are gone, along with the per-call trend fetch — the
+  trend chart reads rows the refresh already stored
 - `CloudService` is now `BillingSource`, with `fetch` and `normalize` split
   apart: the first touches the network and interprets nothing, the second
   interprets and touches nothing

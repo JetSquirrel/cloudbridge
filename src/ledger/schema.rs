@@ -17,6 +17,24 @@ use duckdb::{params, Connection};
 /// Bumped whenever the statements below change shape.
 pub const SCHEMA_VERSION: i32 = 1;
 
+/// The view the application reads: every charge with its amount also
+/// expressed in the reporting currency.
+pub const NORMALIZED_VIEW: &str = "v_charge_normalized";
+
+/// Rates shipped with the build, as `(from, to, date, rate)`.
+///
+/// Static and approximate. They are dated because a rate gets corrected
+/// and because a charge must be converted at a rate from its own time, not
+/// from today's — so a real feed, when it arrives, only has to insert rows
+/// with later dates. Nothing here is overwritten by it.
+///
+/// Only the currencies the sources actually bill in are covered: USD (AWS,
+/// DeepSeek) and CNY (Alibaba Cloud, DeepSeek).
+pub const BUILTIN_RATES: &[(&str, &str, &str, f64)] = &[
+    ("USD", "CNY", "2026-01-01", 7.10),
+    ("CNY", "USD", "2026-01-01", 0.1408),
+];
+
 /// Format used for every `TIMESTAMP` bind and parse in this module.
 pub const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
@@ -117,6 +135,8 @@ pub fn apply(conn: &Connection) -> Result<()> {
         "#,
     )?;
 
+    seed_builtin_rates(conn)?;
+
     conn.execute(
         "INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (?, CAST(? AS TIMESTAMP))",
         params![
@@ -124,6 +144,60 @@ pub fn apply(conn: &Connection) -> Result<()> {
             Utc::now().format(TIMESTAMP_FORMAT).to_string()
         ],
     )?;
+
+    Ok(())
+}
+
+/// Insert the rates that ship with the build, leaving any other row alone.
+fn seed_builtin_rates(conn: &Connection) -> Result<()> {
+    for (from_ccy, to_ccy, rate_date, rate) in BUILTIN_RATES {
+        conn.execute(
+            "INSERT OR REPLACE INTO dim_fx_rate (from_ccy, to_ccy, rate_date, rate, source)
+             VALUES (?, ?, CAST(? AS DATE), ?, 'builtin')",
+            params![from_ccy, to_ccy, rate_date, rate],
+        )?;
+    }
+
+    Ok(())
+}
+
+/// (Re)create the reading view for a reporting currency.
+///
+/// Conversion happens here rather than at write time because a rate gets
+/// corrected after the fact and because the user may change the currency
+/// they want to read in — either would mean rewriting the fact table if
+/// the amounts had been converted on the way in.
+///
+/// The join is ASOF: a charge takes the newest rate dated on or before the
+/// charge itself, never a later one. A charge already in the reporting
+/// currency needs no rate at all, and one for which no rate exists keeps a
+/// NULL `billed_cost_base` — it is left out of a converted total rather
+/// than silently counted at par.
+pub fn apply_reporting_currency(conn: &Connection, currency: &str) -> Result<()> {
+    if !currency.chars().all(|c| c.is_ascii_alphabetic()) || currency.is_empty() {
+        return Err(anyhow::anyhow!("Not a currency code: {:?}", currency));
+    }
+
+    conn.execute_batch(&format!(
+        r#"
+        CREATE OR REPLACE VIEW {NORMALIZED_VIEW} AS
+        SELECT
+            c.*,
+            CASE WHEN c.billing_currency = '{currency}' THEN 1.0 ELSE f.rate END AS fx_rate,
+            c.billed_cost
+                * CASE WHEN c.billing_currency = '{currency}' THEN 1.0 ELSE f.rate END
+                AS billed_cost_base,
+            c.effective_cost
+                * CASE WHEN c.billing_currency = '{currency}' THEN 1.0 ELSE f.rate END
+                AS effective_cost_base,
+            '{currency}' AS reporting_currency
+        FROM fct_charge c
+        ASOF LEFT JOIN dim_fx_rate f
+          ON f.from_ccy = c.billing_currency
+         AND f.to_ccy = '{currency}'
+         AND f.rate_date <= c.charge_period_start::DATE;
+        "#
+    ))?;
 
     Ok(())
 }

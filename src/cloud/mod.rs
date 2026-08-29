@@ -18,13 +18,13 @@ pub use registry::{SourceDescriptor, SourceId};
 /// Accounts like that are filtered out on load, so this is a backstop.
 const UNKNOWN_SOURCE: &str = "Unknown";
 
-/// The credentials and identity a [`CloudService`] is built from.
+/// The credentials a [`BillingSource`] is built from.
 ///
 /// Bundled into one struct so [`SourceDescriptor::build`] can be a plain
-/// function pointer.
+/// function pointer. Deliberately no account id or name: a client
+/// authenticates and fetches, and which account the result is filed under
+/// is the ingest's business, not its own.
 pub struct SourceContext {
-    pub account_id: String,
-    pub account_name: String,
     pub access_key_id: String,
     pub secret_access_key: String,
     pub region: Option<String>,
@@ -69,100 +69,11 @@ impl CloudAccount {
     /// source's default region filled in when the account stored none.
     pub fn context(&self, descriptor: &SourceDescriptor) -> SourceContext {
         SourceContext {
-            account_id: self.id.clone(),
-            account_name: self.name.clone(),
             access_key_id: self.access_key_id.clone(),
             secret_access_key: self.secret_access_key.clone(),
             region: descriptor.region_or_default(self.region.clone()),
         }
     }
-}
-
-/// Cost data
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CostData {
-    /// Account ID
-    pub account_id: String,
-    /// Date
-    pub date: String,
-    /// Service name
-    pub service: String,
-    /// Cost amount
-    pub amount: f64,
-    /// Currency
-    pub currency: String,
-}
-
-/// Cost summary
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CostSummary {
-    /// Account ID
-    pub account_id: String,
-    /// Account name
-    pub account_name: String,
-    /// Billing source this summary came from
-    pub source_id: SourceId,
-    /// Current month cost
-    pub current_month_cost: f64,
-    /// Last month cost
-    pub last_month_cost: f64,
-    /// Currency
-    pub currency: String,
-    /// Month-over-month change (percentage)
-    pub month_over_month_change: f64,
-    /// Current month service cost details
-    pub current_month_details: Vec<ServiceCost>,
-    /// Last month service cost details
-    pub last_month_details: Vec<ServiceCost>,
-}
-
-impl CostSummary {
-    fn descriptor(&self) -> Option<&'static SourceDescriptor> {
-        self.source_id.descriptor()
-    }
-
-    /// Short label for the source, for badges.
-    pub fn short_name(&self) -> &'static str {
-        self.descriptor().map_or(UNKNOWN_SOURCE, |s| s.short_name)
-    }
-
-    /// Whether this is a point-in-time balance rather than a period cost.
-    /// The dashboard lists the two kinds in separate sections and labels
-    /// their amounts differently.
-    pub fn is_snapshot(&self) -> bool {
-        self.descriptor().is_some_and(SourceDescriptor::is_snapshot)
-    }
-}
-
-/// Service cost detail
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceCost {
-    /// Service name
-    pub service: String,
-    /// Cost amount
-    pub amount: f64,
-    /// Currency
-    pub currency: String,
-}
-
-/// Daily cost data (for chart display)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DailyCost {
-    /// Date (YYYY-MM-DD format)
-    pub date: String,
-    /// Daily cost
-    pub amount: f64,
-}
-
-/// Cost trend data
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CostTrend {
-    /// Account ID
-    pub account_id: String,
-    /// Currency
-    pub currency: String,
-    /// Daily costs list
-    pub daily_costs: Vec<DailyCost>,
 }
 
 /// Budget information
@@ -225,6 +136,15 @@ impl BillingPeriod {
         Self::new(instant.year(), instant.month())
     }
 
+    /// The period before this one.
+    pub fn previous(&self) -> Self {
+        if self.month == 1 {
+            Self::new(self.year - 1, 12)
+        } else {
+            Self::new(self.year, self.month - 1)
+        }
+    }
+
     /// `YYYY-MM`, as stored in `billing_period` and in the raw path.
     pub fn label(&self) -> String {
         format!("{:04}-{:02}", self.year, self.month)
@@ -275,13 +195,4 @@ pub trait BillingSource: Send + Sync {
     /// Turn a fetched batch into ledger rows. Pure: no clock, no network,
     /// no database — everything it needs is in the batch.
     fn normalize(&self, batch: &RawBatch) -> Result<Normalized>;
-
-    /// Get cost data
-    fn get_cost_data(&self, start_date: &str, end_date: &str) -> Result<Vec<CostData>>;
-
-    /// Get cost summary
-    fn get_cost_summary(&self) -> Result<CostSummary>;
-
-    /// Get cost trend (daily costs)
-    fn get_cost_trend(&self, start_date: &str, end_date: &str) -> Result<CostTrend>;
 }

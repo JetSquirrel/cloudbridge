@@ -20,6 +20,7 @@
 // Written by PR4/PR5 and read by PR6; remove once the AWS normalizer lands.
 #![allow(dead_code)]
 
+pub mod query;
 pub mod schema;
 
 use anyhow::{anyhow, Result};
@@ -183,10 +184,11 @@ pub struct BalanceSnapshot {
 }
 
 /// Open (creating if needed) the ledger database and apply its schema.
-pub fn init_ledger() -> Result<()> {
+pub fn init_ledger(reporting_currency: &str) -> Result<()> {
     let path = get_ledger_database_path()?;
     let conn = Connection::open(&path)?;
     schema::apply(&conn)?;
+    schema::apply_reporting_currency(&conn, reporting_currency)?;
 
     let mut ledger = LEDGER_CONNECTION.lock().unwrap();
     *ledger = Some(conn);
@@ -203,6 +205,24 @@ fn with_connection<T>(f: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T>
         .as_mut()
         .ok_or_else(|| anyhow!("Ledger not initialized"))?;
     f(conn)
+}
+
+/// Same, for the reads in [`query`], which need no transaction.
+fn with_connection_ref<T>(f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+    let guard = LEDGER_CONNECTION
+        .lock()
+        .map_err(|e| anyhow!("Failed to lock ledger connection: {}", e))?;
+    let conn = guard
+        .as_ref()
+        .ok_or_else(|| anyhow!("Ledger not initialized"))?;
+    f(conn)
+}
+
+/// Point the reading view at a different currency.
+///
+/// Cheap: the fact table is untouched, only the view is replaced.
+pub fn set_reporting_currency(currency: &str) -> Result<()> {
+    with_connection_ref(|conn| schema::apply_reporting_currency(conn, currency))
 }
 
 /// Identifier for one ingest.

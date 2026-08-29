@@ -9,18 +9,22 @@
 //! partition, and one whole-period replacement in `fct_charge` — all under
 //! the same batch id.
 
-// The dashboard still reads through the response caches; it starts calling
-// this in PR6, when the ledger becomes the read path.
-#![allow(dead_code)]
-
 use anyhow::{anyhow, Result};
-use chrono::Utc;
+use chrono::{DateTime, Duration, Utc};
 use std::path::{Path, PathBuf};
 
 use crate::cloud::raw::{self, RawBatch};
+use crate::cloud::registry::SourceDescriptor;
 use crate::cloud::{BillingPeriod, CloudAccount, Normalized};
 use crate::config::get_raw_data_dir;
-use crate::ledger::{self, PeriodKey};
+use crate::ledger::{self, query, PeriodKey};
+
+/// How long a period stays fresh after it is ingested.
+///
+/// Cost Explorer bills per request and the Alibaba Cloud bill only moves a
+/// few times a day, so refreshing on every window focus would cost money
+/// for nothing.
+const FRESH_FOR_HOURS: i64 = 6;
 
 /// What one ingest did, for logging and for the UI to report.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,9 +36,52 @@ pub struct IngestOutcome {
     pub raw_path: PathBuf,
 }
 
-/// Ingest the period that is currently accruing — the UI's "refresh now".
-pub fn ingest_current_period(account: &CloudAccount) -> Result<IngestOutcome> {
-    ingest_period(account, &BillingPeriod::containing(Utc::now()))
+/// Bring an account's ledger up to date, skipping periods ingested
+/// recently enough unless `force` says otherwise.
+///
+/// The current period and the one before it, because the dashboard shows
+/// both — and because a provider keeps correcting last month for a while
+/// after it ends. A source that reports only a balance has no history to
+/// backfill, so it gets the current period alone.
+pub fn refresh_account(account: &CloudAccount, now: DateTime<Utc>, force: bool) -> Result<()> {
+    let current = BillingPeriod::containing(now);
+    let is_snapshot = account
+        .descriptor()
+        .is_some_and(SourceDescriptor::is_snapshot);
+
+    let periods = if is_snapshot {
+        vec![current]
+    } else {
+        vec![current.previous(), current]
+    };
+
+    for period in periods {
+        if !force && is_fresh(account, &period, now)? {
+            tracing::debug!(
+                "Skipping {} {}: ingested within the last {} hours",
+                account.name,
+                period.label(),
+                FRESH_FOR_HOURS
+            );
+            continue;
+        }
+
+        ingest_period(account, &period)?;
+    }
+
+    Ok(())
+}
+
+/// Whether a period was ingested recently enough to leave alone.
+fn is_fresh(account: &CloudAccount, period: &BillingPeriod, now: DateTime<Utc>) -> Result<bool> {
+    let key = PeriodKey::new(
+        account.source_id.as_str().to_string(),
+        account.id.clone(),
+        period.label(),
+    );
+
+    Ok(query::last_ingest(&key)?
+        .is_some_and(|ingested_at| now - ingested_at < Duration::hours(FRESH_FOR_HOURS)))
 }
 
 /// Fetch one account's billing period and land it in the ledger.
@@ -65,9 +112,13 @@ pub fn ingest_period(account: &CloudAccount, period: &BillingPeriod) -> Result<I
 
 /// Normalize a period again from payloads already on disk.
 ///
+/// No UI reaches this yet; it is here because it is the thing the raw
+/// store exists for, and because a mapping fix is otherwise a re-fetch.
+///
 /// This is the whole point of storing raw: correcting a mapping, or adding
 /// a column, replays the newest batch at no cost. It fails rather than
 /// silently fetching if nothing has been stored for the period yet.
+#[allow(dead_code)]
 pub fn renormalize_period(account: &CloudAccount, period: &BillingPeriod) -> Result<IngestOutcome> {
     let descriptor = account.descriptor().ok_or_else(|| {
         anyhow!(

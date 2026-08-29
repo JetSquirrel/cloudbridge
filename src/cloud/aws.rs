@@ -1,37 +1,27 @@
 //! AWS Cloud Service Implementation - Using ureq + AWS Signature V4
 
 use anyhow::{anyhow, Result};
-use chrono::{DateTime, Datelike, Utc};
+use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use super::raw::RawPart;
-use super::{BillingPeriod, BillingSource, CostData, CostSummary, Normalized, RawBatch, SourceId};
+use super::{BillingPeriod, BillingSource, Normalized, RawBatch};
 use crate::ledger::{Charge, ChargeCategory};
 
 type HmacSha256 = Hmac<Sha256>;
 
 /// AWS Cloud Service
 pub struct AwsCloudService {
-    account_id: String,
-    account_name: String,
     access_key_id: String,
     secret_access_key: String,
     region: String,
 }
 
 impl AwsCloudService {
-    pub fn new(
-        account_id: String,
-        account_name: String,
-        access_key_id: String,
-        secret_access_key: String,
-        region: Option<String>,
-    ) -> Self {
+    pub fn new(access_key_id: String, secret_access_key: String, region: Option<String>) -> Self {
         Self {
-            account_id,
-            account_name,
             access_key_id,
             secret_access_key,
             region: region.unwrap_or_else(|| "us-east-1".to_string()),
@@ -234,18 +224,6 @@ impl AwsCloudService {
         Ok(body)
     }
 
-    /// Call Cost Explorer API
-    fn call_cost_explorer(&self, start_date: &str, end_date: &str) -> Result<Vec<CostData>> {
-        let body = self.cost_and_usage_raw(&cost_and_usage_request(start_date, end_date, true))?;
-        parse_cost_explorer_response(&body, &self.account_id, &self.account_name)
-    }
-
-    /// Call Cost Explorer API to get daily costs (not grouped by service, for trend charts)
-    fn call_cost_explorer_daily(&self, start_date: &str, end_date: &str) -> Result<Vec<CostData>> {
-        let body = self.cost_and_usage_raw(&cost_and_usage_request(start_date, end_date, false))?;
-        parse_daily_cost_response(&body, &self.account_id)
-    }
-
     /// Sign with specified region (for services like Cost Explorer that are only available in specific regions)
     #[allow(clippy::too_many_arguments)]
     fn sign_request_with_region(
@@ -337,34 +315,6 @@ const UNIT_NOT_APPLICABLE: &str = "N/A";
 
 const DIMENSION_SERVICE: &str = "SERVICE";
 const DIMENSION_RECORD_TYPE: &str = "RECORD_TYPE";
-
-/// The GetCostAndUsage request body for the display path.
-///
-/// `group_by_service` off is the trend query: one total per day, which is
-/// a cheaper response than summing the grouped one client-side.
-fn cost_and_usage_request(
-    start_date: &str,
-    end_date: &str,
-    group_by_service: bool,
-) -> serde_json::Value {
-    let mut request = serde_json::json!({
-        "TimePeriod": {
-            "Start": start_date,
-            "End": end_date
-        },
-        "Granularity": "DAILY",
-        "Metrics": [METRIC_UNBLENDED]
-    });
-
-    if group_by_service {
-        request["GroupBy"] = serde_json::json!([{
-            "Type": "DIMENSION",
-            "Key": DIMENSION_SERVICE
-        }]);
-    }
-
-    request
-}
 
 /// The GetCostAndUsage request the ledger is built from.
 ///
@@ -599,152 +549,6 @@ fn parse_sts_response(xml: &str) -> Result<StsCallerIdentity> {
     })
 }
 
-/// Parse Cost Explorer JSON response
-fn parse_cost_explorer_response(
-    json: &str,
-    account_id: &str,
-    _account_name: &str,
-) -> Result<Vec<CostData>> {
-    #[derive(Deserialize)]
-    struct CeResponse {
-        #[serde(rename = "ResultsByTime")]
-        results_by_time: Option<Vec<TimeResult>>,
-    }
-
-    #[derive(Deserialize)]
-    struct TimeResult {
-        #[serde(rename = "TimePeriod")]
-        time_period: TimePeriod,
-        #[serde(rename = "Groups")]
-        groups: Option<Vec<CostGroup>>,
-    }
-
-    #[derive(Deserialize)]
-    struct TimePeriod {
-        #[serde(rename = "Start")]
-        start: String,
-    }
-
-    #[derive(Deserialize)]
-    struct CostGroup {
-        #[serde(rename = "Keys")]
-        keys: Vec<String>,
-        #[serde(rename = "Metrics")]
-        metrics: CostMetrics,
-    }
-
-    #[derive(Deserialize)]
-    struct CostMetrics {
-        #[serde(rename = "UnblendedCost")]
-        unblended_cost: CostAmount,
-    }
-
-    #[derive(Deserialize)]
-    struct CostAmount {
-        #[serde(rename = "Amount")]
-        amount: String,
-        #[serde(rename = "Unit")]
-        unit: String,
-    }
-
-    let response: CeResponse = serde_json::from_str(json)?;
-
-    let mut cost_data = Vec::new();
-    if let Some(results) = response.results_by_time {
-        tracing::info!(
-            "Cost Explorer returned data for {} time periods",
-            results.len()
-        );
-        for result in results {
-            if let Some(groups) = result.groups {
-                for group in groups {
-                    let service_name = group.keys.first().cloned().unwrap_or_default();
-                    let amount: f64 = group.metrics.unblended_cost.amount.parse().unwrap_or(0.0);
-                    let currency = group.metrics.unblended_cost.unit;
-
-                    if amount > 0.0 {
-                        tracing::debug!("Service {}: {} {}", service_name, amount, currency);
-                        cost_data.push(CostData {
-                            account_id: account_id.to_string(),
-                            date: result.time_period.start.clone(),
-                            service: service_name,
-                            amount,
-                            currency,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    tracing::info!("Parsed {} cost data records", cost_data.len());
-    Ok(cost_data)
-}
-
-/// Parse Cost Explorer daily cost response (not grouped by service)
-fn parse_daily_cost_response(json: &str, account_id: &str) -> Result<Vec<CostData>> {
-    #[derive(Deserialize)]
-    struct CeResponse {
-        #[serde(rename = "ResultsByTime")]
-        results_by_time: Option<Vec<TimeResult>>,
-    }
-
-    #[derive(Deserialize)]
-    struct TimeResult {
-        #[serde(rename = "TimePeriod")]
-        time_period: TimePeriod,
-        #[serde(rename = "Total")]
-        total: Option<CostMetrics>,
-    }
-
-    #[derive(Deserialize)]
-    struct TimePeriod {
-        #[serde(rename = "Start")]
-        start: String,
-    }
-
-    #[derive(Deserialize)]
-    struct CostMetrics {
-        #[serde(rename = "UnblendedCost")]
-        unblended_cost: CostAmount,
-    }
-
-    #[derive(Deserialize)]
-    struct CostAmount {
-        #[serde(rename = "Amount")]
-        amount: String,
-        #[serde(rename = "Unit")]
-        unit: String,
-    }
-
-    let response: CeResponse = serde_json::from_str(json)?;
-
-    let mut cost_data = Vec::new();
-    if let Some(results) = response.results_by_time {
-        tracing::debug!(
-            "Daily cost response returned {} time periods",
-            results.len()
-        );
-        for result in results {
-            if let Some(total) = result.total {
-                let amount: f64 = total.unblended_cost.amount.parse().unwrap_or(0.0);
-                let currency = total.unblended_cost.unit;
-
-                cost_data.push(CostData {
-                    account_id: account_id.to_string(),
-                    date: result.time_period.start.clone(),
-                    service: "Total".to_string(),
-                    amount,
-                    currency,
-                });
-            }
-        }
-    }
-
-    tracing::debug!("Parsed {} daily cost data records", cost_data.len());
-    Ok(cost_data)
-}
-
 impl BillingSource for AwsCloudService {
     fn validate_credentials(&self) -> Result<bool> {
         match self.call_sts_get_caller_identity() {
@@ -780,142 +584,6 @@ impl BillingSource for AwsCloudService {
     fn normalize(&self, batch: &RawBatch) -> Result<Normalized> {
         normalize(batch)
     }
-
-    fn get_cost_data(&self, start_date: &str, end_date: &str) -> Result<Vec<CostData>> {
-        self.call_cost_explorer(start_date, end_date)
-    }
-
-    fn get_cost_summary(&self) -> Result<CostSummary> {
-        let now = Utc::now();
-        let current_month_start = format!("{}-{:02}-01", now.year(), now.month());
-        let current_month_end = format!("{}-{:02}-{:02}", now.year(), now.month(), now.day());
-
-        // Last month
-        let last_month = if now.month() == 1 {
-            chrono::NaiveDate::from_ymd_opt(now.year() - 1, 12, 1).unwrap()
-        } else {
-            chrono::NaiveDate::from_ymd_opt(now.year(), now.month() - 1, 1).unwrap()
-        };
-        let last_month_start = format!("{}-{:02}-01", last_month.year(), last_month.month());
-        let last_month_end = current_month_start.clone();
-
-        // Get current month costs
-        let current_costs = self.get_cost_data(&current_month_start, &current_month_end)?;
-        let current_month_cost: f64 = current_costs.iter().map(|c| c.amount).sum();
-        tracing::info!(
-            "Current month cost: {} USD ({} records)",
-            current_month_cost,
-            current_costs.len()
-        );
-
-        // Get last month costs
-        let last_costs = self.get_cost_data(&last_month_start, &last_month_end)?;
-        let last_month_cost: f64 = last_costs.iter().map(|c| c.amount).sum();
-        tracing::info!(
-            "Last month cost: {} USD ({} records)",
-            last_month_cost,
-            last_costs.len()
-        );
-
-        // Calculate month-over-month change
-        let month_over_month_change = if last_month_cost > 0.0 {
-            ((current_month_cost - last_month_cost) / last_month_cost) * 100.0
-        } else {
-            0.0
-        };
-
-        let currency = current_costs
-            .first()
-            .map(|c| c.currency.clone())
-            .unwrap_or_else(|| "USD".to_string());
-
-        // Aggregate current month costs by service
-        let current_month_details = aggregate_costs_by_service(&current_costs);
-        // Aggregate last month costs by service
-        let last_month_details = aggregate_costs_by_service(&last_costs);
-
-        Ok(CostSummary {
-            account_id: self.account_id.clone(),
-            account_name: self.account_name.clone(),
-            source_id: SourceId::from("AWS"),
-            current_month_cost,
-            last_month_cost,
-            currency,
-            month_over_month_change,
-            current_month_details,
-            last_month_details,
-        })
-    }
-
-    fn get_cost_trend(&self, start_date: &str, end_date: &str) -> Result<super::CostTrend> {
-        tracing::info!("Getting cost trend: {} to {}", start_date, end_date);
-
-        // Call Cost Explorer API to get daily costs
-        let cost_data = self.call_cost_explorer_daily(start_date, end_date)?;
-
-        // Aggregate daily costs
-        let (daily_costs, currency) = aggregate_daily_costs(&cost_data);
-
-        Ok(super::CostTrend {
-            account_id: self.account_id.clone(),
-            currency,
-            daily_costs,
-        })
-    }
-}
-
-/// Aggregate cost data by service
-fn aggregate_costs_by_service(costs: &[CostData]) -> Vec<super::ServiceCost> {
-    use std::collections::HashMap;
-
-    let mut service_map: HashMap<String, f64> = HashMap::new();
-    let mut currency = "USD".to_string();
-
-    for cost in costs {
-        *service_map.entry(cost.service.clone()).or_insert(0.0) += cost.amount;
-        currency = cost.currency.clone();
-    }
-
-    let mut result: Vec<super::ServiceCost> = service_map
-        .into_iter()
-        .map(|(service, amount)| super::ServiceCost {
-            service,
-            amount,
-            currency: currency.clone(),
-        })
-        .collect();
-
-    // Sort by amount in descending order
-    result.sort_by(|a, b| {
-        b.amount
-            .partial_cmp(&a.amount)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    result
-}
-
-/// Aggregate daily costs by date, returns (daily cost list, currency)
-fn aggregate_daily_costs(costs: &[CostData]) -> (Vec<super::DailyCost>, String) {
-    use std::collections::HashMap;
-
-    let mut date_map: HashMap<String, f64> = HashMap::new();
-    let mut currency = "USD".to_string();
-
-    for cost in costs {
-        *date_map.entry(cost.date.clone()).or_insert(0.0) += cost.amount;
-        currency = cost.currency.clone();
-    }
-
-    let mut result: Vec<super::DailyCost> = date_map
-        .into_iter()
-        .map(|(date, amount)| super::DailyCost { date, amount })
-        .collect();
-
-    // Sort by date in ascending order
-    result.sort_by(|a, b| a.date.cmp(&b.date));
-
-    (result, currency)
 }
 
 #[cfg(test)]
@@ -1109,16 +777,6 @@ mod tests {
         let mut batch = recorded_batch(COST_AND_USAGE);
         batch.parts.clear();
         assert!(normalize(&batch).is_err());
-    }
-
-    #[test]
-    fn the_trend_request_asks_for_totals_and_the_summary_request_for_services() {
-        let grouped = cost_and_usage_request("2026-08-01", "2026-09-01", true);
-        assert_eq!(grouped["GroupBy"][0]["Key"], "SERVICE");
-        assert_eq!(grouped["Granularity"], "DAILY");
-
-        let totals = cost_and_usage_request("2026-08-01", "2026-09-01", false);
-        assert!(totals.get("GroupBy").is_none());
     }
 
     #[test]

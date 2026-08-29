@@ -31,30 +31,38 @@ carry their weight for a personal ledger:
 
 ## Where we are
 
-PR1 through PR5 have landed. A source is a registry row rather than an
-enum variant; `billing.duckdb` holds `fct_charge`, `ingest_batch`,
+**P0 is done.** A source is a registry row rather than an enum variant.
+`billing.duckdb` holds `fct_charge`, `ingest_batch`,
 `fct_balance_snapshot` and `dim_fx_rate` behind a transactional
-whole-period write; every source fetches raw payloads to Parquet and
+whole-period write. Every source fetches raw payloads to Parquet and
 normalizes them through a pure function, tested against a recorded
-response; and all three sources land as real FOCUS rows.
+response. The dashboard reads `v_charge_normalized`, so every figure on it
+is in one currency, converted per charge at a rate dated no later than the
+charge itself.
 
-What is left in P0 is the read path (PR6). Nothing reads the ledger yet:
-the dashboard still calls each provider's display method and caches the
-result in the two per-account tables in `cloudbridge.duckdb`. Those go
-away with PR6, not before — they are the only thing feeding the UI until
-it reads through `v_charge_normalized`.
+The acceptance test holds: all three sources land in one `fct_charge`
+table, `SELECT sum(billed_cost_base) FROM v_charge_normalized WHERE
+billing_period = ?` is the cross-cloud total, and a repeated ingest of an
+unchanged bill produces identical rows.
 
-One of the three structural problems is still open:
+All three structural problems are closed:
 
 1. ~~**`CloudProvider` is a compile-time enum**~~ — replaced by the source
-   registry in PR1. An unrecognized source id is now skipped with a
-   warning instead of being silently read as AWS.
-2. **Amounts are summed across currencies.** The dashboard total adds AWS
-   USD to Alibaba Cloud CNY and shows the result as one number.
+   registry in PR1. An unrecognized source id is skipped with a warning
+   instead of being silently read as AWS.
+2. ~~**Amounts are summed across currencies.**~~ — fixed in PR6. Charges
+   are stored in the currency they were billed in and converted in a view,
+   so a rate correction or a change of reporting currency costs nothing.
+   A charge in a currency no rate covers is counted nowhere and reported
+   on the dashboard rather than quietly folded in at par.
 3. ~~**`fetch` and `normalize` are fused.**~~ — split in PR3. `fetch`
    persists what the provider returned and interprets nothing;
    `normalize` interprets and touches nothing, so a mapping fix replays
    payloads already on disk instead of paying Cost Explorer again.
+
+What P0 did *not* do, and P1 owns: instance-level detail. Alibaba Cloud's
+bill overview is one row per product per month, so its trend chart is as
+coarse as its source data.
 
 ## P0 — FOCUS normalization
 
@@ -193,7 +201,7 @@ was not witnessed being paid for. The display path still reports the
 balance as `current_month_cost`; that is PR6's to fix, along with
 everything else the dashboard reads.
 
-### PR6 · Read through views, fix cross-currency
+### PR6 · Read through views, fix cross-currency — landed
 
 Amounts are stored in their original currency. Conversion happens in a
 view, never at write time, because rates get corrected and the user may
@@ -211,6 +219,19 @@ ASOF LEFT JOIN dim_fx_rate f
 
 Ships with a built-in rate table and a reporting-currency setting. This is
 where the cross-currency total is actually fixed.
+
+As landed, the view also carries `effective_cost_base` and the `fx_rate` it
+used, and a charge already in the reporting currency converts at 1.0
+without needing a row in the rate table. A charge whose currency no rate
+covers keeps a NULL `billed_cost_base`: it is left out of every converted
+total and counted separately, so the dashboard can say how many charges it
+is not showing rather than under-reporting silently.
+
+The freshness window moved into the ledger with the same change:
+`ingest_batch` records when each period was last written, which is what a
+refresh checks. The two response cache tables are gone, and so are
+`get_cost_summary` and `get_cost_trend` — a source now fetches and
+normalizes, and nothing else.
 
 ## P1
 

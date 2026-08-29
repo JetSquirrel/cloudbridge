@@ -8,33 +8,20 @@ use sha1::Sha1;
 use std::collections::BTreeMap;
 
 use super::raw::RawPart;
-use super::{
-    BillingPeriod, BillingSource, CostData, CostSummary, Normalized, RawBatch, ServiceCost,
-    SourceId,
-};
+use super::{BillingPeriod, BillingSource, Normalized, RawBatch};
 use crate::ledger::{Charge, ChargeCategory};
 
 type HmacSha1 = Hmac<Sha1>;
 
 /// Alibaba Cloud service
 pub struct AliyunCloudService {
-    account_id: String,
-    account_name: String,
     access_key_id: String,
     access_key_secret: String,
 }
 
 impl AliyunCloudService {
-    pub fn new(
-        account_id: String,
-        account_name: String,
-        access_key_id: String,
-        access_key_secret: String,
-        _region: Option<String>,
-    ) -> Self {
+    pub fn new(access_key_id: String, access_key_secret: String, _region: Option<String>) -> Self {
         Self {
-            account_id,
-            account_name,
             access_key_id,
             access_key_secret,
         }
@@ -181,45 +168,6 @@ impl AliyunCloudService {
         serde_json::from_str(&body)
             .map_err(|e| anyhow!("Failed to parse bill overview: {} - {}", e, body))
     }
-
-    /// Query instance bill (daily details)
-    fn describe_instance_bill(
-        &self,
-        billing_cycle: &str,
-        granularity: &str,
-    ) -> Result<InstanceBillResponse> {
-        let body = self.call_bss_api(
-            "DescribeInstanceBill",
-            &[
-                ("BillingCycle", billing_cycle),
-                ("Granularity", granularity), // DAILY or MONTHLY
-                ("MaxResults", "300"),
-            ],
-        )?;
-
-        serde_json::from_str(&body)
-            .map_err(|e| anyhow!("Failed to parse instance bill: {} - {}", e, body))
-    }
-
-    /// Query instance bill for a specific date (daily granularity requires BillingDate)
-    fn describe_instance_bill_by_date(
-        &self,
-        billing_cycle: &str,
-        billing_date: &str,
-    ) -> Result<InstanceBillResponse> {
-        let body = self.call_bss_api(
-            "DescribeInstanceBill",
-            &[
-                ("BillingCycle", billing_cycle),
-                ("BillingDate", billing_date),
-                ("Granularity", "DAILY"),
-                ("MaxResults", "300"),
-            ],
-        )?;
-
-        serde_json::from_str(&body)
-            .map_err(|e| anyhow!("Failed to parse instance bill: {} - {}", e, body))
-    }
 }
 
 impl BillingSource for AliyunCloudService {
@@ -251,162 +199,6 @@ impl BillingSource for AliyunCloudService {
     fn normalize(&self, batch: &RawBatch) -> Result<Normalized> {
         normalize(batch)
     }
-
-    fn get_cost_data(&self, start_date: &str, end_date: &str) -> Result<Vec<CostData>> {
-        // Alibaba Cloud queries by month, extract year-month
-        let billing_cycle = &start_date[..7]; // YYYY-MM
-
-        let response = self.describe_instance_bill(billing_cycle, "DAILY")?;
-
-        let mut costs = Vec::new();
-        if let Some(items) = response.data.and_then(|d| d.items) {
-            for item in items {
-                let date = item.billing_date.unwrap_or_default();
-                // Filter by date range
-                if date.as_str() >= start_date && date.as_str() <= end_date {
-                    costs.push(CostData {
-                        account_id: self.account_id.clone(),
-                        date,
-                        service: item.product_name.unwrap_or_else(|| "Unknown".to_string()),
-                        amount: item.pretax_amount.unwrap_or(0.0),
-                        currency: "CNY".to_string(),
-                    });
-                }
-            }
-        }
-
-        Ok(costs)
-    }
-
-    fn get_cost_summary(&self) -> Result<CostSummary> {
-        let now = Utc::now();
-
-        // Current month
-        let current_month = format!("{}-{:02}", now.year(), now.month());
-        // Last month
-        let last_month_date = now - chrono::Duration::days(now.day() as i64 + 1);
-        let last_month = format!("{}-{:02}", last_month_date.year(), last_month_date.month());
-
-        // Query current month bill overview
-        let current_overview = self.query_bill_overview(&current_month)?;
-        let last_overview = self.query_bill_overview(&last_month)?;
-
-        // Parse current month costs
-        let (current_month_cost, current_month_details) = parse_bill_overview(&current_overview);
-        let (last_month_cost, last_month_details) = parse_bill_overview(&last_overview);
-
-        // Calculate month-over-month change
-        let month_over_month_change = if last_month_cost > 0.0 {
-            ((current_month_cost - last_month_cost) / last_month_cost) * 100.0
-        } else if current_month_cost > 0.0 {
-            100.0
-        } else {
-            0.0
-        };
-
-        Ok(CostSummary {
-            account_id: self.account_id.clone(),
-            account_name: self.account_name.clone(),
-            source_id: SourceId::from("Aliyun"),
-            current_month_cost,
-            last_month_cost,
-            currency: "CNY".to_string(),
-            month_over_month_change,
-            current_month_details,
-            last_month_details,
-        })
-    }
-
-    fn get_cost_trend(&self, start_date: &str, end_date: &str) -> Result<super::CostTrend> {
-        // Aggregate costs by date
-        let mut daily_map: std::collections::HashMap<String, f64> =
-            std::collections::HashMap::new();
-
-        // Use chrono to iterate through each day in the date range
-        use chrono::NaiveDate;
-
-        let start = NaiveDate::parse_from_str(start_date, "%Y-%m-%d")
-            .map_err(|e| anyhow!("Invalid start date: {}", e))?;
-        let end = NaiveDate::parse_from_str(end_date, "%Y-%m-%d")
-            .map_err(|e| anyhow!("Invalid end date: {}", e))?;
-
-        let mut current = start;
-        while current < end {
-            let date_str = current.format("%Y-%m-%d").to_string();
-            let billing_cycle = current.format("%Y-%m").to_string();
-
-            match self.describe_instance_bill_by_date(&billing_cycle, &date_str) {
-                Ok(response) => {
-                    if let Some(items) = response.data.and_then(|d| d.items) {
-                        let mut day_total = 0.0;
-                        for item in items {
-                            let amount = item.pretax_amount.unwrap_or(0.0);
-                            day_total += amount;
-                        }
-                        if day_total > 0.0 {
-                            daily_map.insert(date_str.clone(), day_total);
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to query bill for {}: {}", date_str, e);
-                }
-            }
-
-            current += chrono::Duration::days(1);
-        }
-
-        // Convert to sorted list
-        let mut daily_costs: Vec<super::DailyCost> = daily_map
-            .into_iter()
-            .map(|(date, amount)| super::DailyCost { date, amount })
-            .collect();
-
-        daily_costs.sort_by(|a, b| a.date.cmp(&b.date));
-
-        Ok(super::CostTrend {
-            account_id: self.account_id.clone(),
-            currency: "CNY".to_string(),
-            daily_costs,
-        })
-    }
-}
-
-/// Parse bill overview
-fn parse_bill_overview(response: &BillOverviewResponse) -> (f64, Vec<ServiceCost>) {
-    let mut total_cost = 0.0;
-    let mut details = Vec::new();
-
-    if let Some(data) = &response.data {
-        if let Some(items_wrapper) = &data.items {
-            if let Some(items) = &items_wrapper.item {
-                for item in items {
-                    let amount = item.pretax_amount.unwrap_or(0.0);
-                    total_cost += amount;
-
-                    if amount > 0.0 {
-                        details.push(ServiceCost {
-                            service: item
-                                .product_name
-                                .clone()
-                                .unwrap_or_else(|| "Unknown".to_string()),
-                            amount,
-                            currency: "CNY".to_string(),
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    // Sort by amount in descending order
-    details.sort_by(|a, b| {
-        b.amount
-            .partial_cmp(&a.amount)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    (total_cost, details)
 }
 
 /// Name the bill overview payload is stored under in a raw batch.
@@ -601,44 +393,6 @@ impl BillOverviewItem {
             ),
         ]
     }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-#[allow(dead_code)]
-struct InstanceBillResponse {
-    request_id: Option<String>,
-    success: Option<bool>,
-    code: Option<String>,
-    message: Option<String>,
-    data: Option<InstanceBillData>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-#[allow(dead_code)]
-struct InstanceBillData {
-    billing_cycle: Option<String>,
-    account_id: Option<String>,
-    total_count: Option<i32>,
-    next_token: Option<String>,
-    max_results: Option<i32>,
-    /// DescribeInstanceBill returns Items as a direct array, not wrapped in an object
-    items: Option<Vec<InstanceBillItem>>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-#[allow(dead_code)]
-struct InstanceBillItem {
-    billing_date: Option<String>,
-    product_code: Option<String>,
-    product_name: Option<String>,
-    instance_id: Option<String>,
-    pretax_amount: Option<f64>,
-    #[serde(rename = "PretaxGrossAmount")]
-    pretax_gross_amount: Option<f64>,
-    currency: Option<String>,
 }
 
 #[cfg(test)]

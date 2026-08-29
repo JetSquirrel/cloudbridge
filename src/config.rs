@@ -9,6 +9,12 @@ use std::path::PathBuf;
 /// Default data refresh interval, in minutes
 pub const DEFAULT_REFRESH_INTERVAL_MINUTES: u32 = 60;
 
+/// Currency every amount is shown in until the user picks another.
+pub const DEFAULT_REPORTING_CURRENCY: &str = "USD";
+
+/// Currencies the built-in rate table can convert between.
+pub const SUPPORTED_REPORTING_CURRENCIES: &[&str] = &["USD", "CNY"];
+
 /// Application configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -21,6 +27,15 @@ pub struct AppConfig {
     /// Persisted but not acted on yet: nothing schedules a refresh from it,
     /// so it has no Settings UI either. Wire both up together.
     pub refresh_interval_minutes: u32,
+    /// Currency every amount is converted to for display. Charges are
+    /// stored in the currency they were billed in; this only changes the
+    /// view they are read through.
+    #[serde(default = "default_reporting_currency")]
+    pub reporting_currency: String,
+}
+
+fn default_reporting_currency() -> String {
+    DEFAULT_REPORTING_CURRENCY.to_string()
 }
 
 impl Default for AppConfig {
@@ -29,6 +44,7 @@ impl Default for AppConfig {
             encryption_key: None,
             theme: ThemeConfig::default(),
             refresh_interval_minutes: DEFAULT_REFRESH_INTERVAL_MINUTES,
+            reporting_currency: default_reporting_currency(),
         }
     }
 }
@@ -95,6 +111,9 @@ pub fn load_config() -> Result<AppConfig> {
         // which is not a usable interval.
         if config.refresh_interval_minutes == 0 {
             config.refresh_interval_minutes = DEFAULT_REFRESH_INTERVAL_MINUTES;
+        }
+        if config.reporting_currency.is_empty() {
+            config.reporting_currency = default_reporting_currency();
         }
         Ok(config)
     } else {

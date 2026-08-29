@@ -7,24 +7,19 @@
 //! ledger is the record that has to survive.
 
 use anyhow::Result;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use duckdb::{params, Connection};
 use std::sync::{Arc, Mutex};
 
-use crate::cloud::{
-    BudgetInfo, BudgetStatus, CloudAccount, CostSummary, CostTrend, DailyCost, ServiceCost,
-    SourceId,
-};
+use crate::cloud::{BillingPeriod, BudgetInfo, BudgetStatus, CloudAccount, SourceId};
 use crate::config::get_database_path;
 use crate::crypto::get_crypto_manager;
+use crate::ledger::{query, PeriodKey};
 use crate::secret_store;
 
 lazy_static::lazy_static! {
     static ref DB_CONNECTION: Arc<Mutex<Option<Connection>>> = Arc::new(Mutex::new(None));
 }
-
-/// Cache time-to-live (hours)
-const CACHE_TTL_HOURS: i64 = 6;
 
 /// Schema version of the application-state database.
 ///
@@ -33,7 +28,11 @@ const CACHE_TTL_HOURS: i64 = 6;
 /// `cost_data` table, renames `provider` to `source_id` now that a source
 /// is a registry row rather than an enum variant, and drops the credential
 /// columns for good — secrets live in the OS keyring.
-const APP_SCHEMA_VERSION: i32 = 1;
+///
+/// v2 drops the two response caches. The dashboard reads the ledger now,
+/// which records when each period was ingested, so a separate copy of
+/// display-shaped API responses has nothing left to do.
+const APP_SCHEMA_VERSION: i32 = 2;
 
 /// Initialize database
 pub fn init_database() -> Result<()> {
@@ -60,11 +59,18 @@ fn prepare_schema(conn: &Connection) -> Result<()> {
         "#,
     )?;
 
-    if current_schema_version(conn)? < 1 {
+    let version = current_schema_version(conn)?;
+    if version < 1 {
         migrate_to_v1(conn)?;
     }
+    if version < 2 {
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS cost_summary_cache;
+             DROP TABLE IF EXISTS cost_trend_cache;",
+        )?;
+    }
 
-    create_v1_tables(conn)?;
+    create_tables(conn)?;
 
     conn.execute(
         "INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (?, ?)",
@@ -74,13 +80,13 @@ fn prepare_schema(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// The v1 shape. Anything the migration already rebuilt is left alone.
+/// The current shape. Anything a migration already rebuilt is left alone.
 ///
 /// Tables are declared without foreign keys: DuckDB will not drop or alter a
 /// table another table points at, which is what makes a rebuild like
 /// [`rebuild_accounts_v1`] necessary in the first place. `delete_account`
 /// cleans up dependants instead.
-fn create_v1_tables(conn: &Connection) -> Result<()> {
+fn create_tables(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS cloud_accounts (
@@ -104,29 +110,7 @@ fn create_v1_tables(conn: &Connection) -> Result<()> {
             updated_at      VARCHAR NOT NULL
         );
 
-        -- The two cache tables below hold display-shaped API responses, not
-        -- billing facts. They go away in PR5, once every source normalizes
-        -- into fct_charge and the dashboard reads through the ledger.
-        CREATE TABLE IF NOT EXISTS cost_summary_cache (
-            account_id              VARCHAR PRIMARY KEY,
-            current_month_cost      DOUBLE NOT NULL,
-            last_month_cost         DOUBLE NOT NULL,
-            currency                VARCHAR NOT NULL,
-            month_over_month_change DOUBLE NOT NULL,
-            current_month_details   TEXT,
-            last_month_details      TEXT,
-            cached_at               VARCHAR NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS cost_trend_cache (
-            account_id VARCHAR NOT NULL,
-            date       VARCHAR NOT NULL,
-            amount     DOUBLE NOT NULL,
-            currency   VARCHAR NOT NULL,
-            cached_at  VARCHAR NOT NULL,
-            PRIMARY KEY (account_id, date)
-        );
-        "#,
+                "#,
     )?;
 
     Ok(())
@@ -431,256 +415,6 @@ pub fn delete_account(account_id: &str) -> Result<()> {
     Ok(())
 }
 
-// ==================== Cache Functions ====================
-
-/// Check if cost summary cache is valid
-/// account_name and source_id are passed by the caller to avoid deadlock when acquiring lock while holding database lock
-pub fn get_cached_cost_summary_with_account(
-    account_id: &str,
-    account_name: &str,
-    source_id: &SourceId,
-) -> Result<Option<CostSummary>> {
-    let db = get_connection()?;
-    let conn = db.as_ref().unwrap();
-
-    let mut stmt = conn.prepare(
-        "SELECT current_month_cost, last_month_cost, currency, month_over_month_change, 
-                current_month_details, last_month_details, cached_at 
-         FROM cost_summary_cache WHERE account_id = ?",
-    )?;
-
-    let result = stmt.query_row(params![account_id], |row| {
-        let cached_at_str: String = row.get(6)?;
-        let current_details_json: Option<String> = row.get(4)?;
-        let last_details_json: Option<String> = row.get(5)?;
-
-        Ok((
-            row.get::<_, f64>(0)?,
-            row.get::<_, f64>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, f64>(3)?,
-            current_details_json,
-            last_details_json,
-            cached_at_str,
-        ))
-    });
-
-    match result {
-        Ok((
-            current,
-            last,
-            currency,
-            change,
-            current_details_json,
-            last_details_json,
-            cached_at_str,
-        )) => {
-            // Check if cache is expired
-            let cached_at = DateTime::parse_from_rfc3339(&cached_at_str)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now() - Duration::hours(CACHE_TTL_HOURS + 1));
-
-            let now = Utc::now();
-            if now - cached_at > Duration::hours(CACHE_TTL_HOURS) {
-                tracing::info!("Cost summary cache expired (cached at: {})", cached_at_str);
-                return Ok(None);
-            }
-
-            // Parse service details
-            let current_month_details: Vec<ServiceCost> = current_details_json
-                .and_then(|json| serde_json::from_str(&json).ok())
-                .unwrap_or_default();
-            let last_month_details: Vec<ServiceCost> = last_details_json
-                .and_then(|json| serde_json::from_str(&json).ok())
-                .unwrap_or_default();
-
-            tracing::info!(
-                "Using cost summary cache (cached at: {}, {} hours remaining)",
-                cached_at_str,
-                CACHE_TTL_HOURS - (now - cached_at).num_hours()
-            );
-
-            Ok(Some(CostSummary {
-                account_id: account_id.to_string(),
-                account_name: account_name.to_string(),
-                source_id: source_id.clone(),
-                current_month_cost: current,
-                last_month_cost: last,
-                currency,
-                month_over_month_change: change,
-                current_month_details,
-                last_month_details,
-            }))
-        }
-        Err(_) => Ok(None),
-    }
-}
-
-/// Save cost summary to cache
-pub fn save_cost_summary_cache(summary: &CostSummary) -> Result<()> {
-    let db = get_connection()?;
-    let conn = db.as_ref().unwrap();
-
-    let current_details_json = serde_json::to_string(&summary.current_month_details)?;
-    let last_details_json = serde_json::to_string(&summary.last_month_details)?;
-
-    conn.execute(
-        r#"
-        INSERT OR REPLACE INTO cost_summary_cache 
-        (account_id, current_month_cost, last_month_cost, currency, month_over_month_change, 
-         current_month_details, last_month_details, cached_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        "#,
-        params![
-            summary.account_id,
-            summary.current_month_cost,
-            summary.last_month_cost,
-            summary.currency,
-            summary.month_over_month_change,
-            current_details_json,
-            last_details_json,
-            Utc::now().to_rfc3339(),
-        ],
-    )?;
-
-    tracing::info!("Cached cost summary for account {}", summary.account_id);
-    Ok(())
-}
-
-/// Get cached cost trend
-pub fn get_cached_cost_trend(
-    account_id: &str,
-    start_date: &str,
-    end_date: &str,
-) -> Result<Option<CostTrend>> {
-    let db = get_connection()?;
-    let conn = db.as_ref().unwrap();
-
-    // First check if there's cache for this date range and if it's expired
-    let mut stmt = conn.prepare(
-        "SELECT date, amount, currency, cached_at FROM cost_trend_cache 
-         WHERE account_id = ? AND date >= ? AND date < ?
-         ORDER BY date",
-    )?;
-
-    let rows = stmt.query_map(params![account_id, start_date, end_date], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, f64>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-        ))
-    })?;
-
-    let mut daily_costs = Vec::new();
-    let mut oldest_cache: Option<DateTime<Utc>> = None;
-    let mut currency = "USD".to_string();
-
-    for row in rows {
-        let (date, amount, curr, cached_at_str) = row?;
-
-        let cached_at = DateTime::parse_from_rfc3339(&cached_at_str)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now() - Duration::hours(CACHE_TTL_HOURS + 1));
-
-        // Track the oldest cache time
-        if oldest_cache.is_none() || cached_at < oldest_cache.unwrap() {
-            oldest_cache = Some(cached_at);
-        }
-
-        currency = curr;
-        daily_costs.push(DailyCost { date, amount });
-    }
-
-    // Return None if no data or cache expired
-    if daily_costs.is_empty() {
-        return Ok(None);
-    }
-
-    let now = Utc::now();
-    if let Some(cached_at) = oldest_cache {
-        if now - cached_at > Duration::hours(CACHE_TTL_HOURS) {
-            tracing::info!("Cost trend cache expired");
-            return Ok(None);
-        }
-
-        tracing::info!(
-            "Using cost trend cache ({} data points, {} hours remaining)",
-            daily_costs.len(),
-            CACHE_TTL_HOURS - (now - cached_at).num_hours()
-        );
-    }
-
-    Ok(Some(CostTrend {
-        account_id: account_id.to_string(),
-        currency,
-        daily_costs,
-    }))
-}
-
-/// Save cost trend to cache
-pub fn save_cost_trend_cache(trend: &CostTrend) -> Result<()> {
-    let db = get_connection()?;
-    let conn = db.as_ref().unwrap();
-
-    let now = Utc::now().to_rfc3339();
-
-    for daily in &trend.daily_costs {
-        conn.execute(
-            r#"
-            INSERT OR REPLACE INTO cost_trend_cache 
-            (account_id, date, amount, currency, cached_at)
-            VALUES (?, ?, ?, ?, ?)
-            "#,
-            params![
-                trend.account_id,
-                daily.date,
-                daily.amount,
-                trend.currency,
-                now,
-            ],
-        )?;
-    }
-
-    tracing::info!(
-        "Cached cost trend for account {} ({} days)",
-        trend.account_id,
-        trend.daily_costs.len()
-    );
-    Ok(())
-}
-
-/// Clear all cache for specified account (for force refresh, reserved interface)
-#[allow(dead_code)]
-pub fn clear_account_cache(account_id: &str) -> Result<()> {
-    let db = get_connection()?;
-    let conn = db.as_ref().unwrap();
-
-    conn.execute(
-        "DELETE FROM cost_summary_cache WHERE account_id = ?",
-        params![account_id],
-    )?;
-    conn.execute(
-        "DELETE FROM cost_trend_cache WHERE account_id = ?",
-        params![account_id],
-    )?;
-
-    tracing::info!("Cleared all cache for account {}", account_id);
-    Ok(())
-}
-
-/// Clear all cache (for global force refresh)
-pub fn clear_all_cache() -> Result<()> {
-    let db = get_connection()?;
-    let conn = db.as_ref().unwrap();
-
-    conn.execute("DELETE FROM cost_summary_cache", [])?;
-    conn.execute("DELETE FROM cost_trend_cache", [])?;
-
-    tracing::info!("Cleared all cost cache");
-    Ok(())
-}
-
 // ==================== Budget Functions ====================
 
 /// Save or update budget for an account
@@ -816,11 +550,16 @@ pub fn get_budget_status(account_id: &str) -> Result<Option<BudgetStatus>> {
         .find(|a| a.id == account_id)
         .ok_or_else(|| anyhow::anyhow!("Account not found"))?;
 
-    // Get cached cost summary
-    let cost_summary =
-        get_cached_cost_summary_with_account(account_id, &account.name, &account.source_id)?;
-
-    let current_cost = cost_summary.map(|cs| cs.current_month_cost).unwrap_or(0.0);
+    // What the ledger says has been charged this month. It is in the
+    // reporting currency, while a budget carries a currency of its own;
+    // reconciling the two belongs with the budget alerts in P2, which is
+    // also where this function finally gets a caller.
+    let period = BillingPeriod::containing(Utc::now());
+    let current_cost = query::period_total(&PeriodKey::new(
+        account.source_id.as_str().to_string(),
+        account.id.clone(),
+        period.label(),
+    ))?;
 
     // Calculate metrics
     let percentage_used = if budget.monthly_budget > 0.0 {
@@ -944,7 +683,7 @@ mod tests {
         let columns = column_names(&conn, "cloud_accounts").unwrap();
 
         rebuild_accounts_v1(&conn, &columns).unwrap();
-        create_v1_tables(&conn).unwrap();
+        create_tables(&conn).unwrap();
 
         let (id, source_id, region): (String, String, String) = conn
             .query_row(
@@ -974,6 +713,27 @@ mod tests {
     }
 
     #[test]
+    fn the_response_caches_are_dropped_on_upgrade() {
+        let conn = legacy_database();
+        conn.execute_batch(
+            "CREATE TABLE cost_summary_cache (account_id VARCHAR PRIMARY KEY);
+             CREATE TABLE cost_trend_cache (account_id VARCHAR PRIMARY KEY);",
+        )
+        .unwrap();
+
+        prepare_schema(&conn).unwrap();
+
+        assert!(!table_exists(&conn, "cost_summary_cache"));
+        assert!(!table_exists(&conn, "cost_trend_cache"));
+        assert_eq!(current_schema_version(&conn).unwrap(), APP_SCHEMA_VERSION);
+        // The account survives the upgrade that removed them.
+        let accounts: i64 = conn
+            .query_row("SELECT count(*) FROM cloud_accounts", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(accounts, 1);
+    }
+
+    #[test]
     fn the_v1_rebuild_leaves_an_already_renamed_column_alone() {
         // A database that got as far as source_id before being interrupted.
         let conn = legacy_database();
@@ -986,7 +746,7 @@ mod tests {
 
         let columns = column_names(&conn, "cloud_accounts").unwrap();
         rebuild_accounts_v1(&conn, &columns).unwrap();
-        create_v1_tables(&conn).unwrap();
+        create_tables(&conn).unwrap();
 
         let source_id: String = conn
             .query_row("SELECT source_id FROM cloud_accounts", [], |row| row.get(0))

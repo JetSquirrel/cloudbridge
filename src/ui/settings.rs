@@ -2,9 +2,9 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::{switch::*, *};
+use gpui_component::{button::*, switch::*, *};
 
-use crate::config::{load_config, save_config, AppConfig};
+use crate::config::{load_config, save_config, AppConfig, SUPPORTED_REPORTING_CURRENCIES};
 
 /// Settings View
 pub struct SettingsView {
@@ -35,6 +35,23 @@ impl SettingsView {
             Some(window),
             cx,
         );
+        self.save_config(cx);
+    }
+
+    /// Change the currency every amount is shown in.
+    ///
+    /// Only the reading view is rebuilt — charges stay in the currency
+    /// they were billed in, so this costs nothing and loses nothing.
+    fn set_reporting_currency(&mut self, currency: &str, cx: &mut Context<Self>) {
+        self.config.reporting_currency = currency.to_string();
+
+        if let Err(e) = crate::ledger::set_reporting_currency(currency) {
+            tracing::error!("Failed to switch reporting currency: {}", e);
+            self.save_status = Some(format!("Could not switch currency: {}", e));
+            cx.notify();
+            return;
+        }
+
         self.save_config(cx);
     }
 
@@ -79,6 +96,7 @@ impl SettingsView {
 impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let dark_mode = self.config.theme.dark_mode;
+        let reporting_currency = self.config.reporting_currency.clone();
 
         div()
             .size_full()
@@ -116,6 +134,40 @@ impl Render for SettingsView {
                                     this.set_dark_mode(*checked, window, cx);
                                 })),
                         ),
+                    cx,
+                ),
+            )
+            // Reporting currency
+            .child(
+                self.render_section(
+                    "Reporting",
+                    div()
+                        .h_flex()
+                        .justify_between()
+                        .items_center()
+                        .child(
+                            div().v_flex().child(div().child("Currency")).child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(
+                                        "Totals are converted to this currency. \
+                                         Charges keep the currency they were billed in.",
+                                    ),
+                            ),
+                        )
+                        .child(div().h_flex().gap_2().children(
+                            SUPPORTED_REPORTING_CURRENCIES.iter().map(|currency| {
+                                Button::new(SharedString::from(format!("currency-{currency}")))
+                                    .label(*currency)
+                                    .when(*currency == reporting_currency, |button| {
+                                        button.primary()
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.set_reporting_currency(currency, cx);
+                                    }))
+                            }),
+                        )),
                     cx,
                 ),
             )

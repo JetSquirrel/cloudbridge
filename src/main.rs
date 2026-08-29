@@ -5,6 +5,7 @@ mod crypto;
 mod db;
 mod ingest;
 mod ledger;
+mod report;
 mod secret_store;
 mod ui;
 
@@ -39,7 +40,9 @@ fn main() {
 
         // Apply the persisted theme before the first window opens, so the app
         // does not flash the default appearance on startup.
-        let dark_mode = config::load_config().unwrap_or_default().theme.dark_mode;
+        let settings = config::load_config().unwrap_or_default();
+        let dark_mode = settings.theme.dark_mode;
+        let reporting_currency = settings.reporting_currency.clone();
         Theme::change(
             if dark_mode {
                 ThemeMode::Dark
@@ -55,7 +58,7 @@ fn main() {
             if let Err(e) = db::init_database() {
                 tracing::error!("Database initialization failed: {}", e);
             }
-            if let Err(e) = ledger::init_ledger() {
+            if let Err(e) = ledger::init_ledger(&reporting_currency) {
                 tracing::error!("Ledger initialization failed: {}", e);
             }
 
