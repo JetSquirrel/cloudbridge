@@ -62,10 +62,19 @@ pub fn get_config_path() -> Result<PathBuf> {
     Ok(data_dir.join("config.json"))
 }
 
-/// Get database path
+/// Path of the application-state database: accounts, budgets and the
+/// response caches the dashboard reads.
 pub fn get_database_path() -> Result<PathBuf> {
     let data_dir = get_app_data_dir()?;
     Ok(data_dir.join("cloudbridge.duckdb"))
+}
+
+/// Path of the billing ledger. A separate file from the application state:
+/// the ledger is the durable record, everything in `cloudbridge.duckdb` is
+/// either user-entered or re-fetchable.
+pub fn get_ledger_database_path() -> Result<PathBuf> {
+    let data_dir = get_app_data_dir()?;
+    Ok(data_dir.join("billing.duckdb"))
 }
 
 /// Load configuration

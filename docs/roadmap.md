@@ -31,16 +31,18 @@ carry their weight for a personal ledger:
 
 ## Where we are
 
-The DuckDB file today is a cache, not a ledger. `cost_data` is dead code;
-the live path is two per-account cache tables holding JSON blobs. There is
-no fact table, so Sankey, attribution, anomaly detection and month-end
-freezing have nothing to build on.
+PR1 and PR2 have landed. A source is a registry row rather than an enum
+variant, and `billing.duckdb` now holds `fct_charge`, `ingest_batch`,
+`fct_balance_snapshot` and `dim_fx_rate` behind a transactional
+whole-period write. Nothing normalizes into it yet, so the dashboard still
+reads the two per-account cache tables in `cloudbridge.duckdb` — they go
+away in PR5, when the last source writes through the ledger.
 
-Three structural problems block everything downstream:
+Two of the three structural problems are still open:
 
-1. **`CloudProvider` is a compile-time enum** with 48 references across 7
-   files. Adding a source means editing five `match` arms. `db.rs` also
-   silently coerces an unknown provider string to `AWS`.
+1. ~~**`CloudProvider` is a compile-time enum**~~ — replaced by the source
+   registry in PR1. An unrecognized source id is now skipped with a
+   warning instead of being silently read as AWS.
 2. **Amounts are summed across currencies.** The dashboard total adds AWS
    USD to Alibaba Cloud CNY and shows the result as one number.
 3. **`fetch` and `normalize` are fused.** `get_cost_summary()` returns a
@@ -58,7 +60,7 @@ The one-sentence acceptance test for the whole phase:
 
 The six changes are a dependency chain — land them in order.
 
-### PR1 · Source registry
+### PR1 · Source registry — landed
 
 Replace the `CloudProvider` enum with a `SourceId` plus a descriptor table
 carrying a `Capabilities` struct. The unknown-provider fallback becomes a
@@ -69,12 +71,19 @@ its granularity is `SnapshotOnly`, not because it is called DeepSeek.
 Pure refactor, no behavior change. It comes first because every later PR
 would otherwise have to edit the same 48 sites.
 
-### PR2 · New database, `fct_charge`, batch table
+### PR2 · New database, `fct_charge`, batch table — landed
 
 A fresh `billing.duckdb` with a `schema_version` table; credentials move to
 their own store. Four tables: `fct_charge`, `ingest_batch`,
-`fct_balance_snapshot`, `dim_fx_rate`. The three cache tables are dropped —
-the data is re-fetchable, so no migration is written.
+`fct_balance_snapshot`, `dim_fx_rate`.
+
+As landed, the two cache tables stay behind in `cloudbridge.duckdb` rather
+than being dropped here: they are the only thing feeding the dashboard
+until PR4 and PR5 normalize into `fct_charge`, and dropping them early
+would mean paying Cost Explorer for a fetch on every launch in between.
+`cost_data` — dead code — is gone, and so are the credential columns: the
+application database is versioned and rebuilt at v1, keeping accounts and
+budgets, with secrets in the OS keyring only.
 
 Writes are transactional whole-period replacement keyed by
 `(provider, account_id, billing_period)`. Providers re-issue a bill in full

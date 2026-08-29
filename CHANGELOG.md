@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Budget tracking
 
 ### Added
+- **FOCUS billing ledger** (roadmap P0/PR2)
+  - New `billing.duckdb` with `fct_charge`, `ingest_batch`,
+    `fct_balance_snapshot` and `dim_fx_rate`, named after
+    [FOCUS](https://focus.finops.org/) columns
+  - Transactional whole-period replacement keyed by
+    (source, account, billing period), with deterministic charge ids so a
+    repeated ingest of an unchanged bill is a no-op
+  - Amounts stored in the currency they were billed in; conversion is left
+    to a view (PR6)
 - **DeepSeek Integration**
   - DeepSeek API integration for balance queries
   - Display account balance instead of cost for DeepSeek accounts
@@ -23,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Support for multiple currencies (CNY, USD)
 
 ### Changed
+- Billing source registry replaces the `CloudProvider` enum; an unknown
+  source id is skipped with a warning instead of being read as AWS
+- Application database is versioned and rebuilt at schema v1: the dead
+  `cost_data` table and the credential columns are gone, `provider` is now
+  `source_id`, and accounts and budgets are carried across. Credentials
+  live in the OS keyring only.
 
 ### Fixed
 

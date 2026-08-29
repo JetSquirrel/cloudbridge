@@ -3,6 +3,7 @@ mod cloud;
 mod config;
 mod crypto;
 mod db;
+mod ledger;
 mod secret_store;
 mod ui;
 
@@ -49,9 +50,12 @@ fn main() {
         );
 
         cx.spawn(async move |cx| {
-            // Initialize database
+            // Initialize databases: application state, then the billing ledger.
             if let Err(e) = db::init_database() {
                 tracing::error!("Database initialization failed: {}", e);
+            }
+            if let Err(e) = ledger::init_ledger() {
+                tracing::error!("Ledger initialization failed: {}", e);
             }
 
             cx.open_window(
