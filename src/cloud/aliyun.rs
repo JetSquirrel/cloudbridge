@@ -7,7 +7,12 @@ use serde::Deserialize;
 use sha1::Sha1;
 use std::collections::BTreeMap;
 
-use super::{CloudService, CostData, CostSummary, ServiceCost, SourceId};
+use super::raw::RawPart;
+use super::{
+    BillingPeriod, BillingSource, CostData, CostSummary, Normalized, RawBatch, ServiceCost,
+    SourceId,
+};
+use crate::ledger::Charge;
 
 type HmacSha1 = Hmac<Sha1>;
 
@@ -217,7 +222,7 @@ impl AliyunCloudService {
     }
 }
 
-impl CloudService for AliyunCloudService {
+impl BillingSource for AliyunCloudService {
     fn validate_credentials(&self) -> Result<bool> {
         // Try calling a simple API to validate credentials
         let now = Utc::now();
@@ -230,6 +235,21 @@ impl CloudService for AliyunCloudService {
                 Ok(false)
             }
         }
+    }
+
+    fn fetch(&self, period: &BillingPeriod) -> Result<Vec<RawPart>> {
+        let billing_cycle = period.label();
+        let body = self.call_bss_api("QueryBillOverview", &[("BillingCycle", &billing_cycle)])?;
+
+        Ok(vec![RawPart::new(
+            PART_BILL_OVERVIEW,
+            format!("QueryBillOverview BillingCycle={}", billing_cycle),
+            body,
+        )])
+    }
+
+    fn normalize(&self, batch: &RawBatch) -> Result<Normalized> {
+        normalize(batch)
     }
 
     fn get_cost_data(&self, start_date: &str, end_date: &str) -> Result<Vec<CostData>> {
@@ -389,6 +409,76 @@ fn parse_bill_overview(response: &BillOverviewResponse) -> (f64, Vec<ServiceCost
     (total_cost, details)
 }
 
+/// Name the bill overview payload is stored under in a raw batch.
+const PART_BILL_OVERVIEW: &str = "bill_overview";
+
+/// Turn a fetched `QueryBillOverview` payload into ledger rows.
+///
+/// Pure — every input is in `batch`. The overview is per product for the
+/// whole month, so one row covers the entire billing period; instance-level
+/// detail arrives with the bill export channel in P1.
+///
+/// `PretaxAmount` is what was charged after discounts and vouchers, so it
+/// is `billed_cost`, and `PretaxGrossAmount` is the undiscounted figure, so
+/// it is `list_cost`. The difference between them is a deduction that PR5
+/// will emit as its own `Credit` row; until then it is visible as the gap
+/// between the two columns rather than being invented as a charge.
+pub fn normalize(batch: &RawBatch) -> Result<Normalized> {
+    let part = batch
+        .part(PART_BILL_OVERVIEW)
+        .ok_or_else(|| anyhow!("Raw batch has no '{}' payload", PART_BILL_OVERVIEW))?;
+    let response: BillOverviewResponse = serde_json::from_str(&part.body)
+        .map_err(|e| anyhow!("Failed to parse bill overview: {}", e))?;
+
+    let start = batch
+        .period
+        .start()
+        .and_hms_opt(0, 0, 0)
+        .expect("midnight exists")
+        .and_utc();
+    let end = batch
+        .period
+        .end_exclusive()
+        .and_hms_opt(0, 0, 0)
+        .expect("midnight exists")
+        .and_utc();
+
+    let items = response
+        .data
+        .and_then(|data| data.items)
+        .and_then(|items| items.item)
+        .unwrap_or_default();
+
+    let mut charges = Vec::new();
+    for item in items {
+        let billed = item.pretax_amount.unwrap_or(0.0);
+        let list = item.pretax_gross_amount.unwrap_or(0.0);
+        // A product with nothing on either side of the discount was not
+        // used this month.
+        if billed == 0.0 && list == 0.0 {
+            continue;
+        }
+
+        charges.push(Charge {
+            service_name: item.product_name,
+            // ProductCode is stable across locales; ProductName is not.
+            service_category: item.product_code,
+            billed_cost: Some(billed),
+            list_cost: Some(list),
+            ..Charge::new(
+                start,
+                end,
+                item.currency.unwrap_or_else(|| "CNY".to_string()),
+            )
+        });
+    }
+
+    Ok(Normalized {
+        charges,
+        balances: Vec::new(),
+    })
+}
+
 // ==================== Response Structs ====================
 // Note: These fields are used for serde deserialization of Alibaba Cloud API responses.
 // Some fields may not be directly read in the code, but are needed for correct JSON parsing.
@@ -477,4 +567,65 @@ struct InstanceBillItem {
     #[serde(rename = "PretaxGrossAmount")]
     pretax_gross_amount: Option<f64>,
     currency: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ledger::{ChargeCategory, CostBasis};
+
+    /// One recorded QueryBillOverview response.
+    const BILL_OVERVIEW: &str = include_str!("testdata/aliyun_bill_overview.json");
+
+    fn recorded_batch(body: &str) -> RawBatch {
+        RawBatch {
+            provider: "Aliyun".to_string(),
+            account_id: "acct-2".to_string(),
+            period: BillingPeriod::new(2026, 8),
+            batch_id: "b-1".to_string(),
+            fetched_at: "2026-09-01T02:00:00Z".parse().unwrap(),
+            parts: vec![RawPart::new(PART_BILL_OVERVIEW, "", body)],
+        }
+    }
+
+    #[test]
+    fn a_recorded_overview_normalizes_to_one_charge_per_product() {
+        let normalized = normalize(&recorded_batch(BILL_OVERVIEW)).unwrap();
+
+        // The unused CDN product is dropped.
+        assert_eq!(normalized.charges.len(), 2);
+
+        let ecs = &normalized.charges[0];
+        assert_eq!(ecs.service_name.as_deref(), Some("云服务器 ECS"));
+        assert_eq!(ecs.service_category.as_deref(), Some("ecs"));
+        assert_eq!(ecs.billed_cost, Some(288.45));
+        assert_eq!(ecs.list_cost, Some(320.5));
+        assert_eq!(ecs.billing_currency, "CNY");
+        assert_eq!(ecs.charge_category, ChargeCategory::Usage);
+        assert_eq!(ecs.cost_basis, CostBasis::Authoritative);
+    }
+
+    #[test]
+    fn a_monthly_overview_row_covers_the_whole_period() {
+        let normalized = normalize(&recorded_batch(BILL_OVERVIEW)).unwrap();
+        let charge = &normalized.charges[0];
+
+        assert_eq!(
+            charge.charge_period_start.to_rfc3339(),
+            "2026-08-01T00:00:00+00:00"
+        );
+        assert_eq!(
+            charge.charge_period_end.to_rfc3339(),
+            "2026-09-01T00:00:00+00:00"
+        );
+    }
+
+    #[test]
+    fn an_empty_bill_normalizes_to_nothing() {
+        let normalized = normalize(&recorded_batch(
+            r#"{"Code":"Success","Data":{"BillingCycle":"2026-08"}}"#,
+        ))
+        .unwrap();
+        assert!(normalized.charges.is_empty());
+    }
 }

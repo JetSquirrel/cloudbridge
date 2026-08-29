@@ -31,24 +31,29 @@ carry their weight for a personal ledger:
 
 ## Where we are
 
-PR1 and PR2 have landed. A source is a registry row rather than an enum
-variant, and `billing.duckdb` now holds `fct_charge`, `ingest_batch`,
+PR1 through PR3 have landed. A source is a registry row rather than an
+enum variant; `billing.duckdb` holds `fct_charge`, `ingest_batch`,
 `fct_balance_snapshot` and `dim_fx_rate` behind a transactional
-whole-period write. Nothing normalizes into it yet, so the dashboard still
-reads the two per-account cache tables in `cloudbridge.duckdb` — they go
-away in PR5, when the last source writes through the ledger.
+whole-period write; and every source now fetches raw payloads to Parquet
+and normalizes them through a pure function, tested against a recorded
+response.
 
-Two of the three structural problems are still open:
+What is left in P0 is the mapping detail (PR4, PR5) and the read path
+(PR6). The dashboard still reads the two per-account cache tables in
+`cloudbridge.duckdb` — they go away in PR5, when the last source writes
+through the ledger.
+
+One of the three structural problems is still open:
 
 1. ~~**`CloudProvider` is a compile-time enum**~~ — replaced by the source
    registry in PR1. An unrecognized source id is now skipped with a
    warning instead of being silently read as AWS.
 2. **Amounts are summed across currencies.** The dashboard total adds AWS
    USD to Alibaba Cloud CNY and shows the result as one number.
-3. **`fetch` and `normalize` are fused.** `get_cost_summary()` returns a
-   display-shaped struct straight from the API. Cost Explorer charges per
-   request, so any schema change means paying to re-fetch, and there is no
-   way to unit-test the billing logic.
+3. ~~**`fetch` and `normalize` are fused.**~~ — split in PR3. `fetch`
+   persists what the provider returned and interprets nothing;
+   `normalize` interprets and touches nothing, so a mapping fix replays
+   payloads already on disk instead of paying Cost Explorer again.
 
 ## P0 — FOCUS normalization
 
@@ -107,7 +112,7 @@ deferred:
 - `pricing_unit` is not restricted to cloud units. Today it holds `GB-Mo`
   and `Hrs`; tomorrow it holds `Tokens`.
 
-### PR3 · Split fetch from normalize, land raw Parquet
+### PR3 · Split fetch from normalize, land raw Parquet — landed
 
 `BillingSource` replaces `CloudService`. `fetch` retrieves and persists raw
 payloads unchanged; `normalize` is a pure function from raw to FOCUS rows.
@@ -124,6 +129,16 @@ so P1's S3/OSS export channel only replaces the `fetch` implementation —
 
 A pure `normalize` is also the first time billing logic becomes testable:
 record one API response per provider as a fixture and assert on the rows.
+
+As landed, `CloudService` became `BillingSource` and all three sources
+implement both halves, so the pipeline is whole end to end
+(`ingest::ingest_period`) and re-normalizing without fetching is a
+supported operation (`ingest::renormalize_period`). What the normalizers
+do *not* do yet is the mapping detail PR4 and PR5 own: AWS asks only for
+`UnblendedCost` and files everything as `Usage`, Alibaba Cloud records the
+discount as the gap between `billed_cost` and `list_cost` rather than as
+`Credit` rows, and DeepSeek writes balance snapshots without deriving
+top-ups.
 
 ### PR4 · AWS to FOCUS
 

@@ -98,7 +98,9 @@ pub fn apply(conn: &Connection) -> Result<()> {
             topped_up_balance DOUBLE,
             currency          VARCHAR NOT NULL,
             created_at        TIMESTAMP NOT NULL,
-            PRIMARY KEY (provider, account_id, observed_at)
+            -- Currency is part of the key: an account can hold a balance in
+            -- more than one, and they are observed at the same instant.
+            PRIMARY KEY (provider, account_id, observed_at, currency)
         );
 
         -- Rates are dated because they get corrected, and the reporting

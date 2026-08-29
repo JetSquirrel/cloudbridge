@@ -3,12 +3,15 @@
 pub mod aliyun;
 pub mod aws;
 pub mod deepseek;
+pub mod raw;
 pub mod registry;
 
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::ledger::{BalanceSnapshot, Charge};
+pub use raw::{RawBatch, RawPart};
 pub use registry::{SourceDescriptor, SourceId};
 
 /// Shown in place of a source's name when its id is not in the registry.
@@ -204,10 +207,74 @@ pub struct BudgetStatus {
     pub alert_triggered: bool,
 }
 
-/// Cloud service provider trait (sync version, using ureq)
-pub trait CloudService: Send + Sync {
+/// A calendar month of billing, the unit providers issue a bill in and the
+/// unit the ledger replaces as a whole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BillingPeriod {
+    pub year: i32,
+    pub month: u32,
+}
+
+impl BillingPeriod {
+    pub fn new(year: i32, month: u32) -> Self {
+        Self { year, month }
+    }
+
+    /// The period the given instant falls in.
+    pub fn containing(instant: DateTime<Utc>) -> Self {
+        Self::new(instant.year(), instant.month())
+    }
+
+    /// `YYYY-MM`, as stored in `billing_period` and in the raw path.
+    pub fn label(&self) -> String {
+        format!("{:04}-{:02}", self.year, self.month)
+    }
+
+    /// First day of the period.
+    pub fn start(&self) -> NaiveDate {
+        NaiveDate::from_ymd_opt(self.year, self.month, 1).expect("a valid billing period")
+    }
+
+    /// First day of the following period. Cost Explorer and the BSS API
+    /// both take an exclusive end.
+    pub fn end_exclusive(&self) -> NaiveDate {
+        let (year, month) = if self.month == 12 {
+            (self.year + 1, 1)
+        } else {
+            (self.year, self.month + 1)
+        };
+        NaiveDate::from_ymd_opt(year, month, 1).expect("a valid billing period")
+    }
+}
+
+/// What a normalizer produces: FOCUS rows ready for the ledger.
+///
+/// Charges and balances are separate because a balance is state, not a
+/// charge — see `fct_balance_snapshot`.
+#[derive(Debug, Default)]
+pub struct Normalized {
+    pub charges: Vec<Charge>,
+    pub balances: Vec<BalanceSnapshot>,
+}
+
+/// A source of billing data (sync, using ureq).
+///
+/// [`Self::fetch`] and [`Self::normalize`] are deliberately split. `fetch`
+/// touches the network and interprets nothing; `normalize` interprets and
+/// touches nothing. That is what makes the billing logic testable from a
+/// recorded payload, and what keeps a mapping fix from costing another
+/// round of paid API calls.
+pub trait BillingSource: Send + Sync {
     /// Validate credentials
     fn validate_credentials(&self) -> Result<bool>;
+
+    /// Retrieve everything the provider reports for one billing period,
+    /// unchanged. The only method here that talks to the network.
+    fn fetch(&self, period: &BillingPeriod) -> Result<Vec<RawPart>>;
+
+    /// Turn a fetched batch into ledger rows. Pure: no clock, no network,
+    /// no database — everything it needs is in the batch.
+    fn normalize(&self, batch: &RawBatch) -> Result<Normalized>;
 
     /// Get cost data
     fn get_cost_data(&self, start_date: &str, end_date: &str) -> Result<Vec<CostData>>;

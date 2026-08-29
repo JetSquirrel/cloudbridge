@@ -13,7 +13,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{aliyun::AliyunCloudService, aws::AwsCloudService, deepseek::DeepSeekService};
-use super::{CloudService, SourceContext};
+use super::{BillingSource, SourceContext};
 
 /// What a source reports, and therefore how it can be displayed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,7 +77,7 @@ pub struct SourceDescriptor {
     pub reporting: Reporting,
     /// Builds the client. A function pointer keeps construction in this
     /// table instead of a `match` in every caller.
-    pub build: fn(SourceContext) -> Box<dyn CloudService>,
+    pub build: fn(SourceContext) -> Box<dyn BillingSource>,
 }
 
 impl SourceDescriptor {

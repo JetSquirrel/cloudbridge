@@ -205,17 +205,25 @@ fn with_connection<T>(f: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T>
     f(conn)
 }
 
+/// Identifier for one ingest.
+///
+/// Minted by the caller rather than in here, because the raw payloads are
+/// stored under the same id: `raw/.../batch=<id>/` is what `source_ref`
+/// points at, and the two have to agree.
+pub fn new_batch_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
 /// Replace everything stored for `key` with `charges`, in one transaction.
 ///
-/// Returns the id of the batch the rows were written under. `source_ref`
-/// points at the raw payload the rows were normalized from; it stays `None`
-/// until PR3 persists Parquet.
+/// `source_ref` points at the raw payload the rows were normalized from.
 pub fn replace_period(
     key: &PeriodKey,
+    batch_id: &str,
     charges: &[Charge],
     source_ref: Option<&str>,
-) -> Result<String> {
-    with_connection(|conn| write_period(conn, key, charges, source_ref))
+) -> Result<()> {
+    with_connection(|conn| write_period(conn, key, batch_id, charges, source_ref))
 }
 
 /// Record a balance observation. Re-observing the same instant overwrites,
@@ -227,10 +235,10 @@ pub fn record_balance(snapshot: &BalanceSnapshot) -> Result<()> {
 fn write_period(
     conn: &mut Connection,
     key: &PeriodKey,
+    batch_id: &str,
     charges: &[Charge],
     source_ref: Option<&str>,
-) -> Result<String> {
-    let batch_id = uuid::Uuid::new_v4().to_string();
+) -> Result<()> {
     let now = Utc::now().format(TIMESTAMP_FORMAT).to_string();
     let ids = charge_ids(key, charges);
 
@@ -323,7 +331,7 @@ fn write_period(
         key.billing_period,
         batch_id
     );
-    Ok(batch_id)
+    Ok(())
 }
 
 fn write_balance(conn: &mut Connection, snapshot: &BalanceSnapshot) -> Result<()> {
@@ -457,10 +465,10 @@ mod tests {
         let key = key();
         let charges = vec![usage("EC2", 12.5, 1), usage("S3", 0.75, 1)];
 
-        write_period(&mut conn, &key, &charges, None).unwrap();
+        write_period(&mut conn, &key, "b-1", &charges, None).unwrap();
         let first = stored(&conn, &key);
 
-        write_period(&mut conn, &key, &charges, None).unwrap();
+        write_period(&mut conn, &key, "b-2", &charges, None).unwrap();
         let second = stored(&conn, &key);
 
         assert_eq!(first, second);
@@ -475,6 +483,7 @@ mod tests {
         write_period(
             &mut conn,
             &key,
+            "b-1",
             &[
                 usage("EC2", 12.5, 1),
                 usage("S3", 0.75, 1),
@@ -489,6 +498,7 @@ mod tests {
         write_period(
             &mut conn,
             &key,
+            "b-2",
             &[usage("EC2", 11.0, 1), usage("S3", 0.75, 1)],
             None,
         )
@@ -507,8 +517,8 @@ mod tests {
         let mut conn = conn();
         let key = key();
 
-        write_period(&mut conn, &key, &[usage("EC2", 12.5, 1)], None).unwrap();
-        let batch = write_period(&mut conn, &key, &[usage("EC2", 11.0, 1)], None).unwrap();
+        write_period(&mut conn, &key, "b-1", &[usage("EC2", 12.5, 1)], None).unwrap();
+        write_period(&mut conn, &key, "b-2", &[usage("EC2", 11.0, 1)], None).unwrap();
 
         assert_eq!(scalar_i64(&conn, "SELECT count(*) FROM ingest_batch"), 2);
         assert_eq!(
@@ -521,7 +531,7 @@ mod tests {
         assert_eq!(
             conn.query_row::<String, _, _>("SELECT batch_id FROM fct_charge", [], |r| r.get(0))
                 .unwrap(),
-            batch
+            "b-2"
         );
     }
 
@@ -532,10 +542,17 @@ mod tests {
         let july = PeriodKey::new("AWS", "acct-1", "2026-07");
         let other_account = PeriodKey::new("AWS", "acct-2", "2026-08");
 
-        write_period(&mut conn, &july, &[usage("EC2", 9.0, 1)], None).unwrap();
-        write_period(&mut conn, &other_account, &[usage("EC2", 5.0, 1)], None).unwrap();
-        write_period(&mut conn, &august, &[usage("EC2", 12.5, 1)], None).unwrap();
-        write_period(&mut conn, &august, &[], None).unwrap();
+        write_period(&mut conn, &july, "b-1", &[usage("EC2", 9.0, 1)], None).unwrap();
+        write_period(
+            &mut conn,
+            &other_account,
+            "b-2",
+            &[usage("EC2", 5.0, 1)],
+            None,
+        )
+        .unwrap();
+        write_period(&mut conn, &august, "b-3", &[usage("EC2", 12.5, 1)], None).unwrap();
+        write_period(&mut conn, &august, "b-4", &[], None).unwrap();
 
         assert!(stored(&conn, &august).is_empty());
         assert_eq!(stored(&conn, &july).len(), 1);
@@ -548,11 +565,11 @@ mod tests {
         let key = key();
         let charges = vec![usage("EC2", 12.5, 1), usage("EC2", 4.0, 1)];
 
-        write_period(&mut conn, &key, &charges, None).unwrap();
+        write_period(&mut conn, &key, "b-1", &charges, None).unwrap();
         let first = stored(&conn, &key);
         assert_eq!(first.len(), 2);
 
-        write_period(&mut conn, &key, &charges, None).unwrap();
+        write_period(&mut conn, &key, "b-2", &charges, None).unwrap();
         assert_eq!(stored(&conn, &key), first);
     }
 
@@ -564,6 +581,7 @@ mod tests {
         write_period(
             &mut conn,
             &key,
+            "b-1",
             &[Charge {
                 service_name: Some("Claude Code".to_string()),
                 cost_basis: CostBasis::Absent,
@@ -632,7 +650,7 @@ mod tests {
         let mut conn = conn();
         let key = key();
 
-        write_period(&mut conn, &key, &[usage("EC2", 1.0, 3)], None).unwrap();
+        write_period(&mut conn, &key, "b-1", &[usage("EC2", 1.0, 3)], None).unwrap();
 
         let start: String = conn
             .query_row(

@@ -1,0 +1,36 @@
+{
+  "RequestId": "8A1E1E1B-0000-4E4E-9C9C-3F3F3F3F3F3F",
+  "Success": true,
+  "Code": "Success",
+  "Message": "Successful!",
+  "Data": {
+    "BillingCycle": "2026-08",
+    "AccountID": "1234567890123456",
+    "AccountName": "example@aliyun.com",
+    "Items": {
+      "Item": [
+        {
+          "ProductCode": "ecs",
+          "ProductName": "云服务器 ECS",
+          "PretaxGrossAmount": 320.5,
+          "PretaxAmount": 288.45,
+          "Currency": "CNY"
+        },
+        {
+          "ProductCode": "oss",
+          "ProductName": "对象存储 OSS",
+          "PretaxGrossAmount": 42.0,
+          "PretaxAmount": 42.0,
+          "Currency": "CNY"
+        },
+        {
+          "ProductCode": "cdn",
+          "ProductName": "CDN",
+          "PretaxGrossAmount": 0,
+          "PretaxAmount": 0,
+          "Currency": "CNY"
+        }
+      ]
+    }
+  }
+}

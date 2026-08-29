@@ -3,6 +3,7 @@ mod cloud;
 mod config;
 mod crypto;
 mod db;
+mod ingest;
 mod ledger;
 mod secret_store;
 mod ui;

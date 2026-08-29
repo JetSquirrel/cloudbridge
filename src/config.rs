@@ -77,6 +77,13 @@ pub fn get_ledger_database_path() -> Result<PathBuf> {
     Ok(data_dir.join("billing.duckdb"))
 }
 
+/// Root of the raw payload store. Laid out so the same path semantics
+/// work for a local directory and for an object store; see [`crate::cloud::raw`].
+pub fn get_raw_data_dir() -> Result<PathBuf> {
+    let data_dir = get_app_data_dir()?;
+    Ok(data_dir.join("raw"))
+}
+
 /// Load configuration
 pub fn load_config() -> Result<AppConfig> {
     let config_path = get_config_path()?;

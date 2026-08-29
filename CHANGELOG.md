@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     repeated ingest of an unchanged bill is a no-op
   - Amounts stored in the currency they were billed in; conversion is left
     to a view (PR6)
+- **Raw payload store** (roadmap P0/PR3)
+  - `fetch` persists provider responses unchanged as Hive-partitioned
+    Parquet under `raw/provider=…/account=…/billing_period=…/batch=…/`,
+    the same layout a bill export bucket uses
+  - `normalize` is a pure function from a stored batch to FOCUS rows, so
+    billing logic is testable from a recorded response and a mapping fix
+    replays payloads on disk instead of paying for another fetch
 - **DeepSeek Integration**
   - DeepSeek API integration for balance queries
   - Display account balance instead of cost for DeepSeek accounts
@@ -32,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Support for multiple currencies (CNY, USD)
 
 ### Changed
+- `CloudService` is now `BillingSource`, with `fetch` and `normalize` split
+  apart: the first touches the network and interprets nothing, the second
+  interprets and touches nothing
 - Billing source registry replaces the `CloudProvider` enum; an unknown
   source id is skipped with a warning instead of being read as AWS
 - Application database is versioned and rebuilt at schema v1: the dead
