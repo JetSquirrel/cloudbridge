@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 
 use super::raw::RawPart;
 use super::{BillingPeriod, BillingSource, CostData, CostSummary, Normalized, RawBatch, SourceId};
-use crate::ledger::Charge;
+use crate::ledger::{Charge, ChargeCategory};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -323,7 +323,22 @@ impl AwsCloudService {
 /// Name the Cost Explorer payload is stored under in a raw batch.
 const PART_COST_AND_USAGE: &str = "cost_and_usage";
 
-/// The GetCostAndUsage request body.
+/// What was actually charged.
+const METRIC_UNBLENDED: &str = "UnblendedCost";
+/// The same spend with commitment fees spread over the term they cover.
+const METRIC_AMORTIZED: &str = "AmortizedCost";
+/// How much was consumed, when the grouping leaves one meaningful unit.
+const METRIC_USAGE_QUANTITY: &str = "UsageQuantity";
+
+/// Cost Explorer returns this unit when a group mixes usage types, which
+/// grouping by service usually does. A quantity in mixed units cannot be
+/// added to anything, so it is not stored.
+const UNIT_NOT_APPLICABLE: &str = "N/A";
+
+const DIMENSION_SERVICE: &str = "SERVICE";
+const DIMENSION_RECORD_TYPE: &str = "RECORD_TYPE";
+
+/// The GetCostAndUsage request body for the display path.
 ///
 /// `group_by_service` off is the trend query: one total per day, which is
 /// a cheaper response than summing the grouped one client-side.
@@ -338,32 +353,99 @@ fn cost_and_usage_request(
             "End": end_date
         },
         "Granularity": "DAILY",
-        "Metrics": ["UnblendedCost"]
+        "Metrics": [METRIC_UNBLENDED]
     });
 
     if group_by_service {
         request["GroupBy"] = serde_json::json!([{
             "Type": "DIMENSION",
-            "Key": "SERVICE"
+            "Key": DIMENSION_SERVICE
         }]);
     }
 
     request
 }
 
+/// The GetCostAndUsage request the ledger is built from.
+///
+/// All three metrics ride in one request: Cost Explorer bills per request,
+/// not per metric, so splitting them would triple the cost of an ingest
+/// for nothing. `RECORD_TYPE` is what makes a credit distinguishable from
+/// a charge — without it every line arrives as an unlabelled amount.
+fn ledger_request(start_date: &str, end_date: &str) -> serde_json::Value {
+    serde_json::json!({
+        "TimePeriod": {
+            "Start": start_date,
+            "End": end_date
+        },
+        "Granularity": "DAILY",
+        "Metrics": [METRIC_UNBLENDED, METRIC_AMORTIZED, METRIC_USAGE_QUANTITY],
+        "GroupBy": [
+            {
+                "Type": "DIMENSION",
+                "Key": DIMENSION_SERVICE
+            },
+            {
+                "Type": "DIMENSION",
+                "Key": DIMENSION_RECORD_TYPE
+            }
+        ]
+    })
+}
+
+/// FOCUS category for an AWS `RECORD_TYPE`.
+///
+/// Discounts and negations are `Adjustment` rather than `Credit`: they
+/// reduce what a charge costs, whereas AWS's own `Credit` record type is a
+/// balance applied against the bill. An unrecognized type is also
+/// `Adjustment`, and says so in the log — money moved, and filing it as
+/// `Usage` would quietly inflate what looks like consumption.
+fn charge_category(record_type: &str) -> ChargeCategory {
+    match record_type {
+        "Usage" | "DiscountedUsage" | "SavingsPlanCoveredUsage" => ChargeCategory::Usage,
+        "Credit" => ChargeCategory::Credit,
+        "Tax" => ChargeCategory::Tax,
+        "Fee" | "RIFee" | "SavingsPlanUpfrontFee" | "SavingsPlanRecurringFee" | "Support" => {
+            ChargeCategory::Purchase
+        }
+        "Refund"
+        | "SavingsPlanNegation"
+        | "BundledDiscount"
+        | "PrivateRateDiscount"
+        | "Enterprise Discount Program Discount"
+        | "Solution Provider Program Discount" => ChargeCategory::Adjustment,
+        other => {
+            tracing::warn!(
+                "Unrecognized Cost Explorer record type {:?}; filed as an Adjustment",
+                other
+            );
+            ChargeCategory::Adjustment
+        }
+    }
+}
+
 /// Turn a fetched Cost Explorer payload into ledger rows.
 ///
-/// Pure — every input is in `batch`. Cost Explorer reports `UnblendedCost`,
-/// which is what was actually charged, so `cost_basis` is `authoritative`
-/// and `effective_cost` stays empty until PR4 also requests
-/// `AmortizedCost`. Every row is `Usage` for the same reason: without
-/// `RECORD_TYPE` in the grouping the payload cannot tell a credit from a
-/// charge, and guessing would put refunds on the wrong side of the total.
+/// Pure — every input is in `batch`.
+///
+/// `UnblendedCost` is what was actually charged, so it is `billed_cost`
+/// and `cost_basis` is `authoritative`; `AmortizedCost` spreads commitment
+/// fees over the term they cover, which is `effective_cost`. Amounts keep
+/// the sign Cost Explorer gave them, so a credit stays negative and a
+/// total comes out right by summation alone.
 pub fn normalize(batch: &RawBatch) -> Result<Normalized> {
     #[derive(Deserialize)]
     struct CeResponse {
+        #[serde(rename = "GroupDefinitions")]
+        group_definitions: Option<Vec<GroupDefinition>>,
         #[serde(rename = "ResultsByTime")]
         results_by_time: Option<Vec<TimeResult>>,
+    }
+
+    #[derive(Deserialize)]
+    struct GroupDefinition {
+        #[serde(rename = "Key")]
+        key: String,
     }
 
     #[derive(Deserialize)]
@@ -387,13 +469,7 @@ pub fn normalize(batch: &RawBatch) -> Result<Normalized> {
         #[serde(rename = "Keys")]
         keys: Vec<String>,
         #[serde(rename = "Metrics")]
-        metrics: CostMetrics,
-    }
-
-    #[derive(Deserialize)]
-    struct CostMetrics {
-        #[serde(rename = "UnblendedCost")]
-        unblended_cost: CostAmount,
+        metrics: std::collections::HashMap<String, CostAmount>,
     }
 
     #[derive(Deserialize)]
@@ -404,11 +480,25 @@ pub fn normalize(batch: &RawBatch) -> Result<Normalized> {
         unit: String,
     }
 
+    impl CostAmount {
+        fn value(&self) -> f64 {
+            self.amount.parse().unwrap_or(0.0)
+        }
+    }
+
     let part = batch
         .part(PART_COST_AND_USAGE)
         .ok_or_else(|| anyhow!("Raw batch has no '{}' payload", PART_COST_AND_USAGE))?;
     let response: CeResponse = serde_json::from_str(&part.body)
         .map_err(|e| anyhow!("Failed to parse Cost Explorer payload: {}", e))?;
+
+    // Which key is which comes from the response itself rather than from
+    // the request this build would have sent, so a payload recorded by an
+    // older version still normalizes.
+    let definitions = response.group_definitions.unwrap_or_default();
+    let position = |dimension: &str| definitions.iter().position(|d| d.key == dimension);
+    let service_at = position(DIMENSION_SERVICE).unwrap_or(0);
+    let record_type_at = position(DIMENSION_RECORD_TYPE);
 
     let mut charges = Vec::new();
     for result in response.results_by_time.unwrap_or_default() {
@@ -416,18 +506,48 @@ pub fn normalize(batch: &RawBatch) -> Result<Normalized> {
         let end = parse_day(&result.time_period.end)?;
 
         for group in result.groups.unwrap_or_default() {
-            let amount: f64 = group.metrics.unblended_cost.amount.parse().unwrap_or(0.0);
+            let unblended = group.metrics.get(METRIC_UNBLENDED);
+            let amortized = group.metrics.get(METRIC_AMORTIZED);
+            let billed_cost = unblended.map(CostAmount::value);
+            let effective_cost = amortized.map(CostAmount::value);
+
             // Cost Explorer returns a row for every service in the account,
-            // most of them zero. They carry no information and would bloat
-            // the fact table by an order of magnitude.
-            if amount == 0.0 {
+            // most of them zero on every metric. They carry no information
+            // and would bloat the fact table by an order of magnitude. A
+            // row that is zero unblended but non-zero amortized — usage a
+            // commitment already paid for — is not one of them.
+            if billed_cost.unwrap_or(0.0) == 0.0 && effective_cost.unwrap_or(0.0) == 0.0 {
                 continue;
             }
 
+            // A quantity is only kept when the group leaves it in one unit.
+            let quantity = group
+                .metrics
+                .get(METRIC_USAGE_QUANTITY)
+                .filter(|q| q.unit != UNIT_NOT_APPLICABLE && !q.unit.is_empty());
+
+            // Without RECORD_TYPE in the grouping, credits and refunds are
+            // already netted into each service's amount and there is
+            // nothing left to label: such a payload is Usage throughout,
+            // which is what it was read as before the dimension was added.
+            let record_type = record_type_at.and_then(|at| group.keys.get(at));
+            let category = record_type.map_or(ChargeCategory::Usage, |rt| charge_category(rt));
+
             charges.push(Charge {
-                service_name: group.keys.first().cloned(),
-                billed_cost: Some(amount),
-                ..Charge::new(start, end, group.metrics.unblended_cost.unit)
+                service_name: group.keys.get(service_at).cloned(),
+                charge_description: record_type.cloned(),
+                billed_cost,
+                effective_cost,
+                pricing_quantity: quantity.map(|q| q.value()),
+                pricing_unit: quantity.map(|q| q.unit.clone()),
+                charge_category: category,
+                ..Charge::new(
+                    start,
+                    end,
+                    unblended
+                        .or(amortized)
+                        .map_or_else(|| "USD".to_string(), |amount| amount.unit.clone()),
+                )
             });
         }
     }
@@ -644,10 +764,9 @@ impl BillingSource for AwsCloudService {
     }
 
     fn fetch(&self, period: &BillingPeriod) -> Result<Vec<RawPart>> {
-        let request = cost_and_usage_request(
+        let request = ledger_request(
             &period.start().to_string(),
             &period.end_exclusive().to_string(),
-            true,
         );
         let body = self.cost_and_usage_raw(&request)?;
 
@@ -804,8 +923,24 @@ mod tests {
     use super::*;
     use crate::ledger::{ChargeCategory, CostBasis};
 
-    /// One recorded GetCostAndUsage response, DAILY and grouped by SERVICE.
-    const COST_AND_USAGE: &str = include_str!("testdata/aws_cost_and_usage.json");
+    /// A recorded GetCostAndUsage response as this build asks for it:
+    /// three metrics, grouped by service and record type.
+    const COST_AND_USAGE: &str = include_str!("testdata/aws_cost_and_usage_record_type.json");
+
+    /// A response recorded before RECORD_TYPE was in the grouping, of the
+    /// kind already sitting in the raw store.
+    const LEGACY_COST_AND_USAGE: &str = include_str!("testdata/aws_cost_and_usage.json");
+
+    fn charge<'a>(normalized: &'a Normalized, service: &str, description: &str) -> &'a Charge {
+        normalized
+            .charges
+            .iter()
+            .find(|charge| {
+                charge.service_name.as_deref() == Some(service)
+                    && charge.charge_description.as_deref() == Some(description)
+            })
+            .unwrap_or_else(|| panic!("no {} / {} charge", service, description))
+    }
 
     fn recorded_batch(body: &str) -> RawBatch {
         RawBatch {
@@ -829,40 +964,126 @@ mod tests {
     fn a_recorded_response_normalizes_to_one_charge_per_service_day() {
         let normalized = normalize(&recorded_batch(COST_AND_USAGE)).unwrap();
 
-        // Three non-zero groups across two days; the zero-cost KMS row is
+        // Eight non-zero groups across two days; the all-zero KMS row is
         // dropped.
-        assert_eq!(normalized.charges.len(), 3);
+        assert_eq!(normalized.charges.len(), 8);
         assert!(normalized.balances.is_empty());
 
-        let first = &normalized.charges[0];
-        assert_eq!(
-            first.service_name.as_deref(),
-            Some("Amazon Elastic Compute Cloud - Compute")
+        let ec2 = charge(
+            &normalized,
+            "Amazon Elastic Compute Cloud - Compute",
+            "Usage",
         );
-        assert_eq!(first.billed_cost, Some(12.45));
-        assert_eq!(first.billing_currency, "USD");
-        assert_eq!(first.charge_category, ChargeCategory::Usage);
-        assert_eq!(first.cost_basis, CostBasis::Authoritative);
+        assert_eq!(ec2.billed_cost, Some(12.45));
+        assert_eq!(ec2.effective_cost, Some(10.20));
+        assert_eq!(ec2.billing_currency, "USD");
+        assert_eq!(ec2.cost_basis, CostBasis::Authoritative);
         assert_eq!(
-            first.charge_period_start.to_rfc3339(),
+            ec2.charge_period_start.to_rfc3339(),
             "2026-08-01T00:00:00+00:00"
         );
         assert_eq!(
-            first.charge_period_end.to_rfc3339(),
+            ec2.charge_period_end.to_rfc3339(),
             "2026-08-02T00:00:00+00:00"
         );
+    }
 
-        // Amortization needs AmortizedCost, which this request does not ask
-        // for: the column stays empty rather than being filled with the
-        // unblended figure.
-        assert_eq!(first.effective_cost, None);
+    #[test]
+    fn the_record_type_decides_the_charge_category() {
+        let normalized = normalize(&recorded_batch(COST_AND_USAGE)).unwrap();
+
+        let category = |service: &str, record_type: &str| {
+            charge(&normalized, service, record_type).charge_category
+        };
+        let ec2 = "Amazon Elastic Compute Cloud - Compute";
+
+        assert_eq!(category(ec2, "Usage"), ChargeCategory::Usage);
+        assert_eq!(
+            category(ec2, "SavingsPlanCoveredUsage"),
+            ChargeCategory::Usage
+        );
+        assert_eq!(category(ec2, "Credit"), ChargeCategory::Credit);
+        assert_eq!(category(ec2, "Refund"), ChargeCategory::Adjustment);
+        assert_eq!(category("Tax", "Tax"), ChargeCategory::Tax);
+        assert_eq!(
+            category("AWS Support (Developer)", "Fee"),
+            ChargeCategory::Purchase
+        );
+        // A record type this build has never seen still moved money, so it
+        // is kept and labelled as an adjustment rather than as usage.
+        assert_eq!(
+            category("Amazon Route 53", "SomeFutureRecordType"),
+            ChargeCategory::Adjustment
+        );
+    }
+
+    #[test]
+    fn credits_and_refunds_keep_their_sign_so_the_total_nets_out() {
+        let normalized = normalize(&recorded_batch(COST_AND_USAGE)).unwrap();
+        let ec2 = "Amazon Elastic Compute Cloud - Compute";
+
+        assert_eq!(charge(&normalized, ec2, "Credit").billed_cost, Some(-3.0));
+        assert_eq!(charge(&normalized, ec2, "Refund").billed_cost, Some(-1.5));
 
         let total: f64 = normalized
             .charges
             .iter()
             .filter_map(|charge| charge.billed_cost)
             .sum();
-        assert_eq!(total, 25.1);
+        // 12.45 + 0 + 0.75 + 29.00 - 3.00 - 1.50 + 2.10 + 1.23
+        assert!((total - 41.03).abs() < 1e-9, "got {total}");
+    }
+
+    #[test]
+    fn usage_a_commitment_already_paid_for_is_not_mistaken_for_an_empty_row() {
+        let normalized = normalize(&recorded_batch(COST_AND_USAGE)).unwrap();
+        let covered = charge(
+            &normalized,
+            "Amazon Elastic Compute Cloud - Compute",
+            "SavingsPlanCoveredUsage",
+        );
+
+        // Nothing was charged for it this day, but the amortized figure is
+        // what the commitment cost — dropping the row would lose it.
+        assert_eq!(covered.billed_cost, Some(0.0));
+        assert_eq!(covered.effective_cost, Some(3.10));
+    }
+
+    #[test]
+    fn a_quantity_is_only_kept_when_it_has_one_real_unit() {
+        let normalized = normalize(&recorded_batch(COST_AND_USAGE)).unwrap();
+
+        let ec2 = charge(
+            &normalized,
+            "Amazon Elastic Compute Cloud - Compute",
+            "Usage",
+        );
+        assert_eq!(ec2.pricing_quantity, Some(24.0));
+        assert_eq!(ec2.pricing_unit.as_deref(), Some("Hrs"));
+
+        // Grouping by service mixes usage types, and Cost Explorer says so
+        // with "N/A". A number in mixed units cannot be added to anything.
+        let s3 = charge(&normalized, "Amazon Simple Storage Service", "Usage");
+        assert_eq!(s3.pricing_quantity, None);
+        assert_eq!(s3.pricing_unit, None);
+    }
+
+    #[test]
+    fn a_payload_recorded_before_record_type_still_normalizes() {
+        let normalized = normalize(&recorded_batch(LEGACY_COST_AND_USAGE)).unwrap();
+
+        assert_eq!(normalized.charges.len(), 3);
+        // Credits were already netted into each service's amount, so there
+        // is nothing to label and nothing to amortize.
+        assert!(normalized
+            .charges
+            .iter()
+            .all(|charge| charge.charge_category == ChargeCategory::Usage));
+        assert!(normalized
+            .charges
+            .iter()
+            .all(|charge| charge.effective_cost.is_none()));
+        assert_eq!(normalized.charges[0].billed_cost, Some(12.45));
     }
 
     #[test]
@@ -898,5 +1119,21 @@ mod tests {
 
         let totals = cost_and_usage_request("2026-08-01", "2026-09-01", false);
         assert!(totals.get("GroupBy").is_none());
+    }
+
+    #[test]
+    fn the_ledger_request_carries_every_metric_in_one_call() {
+        let request = ledger_request("2026-08-01", "2026-09-01");
+
+        // Cost Explorer bills per request: three metrics, one call.
+        let metrics = request["Metrics"].as_array().unwrap();
+        assert_eq!(metrics.len(), 3);
+        assert!(metrics.iter().any(|m| m == "UnblendedCost"));
+        assert!(metrics.iter().any(|m| m == "AmortizedCost"));
+        assert!(metrics.iter().any(|m| m == "UsageQuantity"));
+
+        assert_eq!(request["GroupBy"][0]["Key"], "SERVICE");
+        assert_eq!(request["GroupBy"][1]["Key"], "RECORD_TYPE");
+        assert_eq!(request["Granularity"], "DAILY");
     }
 }

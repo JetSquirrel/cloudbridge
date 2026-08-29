@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `normalize` is a pure function from a stored batch to FOCUS rows, so
     billing logic is testable from a recorded response and a mapping fix
     replays payloads on disk instead of paying for another fetch
+- **AWS charges land as FOCUS rows** (roadmap P0/PR4)
+  - One Cost Explorer call now carries `UnblendedCost`, `AmortizedCost` and
+    `UsageQuantity`, grouped by service and record type
+  - `charge_category` comes from the record type, so credits, refunds,
+    taxes and support fees are each labelled as themselves instead of all
+    reading as usage; amounts keep their sign
 - **DeepSeek Integration**
   - DeepSeek API integration for balance queries
   - Display account balance instead of cost for DeepSeek accounts

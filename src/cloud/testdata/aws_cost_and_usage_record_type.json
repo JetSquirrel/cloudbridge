@@ -1,0 +1,106 @@
+{
+  "GroupDefinitions": [
+    {
+      "Type": "DIMENSION",
+      "Key": "SERVICE"
+    },
+    {
+      "Type": "DIMENSION",
+      "Key": "RECORD_TYPE"
+    }
+  ],
+  "ResultsByTime": [
+    {
+      "TimePeriod": {
+        "Start": "2026-08-01",
+        "End": "2026-08-02"
+      },
+      "Total": {},
+      "Groups": [
+        {
+          "Keys": ["Amazon Elastic Compute Cloud - Compute", "Usage"],
+          "Metrics": {
+            "UnblendedCost": { "Amount": "12.4500000000", "Unit": "USD" },
+            "AmortizedCost": { "Amount": "10.2000000000", "Unit": "USD" },
+            "UsageQuantity": { "Amount": "24.0000000000", "Unit": "Hrs" }
+          }
+        },
+        {
+          "Keys": ["Amazon Elastic Compute Cloud - Compute", "SavingsPlanCoveredUsage"],
+          "Metrics": {
+            "UnblendedCost": { "Amount": "0E-10", "Unit": "USD" },
+            "AmortizedCost": { "Amount": "3.1000000000", "Unit": "USD" },
+            "UsageQuantity": { "Amount": "12.0000000000", "Unit": "Hrs" }
+          }
+        },
+        {
+          "Keys": ["Amazon Simple Storage Service", "Usage"],
+          "Metrics": {
+            "UnblendedCost": { "Amount": "0.7500000000", "Unit": "USD" },
+            "AmortizedCost": { "Amount": "0.7500000000", "Unit": "USD" },
+            "UsageQuantity": { "Amount": "30.0000000000", "Unit": "N/A" }
+          }
+        },
+        {
+          "Keys": ["AWS Support (Developer)", "Fee"],
+          "Metrics": {
+            "UnblendedCost": { "Amount": "29.0000000000", "Unit": "USD" },
+            "AmortizedCost": { "Amount": "29.0000000000", "Unit": "USD" },
+            "UsageQuantity": { "Amount": "1.0000000000", "Unit": "N/A" }
+          }
+        },
+        {
+          "Keys": ["AWS Key Management Service", "Usage"],
+          "Metrics": {
+            "UnblendedCost": { "Amount": "0", "Unit": "USD" },
+            "AmortizedCost": { "Amount": "0", "Unit": "USD" },
+            "UsageQuantity": { "Amount": "0", "Unit": "N/A" }
+          }
+        }
+      ],
+      "Estimated": false
+    },
+    {
+      "TimePeriod": {
+        "Start": "2026-08-02",
+        "End": "2026-08-03"
+      },
+      "Total": {},
+      "Groups": [
+        {
+          "Keys": ["Amazon Elastic Compute Cloud - Compute", "Credit"],
+          "Metrics": {
+            "UnblendedCost": { "Amount": "-3.0000000000", "Unit": "USD" },
+            "AmortizedCost": { "Amount": "-3.0000000000", "Unit": "USD" },
+            "UsageQuantity": { "Amount": "0", "Unit": "N/A" }
+          }
+        },
+        {
+          "Keys": ["Amazon Elastic Compute Cloud - Compute", "Refund"],
+          "Metrics": {
+            "UnblendedCost": { "Amount": "-1.5000000000", "Unit": "USD" },
+            "AmortizedCost": { "Amount": "-1.5000000000", "Unit": "USD" },
+            "UsageQuantity": { "Amount": "0", "Unit": "N/A" }
+          }
+        },
+        {
+          "Keys": ["Tax", "Tax"],
+          "Metrics": {
+            "UnblendedCost": { "Amount": "2.1000000000", "Unit": "USD" },
+            "AmortizedCost": { "Amount": "2.1000000000", "Unit": "USD" },
+            "UsageQuantity": { "Amount": "0", "Unit": "N/A" }
+          }
+        },
+        {
+          "Keys": ["Amazon Route 53", "SomeFutureRecordType"],
+          "Metrics": {
+            "UnblendedCost": { "Amount": "1.2300000000", "Unit": "USD" },
+            "AmortizedCost": { "Amount": "1.2300000000", "Unit": "USD" },
+            "UsageQuantity": { "Amount": "0", "Unit": "N/A" }
+          }
+        }
+      ],
+      "Estimated": true
+    }
+  ]
+}

@@ -31,14 +31,15 @@ carry their weight for a personal ledger:
 
 ## Where we are
 
-PR1 through PR3 have landed. A source is a registry row rather than an
+PR1 through PR4 have landed. A source is a registry row rather than an
 enum variant; `billing.duckdb` holds `fct_charge`, `ingest_batch`,
 `fct_balance_snapshot` and `dim_fx_rate` behind a transactional
-whole-period write; and every source now fetches raw payloads to Parquet
-and normalizes them through a pure function, tested against a recorded
-response.
+whole-period write; every source fetches raw payloads to Parquet and
+normalizes them through a pure function, tested against a recorded
+response; and AWS lands as real FOCUS rows, with credits, refunds, taxes
+and fees each labelled as themselves.
 
-What is left in P0 is the mapping detail (PR4, PR5) and the read path
+What is left in P0 is Alibaba Cloud and DeepSeek (PR5) and the read path
 (PR6). The dashboard still reads the two per-account cache tables in
 `cloudbridge.duckdb` — they go away in PR5, when the last source writes
 through the ledger.
@@ -140,12 +141,26 @@ discount as the gap between `billed_cost` and `list_cost` rather than as
 `Credit` rows, and DeepSeek writes balance snapshots without deriving
 top-ups.
 
-### PR4 · AWS to FOCUS
+### PR4 · AWS to FOCUS — landed
 
 Cost Explorer currently requests only `UnblendedCost`, grouped by `SERVICE`.
 Request `UnblendedCost`, `AmortizedCost` and `UsageQuantity` in a single
 call — each call is billed, so do not split it — and add `RECORD_TYPE` to
 the grouping to populate `charge_category`. `cost_basis` is `authoritative`.
+
+Three decisions worth recording:
+
+- Amounts keep the sign Cost Explorer gives them, so credits and refunds
+  stay negative and a period total is a plain sum.
+- A record type this build does not recognize is an `Adjustment`, with a
+  warning naming it. Money moved; calling it `Usage` would quietly inflate
+  what reads as consumption.
+- A row is only dropped when it is zero on *both* cost metrics. Usage
+  covered by a commitment is zero unblended and non-zero amortized, and
+  dropping it would lose what the commitment actually bought. Grouping by
+  service also mixes usage types, and Cost Explorer says so by returning
+  the unit `N/A`: a quantity like that is not stored, because it cannot be
+  added to anything.
 
 ### PR5 · Alibaba Cloud and DeepSeek
 
