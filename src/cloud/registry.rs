@@ -13,14 +13,14 @@
 use serde::{Deserialize, Serialize};
 
 use super::{aliyun::AliyunCloudService, aws::AwsCloudService, deepseek::DeepSeekService};
-use super::{CloudService, SourceContext};
+use super::{BillingSource, SourceContext};
 
 /// What a source reports, and therefore how it can be displayed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reporting {
-    /// Cost accrued over a period. `trend_window_days` is how far back a
-    /// daily trend is worth requesting — Alibaba Cloud needs one API call
-    /// per day, so it gets a shorter window than AWS.
+    /// Cost accrued over a period. `trend_window_days` is how far back the
+    /// trend chart reads the ledger — a window is only worth charting as
+    /// far as the source's own rows are detailed enough to fill it.
     Periodic { trend_window_days: i64 },
     /// A point-in-time balance. There is no period cost and no history to
     /// chart.
@@ -77,7 +77,7 @@ pub struct SourceDescriptor {
     pub reporting: Reporting,
     /// Builds the client. A function pointer keeps construction in this
     /// table instead of a `match` in every caller.
-    pub build: fn(SourceContext) -> Box<dyn CloudService>,
+    pub build: fn(SourceContext) -> Box<dyn BillingSource>,
 }
 
 impl SourceDescriptor {
@@ -107,8 +107,8 @@ impl SourceDescriptor {
         region.or_else(|| self.default_region.map(str::to_string))
     }
 
-    /// Days of daily trend worth requesting, or `None` for a source that has
-    /// no history to chart.
+    /// Days of trend worth charting, or `None` for a source that has no
+    /// history to chart.
     pub fn trend_window_days(&self) -> Option<i64> {
         match self.reporting {
             Reporting::Periodic { trend_window_days } => Some(trend_window_days),
@@ -135,8 +135,6 @@ static SOURCES: &[SourceDescriptor] = &[
         },
         build: |ctx| {
             Box::new(AwsCloudService::new(
-                ctx.account_id,
-                ctx.account_name,
                 ctx.access_key_id,
                 ctx.secret_access_key,
                 ctx.region,
@@ -150,14 +148,15 @@ static SOURCES: &[SourceDescriptor] = &[
         access_key_label: "AccessKey ID",
         secret_key_label: Some("AccessKey Secret"),
         default_region: Some("cn-hangzhou"),
-        // One API call per day, so a shorter window than AWS.
+        // QueryBillOverview reports one row per product per month, so a
+        // day-level chart has nothing finer to show: the window covers two
+        // billing periods rather than two weeks of empty days. Daily
+        // detail arrives with the bill export channel (P1).
         reporting: Reporting::Periodic {
-            trend_window_days: 7,
+            trend_window_days: 62,
         },
         build: |ctx| {
             Box::new(AliyunCloudService::new(
-                ctx.account_id,
-                ctx.account_name,
                 ctx.access_key_id,
                 ctx.secret_access_key,
                 ctx.region,
@@ -174,8 +173,6 @@ static SOURCES: &[SourceDescriptor] = &[
         reporting: Reporting::Snapshot,
         build: |ctx| {
             Box::new(DeepSeekService::new(
-                ctx.account_id,
-                ctx.account_name,
                 ctx.access_key_id,
                 ctx.secret_access_key,
                 ctx.region,

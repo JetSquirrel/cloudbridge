@@ -1,0 +1,63 @@
+{
+  "RequestId": "8A1E1E1B-0000-4E4E-9C9C-3F3F3F3F3F3F",
+  "Success": true,
+  "Code": "Success",
+  "Message": "Successful!",
+  "Data": {
+    "BillingCycle": "2026-08",
+    "AccountID": "1234567890123456",
+    "AccountName": "example@aliyun.com",
+    "Items": {
+      "Item": [
+        {
+          "ProductCode": "ecs",
+          "ProductName": "云服务器 ECS",
+          "SubscriptionType": "PayAsYouGo",
+          "PretaxGrossAmount": 320.5,
+          "InvoiceDiscount": 22.05,
+          "DeductedByCoupons": 10.0,
+          "DeductedByCashCoupons": 0,
+          "DeductedByPrepaidCard": 0,
+          "PretaxAmount": 288.45,
+          "Currency": "CNY"
+        },
+        {
+          "ProductCode": "oss",
+          "ProductName": "对象存储 OSS",
+          "SubscriptionType": "PayAsYouGo",
+          "PretaxGrossAmount": 42.0,
+          "InvoiceDiscount": 0,
+          "DeductedByCoupons": 0,
+          "DeductedByCashCoupons": 0,
+          "DeductedByPrepaidCard": 0,
+          "PretaxAmount": 42.0,
+          "Currency": "CNY"
+        },
+        {
+          "ProductCode": "rds",
+          "ProductName": "云数据库 RDS",
+          "SubscriptionType": "Subscription",
+          "PretaxGrossAmount": 100.0,
+          "InvoiceDiscount": 0,
+          "DeductedByCoupons": 0,
+          "DeductedByCashCoupons": 0,
+          "DeductedByPrepaidCard": 30.0,
+          "PretaxAmount": 62.0,
+          "Currency": "CNY"
+        },
+        {
+          "ProductCode": "cdn",
+          "ProductName": "CDN",
+          "SubscriptionType": "PayAsYouGo",
+          "PretaxGrossAmount": 0,
+          "InvoiceDiscount": 0,
+          "DeductedByCoupons": 0,
+          "DeductedByCashCoupons": 0,
+          "DeductedByPrepaidCard": 0,
+          "PretaxAmount": 0,
+          "Currency": "CNY"
+        }
+      ]
+    }
+  }
+}

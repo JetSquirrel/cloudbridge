@@ -10,7 +10,7 @@ use gpui::*;
 use gpui_component::chart::{BarChart, LineChart, PieChart};
 use gpui_component::{ActiveTheme, StyledExt};
 
-use crate::cloud::{DailyCost, ServiceCost};
+use crate::report::{self, DailyCost, ServiceCost};
 
 // ==================== Bar Chart ====================
 
@@ -102,15 +102,18 @@ pub struct CostBarChart {
     height: f32,
     /// Show labels on bars
     show_labels: bool,
+    /// Currency the amounts are in, for the value labels
+    currency: String,
 }
 
 impl CostBarChart {
-    pub fn new(daily_costs: Vec<DailyCost>, width: f32, height: f32) -> Self {
+    pub fn new(daily_costs: Vec<DailyCost>, width: f32, height: f32, currency: String) -> Self {
         Self {
             daily_costs,
             width,
             height,
             show_labels: false, // Default: no labels (cleaner look)
+            currency,
         }
     }
 
@@ -159,6 +162,7 @@ impl CostBarChart {
         let tick_margin = (chart_data.len() / 6).max(1);
 
         let show_labels = self.show_labels;
+        let symbol = report::symbol(&self.currency).to_string();
 
         div()
             .w(px(self.width))
@@ -170,7 +174,7 @@ impl CostBarChart {
                     .fill(move |_| chart_color)
                     .tick_margin(tick_margin)
                     .when(show_labels, |chart| {
-                        chart.label(|d| format!("${:.2}", d.amount))
+                        chart.label(move |d| format!("{}{:.2}", symbol, d.amount))
                     }),
             )
             .into_any_element()
@@ -380,7 +384,7 @@ impl ServicePieChart {
                 };
                 // Use full service name for legend (truncate only if very long)
                 let name = Self::truncate_legend_name(&s.service);
-                let amount = s.amount;
+                let amount = format!("{}{:.2}", report::symbol(&s.currency), s.amount);
                 (color, name, amount, percentage)
             })
             .collect();
@@ -437,7 +441,7 @@ impl ServicePieChart {
                                             .text_sm()
                                             .font_weight(FontWeight::MEDIUM)
                                             .text_color(cx.theme().foreground)
-                                            .child(format!("${:.2}", amount)),
+                                            .child(amount),
                                     )
                                     .child(
                                         div()
@@ -496,7 +500,7 @@ pub struct CostStats {
     pub average: f64,
     pub max: f64,
     pub min: f64,
-    #[allow(dead_code)]
+    /// Currency every figure above is in.
     pub currency: String,
 }
 
@@ -539,7 +543,7 @@ impl CostStats {
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(cx.theme().foreground)
-                    .child(format!("${:.2}", value)),
+                    .child(format!("{}{:.2}", report::symbol(&self.currency), value)),
             )
     }
 }

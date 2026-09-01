@@ -16,6 +16,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Budget tracking
 
 ### Added
+- **FOCUS billing ledger** (roadmap P0/PR2)
+  - New `billing.duckdb` with `fct_charge`, `ingest_batch`,
+    `fct_balance_snapshot` and `dim_fx_rate`, named after
+    [FOCUS](https://focus.finops.org/) columns
+  - Transactional whole-period replacement keyed by
+    (source, account, billing period), with deterministic charge ids so a
+    repeated ingest of an unchanged bill is a no-op
+  - Amounts stored in the currency they were billed in; conversion is left
+    to a view (PR6)
+- **Raw payload store** (roadmap P0/PR3)
+  - `fetch` persists provider responses unchanged as Hive-partitioned
+    Parquet under `raw/provider=…/account=…/billing_period=…/batch=…/`,
+    the same layout a bill export bucket uses
+  - `normalize` is a pure function from a stored batch to FOCUS rows, so
+    billing logic is testable from a recorded response and a mapping fix
+    replays payloads on disk instead of paying for another fetch
+- **AWS charges land as FOCUS rows** (roadmap P0/PR4)
+  - One Cost Explorer call now carries `UnblendedCost`, `AmortizedCost` and
+    `UsageQuantity`, grouped by service and record type
+  - `charge_category` comes from the record type, so credits, refunds,
+    taxes and support fees are each labelled as themselves instead of all
+    reading as usage; amounts keep their sign
+- **Alibaba Cloud and DeepSeek land in the ledger** (roadmap P0/PR5)
+  - Each Alibaba Cloud voucher, coupon and discount becomes its own
+    `Credit` row beside a gross usage charge, so a product's rows sum to
+    what was actually charged; an unexplained gap becomes one `Adjustment`
+    row instead of vanishing
+  - DeepSeek balances are recorded as snapshots, and a rise in the
+    topped-up balance between observations is derived as a `Purchase`
+- **The dashboard reads the ledger** (roadmap P0/PR6)
+  - Totals come from `v_charge_normalized`, which converts each charge at a
+    rate dated no later than the charge itself, so cross-cloud figures are
+    in one currency instead of adding dollars to yuan
+  - Reporting currency is a setting; switching it rebuilds a view and
+    rewrites nothing
+  - Charges in a currency no rate covers are reported on the dashboard
+    rather than being counted at par
 - **DeepSeek Integration**
   - DeepSeek API integration for balance queries
   - Display account balance instead of cost for DeepSeek accounts
@@ -23,6 +60,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Support for multiple currencies (CNY, USD)
 
 ### Changed
+- The response cache tables are gone (application schema v2). A refresh
+  checks when a period was last ingested, which the ledger already records
+- A billing source only fetches and normalizes now; `get_cost_summary` and
+  `get_cost_trend` are gone, along with the per-call trend fetch — the
+  trend chart reads rows the refresh already stored
+- `CloudService` is now `BillingSource`, with `fetch` and `normalize` split
+  apart: the first touches the network and interprets nothing, the second
+  interprets and touches nothing
+- Billing source registry replaces the `CloudProvider` enum; an unknown
+  source id is skipped with a warning instead of being read as AWS
+- Application database is versioned and rebuilt at schema v1: the dead
+  `cost_data` table and the credential columns are gone, `provider` is now
+  `source_id`, and accounts and budgets are carried across. Credentials
+  live in the OS keyring only.
 
 ### Fixed
 
