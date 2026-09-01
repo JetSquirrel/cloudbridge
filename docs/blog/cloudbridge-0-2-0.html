@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="CloudBridge 0.2.0 - charges from every source land in one FOCUS-shaped fact table, raw payloads are kept so a mapping fix costs nothing to replay, and a total is finally a single currency.">
+    <meta name="theme-color" content="#0E1420">
+    <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/blog/cloudbridge-0-2-0.html">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌉</text></svg>">
+    <title>0.2.0: a cost viewer becomes a ledger - CloudBridge Blog</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'IBM Plex Sans', sans-serif;
+            color: #47536B;
+            background: #FAFBFC;
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        :root {
+            --ink: #0E1420;
+            --panel: #151E30;
+            --paper: #FAFBFC;
+            --hairline: #E3E8EF;
+            --hairline-dark: #263349;
+            --fg-strong: #101828;
+            --fg-body: #47536B;
+            --fg-faint: #7A8699;
+            --signal: #2F6FED;
+            --local: #2FA97C;
+            --radius: 6px;
+            --nav-height: 4.5rem;
+            --font-display: 'Space Grotesk', sans-serif;
+            --font-mono: 'IBM Plex Mono', monospace;
+        }
+
+        h1, h2 {
+            font-family: var(--font-display);
+            color: var(--fg-strong);
+            letter-spacing: -0.02em;
+            line-height: 1.15;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem;
+        }
+
+        .skip-link {
+            position: absolute;
+            left: -9999px;
+            top: 0;
+            background: var(--ink);
+            color: #fff;
+            padding: 0.75rem 1.25rem;
+            z-index: 200;
+            text-decoration: none;
+            font-family: var(--font-mono);
+            font-size: 0.875rem;
+        }
+
+        .skip-link:focus {
+            left: 0;
+        }
+
+        /* Navigation (shared) */
+        nav {
+            background: var(--paper);
+            border-bottom: 1px solid var(--hairline);
+            height: var(--nav-height);
+            display: flex;
+            align-items: center;
+            padding: 0 1rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        nav .container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 2rem;
+            width: 100%;
+        }
+
+        .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.6rem;
+            font-family: var(--font-display);
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--fg-strong);
+            text-decoration: none;
+            letter-spacing: -0.02em;
+            white-space: nowrap;
+        }
+
+        .logo::before {
+            content: '';
+            width: 0.6rem;
+            height: 0.6rem;
+            background: var(--local);
+            flex-shrink: 0;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            list-style: none;
+            overflow-x: auto;
+            white-space: nowrap;
+            min-width: 0;
+            scrollbar-width: none;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .nav-links::-webkit-scrollbar {
+            display: none;
+        }
+
+        .nav-links a {
+            font-family: var(--font-mono);
+            color: var(--fg-body);
+            text-decoration: none;
+            font-size: 0.875rem;
+            transition: color 0.15s;
+        }
+
+        .nav-links a:hover,
+        .nav-links a[aria-current="page"] {
+            color: var(--signal);
+        }
+
+        /* Article */
+        .post {
+            max-width: 44rem;
+            margin: 0 auto;
+            padding: 4rem 0 6rem;
+        }
+
+        .post .eyebrow {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            font-weight: 500;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--local);
+            display: block;
+            margin-bottom: 1.25rem;
+        }
+
+        .post h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+        }
+
+        .post .lede {
+            font-size: 1.25rem;
+            color: var(--fg-strong);
+            margin-bottom: 2.5rem;
+            padding-bottom: 2.5rem;
+            border-bottom: 1px solid var(--hairline);
+        }
+
+        .post h2 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin: 3rem 0 1rem;
+        }
+
+        .post p {
+            margin-bottom: 1.25rem;
+            line-height: 1.8;
+        }
+
+        .post a {
+            color: var(--signal);
+        }
+
+        .post code {
+            font-family: var(--font-mono);
+            font-size: 0.8125rem;
+            background: #fff;
+            border: 1px solid var(--hairline);
+            padding: 0.05rem 0.4rem;
+            border-radius: 4px;
+        }
+
+        .post ul {
+            margin: 0 0 1.25rem 1.25rem;
+        }
+
+        .post li {
+            margin-bottom: 0.4rem;
+            line-height: 1.7;
+        }
+
+        .post-nav {
+            margin-top: 4rem;
+            padding-top: 2rem;
+            border-top: 1px solid var(--hairline);
+            font-family: var(--font-mono);
+            font-size: 0.875rem;
+        }
+
+        .post-nav a {
+            color: var(--signal);
+            text-decoration: none;
+        }
+
+        .post-nav a:hover {
+            text-decoration: underline;
+        }
+
+        /* Footer (shared, compact) */
+        footer {
+            background: var(--ink);
+            color: #8FA0BC;
+            padding: 2rem 0;
+            border-top: 1px solid var(--hairline-dark);
+        }
+
+        footer .container {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            flex-wrap: wrap;
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--fg-faint);
+        }
+
+        footer a {
+            color: #8FA0BC;
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            color: #fff;
+        }
+
+        @media (max-width: 768px) {
+            .post {
+                padding: 2.5rem 0 4rem;
+            }
+
+            .post h1 {
+                font-size: 1.875rem;
+            }
+
+            .nav-links {
+                gap: 1.25rem;
+            }
+        }
+
+        a:focus-visible {
+            outline: 2px solid var(--signal);
+            outline-offset: 2px;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            html {
+                scroll-behavior: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <a class="skip-link" href="#main" data-i18n="a11y.skip">Skip to content</a>
+
+    <nav aria-label="Main navigation">
+        <div class="container">
+            <a href="/" class="logo">CloudBridge</a>
+            <ul class="nav-links">
+                <li><a href="/#features" data-i18n="nav.features">Features</a></li>
+                <li><a href="/#how-it-works" data-i18n="nav.how">How It Works</a></li>
+                <li><a href="/#download" data-i18n="nav.download">Download</a></li>
+                <li><a href="/#faq" data-i18n="nav.faq">FAQ</a></li>
+                <li><a href="/docs.html" data-i18n="nav.docs">Docs</a></li>
+                <li><a href="/blog.html" aria-current="page" data-i18n="nav.blog">Blog</a></li>
+                <li><a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main id="main">
+        <article class="post">
+            <span class="eyebrow">Release · 2026-09-01</span>
+            <h1>0.2.0: a cost viewer becomes a ledger</h1>
+            <p class="lede">Charges from every source now land in one FOCUS-shaped fact table, raw payloads are kept so a mapping fix costs nothing to replay, and a total is finally a single currency.</p>
+
+            <p>Version 0.1 showed you a number per provider and called it a total. If you had an AWS account in dollars and an Alibaba Cloud account in yuan, the "total" added the two. Credits read as usage. A balance read as spend. 0.2.0 rebuilds the ground those numbers stand on.</p>
+
+            <h2>One fact table</h2>
+            <p>Every source now normalizes into a single fact table, <code>fct_charge</code>, in a new <code>billing.duckdb</code>. The columns are named after <a href="https://focus.finops.org/" target="_blank" rel="noopener noreferrer">FOCUS</a>, the FinOps Foundation's open cost and usage specification, so a credit is a <code>Credit</code>, a refund is a refund, taxes and support fees are labelled as themselves, and amounts keep their sign. When an Alibaba Cloud voucher covers part of a charge, the gross charge and the voucher each get their own row, and the rows sum to what you actually paid. A gap that can't be explained becomes one <code>Adjustment</code> row instead of vanishing.</p>
+            <p>Because the schema already speaks FOCUS, a real bill export — an AWS CUR or an Alibaba Cloud bill file — can drop in later with no schema change.</p>
+
+            <h2>Keep the raw answers</h2>
+            <p>Cost Explorer bills $0.01 per request, so asking twice for the same thing is a design flaw, not a usage pattern. Every provider response is now written to disk unchanged, as Hive-partitioned Parquet under <code>raw/</code> — the same layout a bill export bucket uses. Normalization is a pure function from a stored batch to ledger rows. Two consequences: a mapping fix replays what's on disk instead of paying for another fetch, and billing logic is testable from a recorded response.</p>
+
+            <h2>One currency</h2>
+            <p>Charges are stored in the currency they were billed in and converted for display, each at a rate dated no later than the charge itself. Totals come from a view, <code>v_charge_normalized</code>, so switching the reporting currency in Settings rebuilds a view and rewrites nothing. A charge in a currency no rate covers is reported on the dashboard — never silently counted at par.</p>
+
+            <h2>Credentials leave the database</h2>
+            <p>Credentials now live only in the OS keyring (Windows Credential Manager, macOS Keychain). The v1 migration moves any that were still in the database and drops the columns that held them. The database can be copied, backed up, or inspected without carrying your keys with it.</p>
+
+            <h2>Fetch and normalize, split</h2>
+            <p>A billing source used to be an enum with five <code>match</code> arms. It's now a table row with a capability descriptor, and its two methods are deliberately separated: <code>fetch</code> touches the network and interprets nothing; <code>normalize</code> interprets and touches nothing. Adding a source is adding rows and a mapping, not editing a switchboard.</p>
+
+            <h2>Also in 0.2.0</h2>
+            <ul>
+                <li>macOS ships as a <code>.dmg</code> holding <code>CloudBridge.app</code> instead of a zipped bare binary that Finder took for a document.</li>
+                <li>A refresh now ingests the current and previous billing period in two Cost Explorer calls, where the dashboard previously made three.</li>
+                <li>DeepSeek balances are recorded as snapshots; a rise in the topped-up balance between observations is derived as a <code>Purchase</code>.</li>
+                <li>The Dark Mode switch actually changes the theme.</li>
+            </ul>
+
+            <h2>What's next</h2>
+            <p>The <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/roadmap.md" target="_blank" rel="noopener noreferrer">roadmap</a> lays out P1: a bill file export channel (S3 / OSS + Parquet), tag-based allocation with an explicit "unallocated" node, and a Sankey cost flow. The ledger was the prerequisite for all three — it's now in place.</p>
+
+            <div class="post-nav">
+                <a href="/blog.html" data-i18n="post.back">← All posts</a>
+            </div>
+        </article>
+    </main>
+
+    <footer>
+        <div class="container">
+            <span data-i18n="footer.copy">&copy; 2024-2026 CloudBridge. Released under MIT License.</span>
+            <span>AWS · Alibaba Cloud · DeepSeek</span>
+        </div>
+    </footer>
+
+    <!-- Same i18n scaffolding as index.html; see that file for how to add a locale. -->
+    <script>
+        (function () {
+            var LOCALES = {
+                en: {} // default: strings live in the markup
+            };
+
+            function applyLocale(locale) {
+                var dict = LOCALES[locale];
+                if (!dict) return;
+                document.querySelectorAll('[data-i18n]').forEach(function (el) {
+                    var key = el.getAttribute('data-i18n');
+                    if (typeof dict[key] === 'string') el.textContent = dict[key];
+                });
+                document.querySelectorAll('[data-i18n-html]').forEach(function (el) {
+                    var key = el.getAttribute('data-i18n-html');
+                    if (typeof dict[key] === 'string') el.innerHTML = dict[key];
+                });
+                document.documentElement.lang = locale;
+            }
+
+            var saved = null;
+            try { saved = localStorage.getItem('cloudbridge-locale'); } catch (e) {}
+            var browser = (navigator.language || 'en').slice(0, 2);
+            applyLocale(saved && LOCALES[saved] ? saved : (LOCALES[browser] ? browser : 'en'));
+        })();
+    </script>
+</body>
+</html>

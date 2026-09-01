@@ -204,13 +204,12 @@
             font-family: var(--font-mono);
             color: var(--fg-body);
             text-decoration: none;
-            font-size: 0.8125rem;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
+            font-size: 0.875rem;
             transition: color 0.15s;
         }
 
-        .nav-links a:hover {
+        .nav-links a:hover,
+        .nav-links a[aria-current="page"] {
             color: var(--signal);
         }
 
@@ -909,6 +908,8 @@
                 <li><a href="#how-it-works" data-i18n="nav.how">How It Works</a></li>
                 <li><a href="#download" data-i18n="nav.download">Download</a></li>
                 <li><a href="#faq" data-i18n="nav.faq">FAQ</a></li>
+                <li><a href="/docs.html" data-i18n="nav.docs">Docs</a></li>
+                <li><a href="/blog.html" data-i18n="nav.blog">Blog</a></li>
                 <li><a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer">GitHub</a></li>
             </ul>
         </div>
@@ -1172,7 +1173,8 @@
                     <ul class="footer-links">
                         <li><a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer" data-i18n="footer.resources.repo">GitHub Repository</a></li>
                         <li><a href="https://github.com/JetSquirrel/cloudbridge/releases" target="_blank" rel="noopener noreferrer" data-i18n="footer.resources.download">Download</a></li>
-                        <li><a href="https://github.com/JetSquirrel/cloudbridge/blob/main/README.md" target="_blank" rel="noopener noreferrer" data-i18n="footer.resources.docs">Documentation</a></li>
+                        <li><a href="/docs.html" data-i18n="footer.resources.docs">Documentation</a></li>
+                        <li><a href="/blog.html" data-i18n="footer.resources.blog">Blog</a></li>
                         <li><a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/roadmap.md" target="_blank" rel="noopener noreferrer" data-i18n="footer.resources.roadmap">Roadmap</a></li>
                         <li><a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/policies.md" target="_blank" rel="noopener noreferrer" data-i18n="footer.resources.policies">IAM Policy Templates</a></li>
                         <li><a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer" data-i18n="footer.resources.contributing">Contributing</a></li>

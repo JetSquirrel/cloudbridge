@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="CloudBridge documentation - installation, cloud account configuration, usage, data storage, and security.">
+    <meta name="theme-color" content="#0E1420">
+    <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/docs.html">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌉</text></svg>">
+    <title>Docs - CloudBridge</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'IBM Plex Sans', sans-serif;
+            color: #47536B;
+            background: #FAFBFC;
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        :root {
+            --ink: #0E1420;
+            --panel: #151E30;
+            --paper: #FAFBFC;
+            --hairline: #E3E8EF;
+            --hairline-dark: #263349;
+            --fg-strong: #101828;
+            --fg-body: #47536B;
+            --fg-faint: #7A8699;
+            --signal: #2F6FED;
+            --local: #2FA97C;
+            --radius: 6px;
+            --nav-height: 4.5rem;
+            --font-display: 'Space Grotesk', sans-serif;
+            --font-mono: 'IBM Plex Mono', monospace;
+        }
+
+        h1, h2, h3 {
+            font-family: var(--font-display);
+            color: var(--fg-strong);
+            letter-spacing: -0.02em;
+            line-height: 1.15;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem;
+        }
+
+        .skip-link {
+            position: absolute;
+            left: -9999px;
+            top: 0;
+            background: var(--ink);
+            color: #fff;
+            padding: 0.75rem 1.25rem;
+            z-index: 200;
+            text-decoration: none;
+            font-family: var(--font-mono);
+            font-size: 0.875rem;
+        }
+
+        .skip-link:focus {
+            left: 0;
+        }
+
+        /* Navigation (shared) */
+        nav {
+            background: var(--paper);
+            border-bottom: 1px solid var(--hairline);
+            height: var(--nav-height);
+            display: flex;
+            align-items: center;
+            padding: 0 1rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        nav .container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 2rem;
+            width: 100%;
+        }
+
+        .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.6rem;
+            font-family: var(--font-display);
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--fg-strong);
+            text-decoration: none;
+            letter-spacing: -0.02em;
+            white-space: nowrap;
+        }
+
+        .logo::before {
+            content: '';
+            width: 0.6rem;
+            height: 0.6rem;
+            background: var(--local);
+            flex-shrink: 0;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            list-style: none;
+            overflow-x: auto;
+            white-space: nowrap;
+            min-width: 0;
+            scrollbar-width: none;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .nav-links::-webkit-scrollbar {
+            display: none;
+        }
+
+        .nav-links a {
+            font-family: var(--font-mono);
+            color: var(--fg-body);
+            text-decoration: none;
+            font-size: 0.875rem;
+            transition: color 0.15s;
+        }
+
+        .nav-links a:hover,
+        .nav-links a[aria-current="page"] {
+            color: var(--signal);
+        }
+
+        /* Page head */
+        .page-head {
+            padding: 4rem 0 2.5rem;
+            border-bottom: 1px solid var(--hairline);
+        }
+
+        .page-head .eyebrow {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            font-weight: 500;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--local);
+            display: block;
+            margin-bottom: 1rem;
+        }
+
+        .page-head h1 {
+            font-size: 2.75rem;
+            font-weight: 700;
+        }
+
+        .page-head p {
+            margin-top: 1rem;
+            font-size: 1.125rem;
+            max-width: 40rem;
+        }
+
+        /* Docs layout */
+        .docs-layout {
+            display: grid;
+            grid-template-columns: 220px 1fr;
+            gap: 4rem;
+            padding: 3rem 0 6rem;
+        }
+
+        .docs-side {
+            position: sticky;
+            top: calc(var(--nav-height) + 2rem);
+            align-self: start;
+        }
+
+        .docs-side ul {
+            list-style: none;
+        }
+
+        .docs-side li {
+            border-left: 1px solid var(--hairline);
+        }
+
+        .docs-side a {
+            display: block;
+            padding: 0.45rem 0 0.45rem 1rem;
+            margin-left: -1px;
+            font-family: var(--font-mono);
+            font-size: 0.8125rem;
+            color: var(--fg-body);
+            text-decoration: none;
+            border-left: 1px solid transparent;
+            transition: color 0.15s, border-color 0.15s;
+        }
+
+        .docs-side a:hover {
+            color: var(--signal);
+            border-left-color: var(--signal);
+        }
+
+        /* Content */
+        .docs-content {
+            max-width: 46rem;
+        }
+
+        .docs-content section {
+            margin-bottom: 4rem;
+            scroll-margin-top: calc(var(--nav-height) + 1rem);
+        }
+
+        .docs-content h2 {
+            font-size: 1.625rem;
+            font-weight: 700;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid var(--hairline);
+            margin-bottom: 1.5rem;
+        }
+
+        .docs-content h3 {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin: 2rem 0 0.75rem;
+        }
+
+        .docs-content p {
+            margin-bottom: 1rem;
+        }
+
+        .docs-content ol,
+        .docs-content ul {
+            margin: 0 0 1rem 1.25rem;
+        }
+
+        .docs-content li {
+            margin-bottom: 0.35rem;
+        }
+
+        .docs-content a {
+            color: var(--signal);
+        }
+
+        .docs-content code {
+            font-family: var(--font-mono);
+            font-size: 0.8125rem;
+            background: #fff;
+            border: 1px solid var(--hairline);
+            padding: 0.05rem 0.4rem;
+            border-radius: 4px;
+        }
+
+        .docs-content pre {
+            background: var(--ink);
+            border-radius: var(--radius);
+            padding: 1.25rem 1.5rem;
+            overflow-x: auto;
+            margin-bottom: 1.25rem;
+        }
+
+        .docs-content pre code {
+            background: none;
+            border: none;
+            padding: 0;
+            color: #C4CEDE;
+            font-size: 0.8125rem;
+            line-height: 1.7;
+        }
+
+        .docs-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 1.25rem;
+            font-size: 0.9375rem;
+        }
+
+        .docs-table th {
+            font-family: var(--font-mono);
+            font-size: 0.6875rem;
+            font-weight: 500;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--fg-faint);
+            text-align: left;
+            padding: 0.6rem 1rem 0.6rem 0;
+            border-bottom: 1px solid var(--hairline);
+        }
+
+        .docs-table td {
+            padding: 0.6rem 1rem 0.6rem 0;
+            border-bottom: 1px solid var(--hairline);
+        }
+
+        .note {
+            border-left: 2px solid var(--signal);
+            padding: 0.75rem 1rem;
+            background: #fff;
+            margin-bottom: 1.25rem;
+            font-size: 0.9375rem;
+        }
+
+        /* Footer (shared, compact) */
+        footer {
+            background: var(--ink);
+            color: #8FA0BC;
+            padding: 2rem 0;
+            border-top: 1px solid var(--hairline-dark);
+        }
+
+        footer .container {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            flex-wrap: wrap;
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--fg-faint);
+        }
+
+        footer a {
+            color: #8FA0BC;
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            color: #fff;
+        }
+
+        @media (max-width: 900px) {
+            .docs-layout {
+                grid-template-columns: 1fr;
+                gap: 2rem;
+            }
+
+            .docs-side {
+                position: static;
+            }
+
+            .docs-side ul {
+                display: flex;
+                gap: 1.25rem;
+                overflow-x: auto;
+                white-space: nowrap;
+                scrollbar-width: none;
+            }
+
+            .docs-side ul::-webkit-scrollbar {
+                display: none;
+            }
+
+            .docs-side li {
+                border-left: none;
+                border-bottom: 1px solid var(--hairline);
+            }
+
+            .docs-side a {
+                padding: 0 0 0.5rem;
+                margin-left: 0;
+                border-left: none;
+            }
+
+            .docs-side a:hover {
+                border-left-color: transparent;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .page-head {
+                padding: 2.5rem 0 2rem;
+            }
+
+            .page-head h1 {
+                font-size: 2rem;
+            }
+
+            .nav-links {
+                gap: 1.25rem;
+            }
+        }
+
+        a:focus-visible {
+            outline: 2px solid var(--signal);
+            outline-offset: 2px;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            html {
+                scroll-behavior: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <a class="skip-link" href="#main" data-i18n="a11y.skip">Skip to content</a>
+
+    <nav aria-label="Main navigation">
+        <div class="container">
+            <a href="/" class="logo">CloudBridge</a>
+            <ul class="nav-links">
+                <li><a href="/#features" data-i18n="nav.features">Features</a></li>
+                <li><a href="/#how-it-works" data-i18n="nav.how">How It Works</a></li>
+                <li><a href="/#download" data-i18n="nav.download">Download</a></li>
+                <li><a href="/#faq" data-i18n="nav.faq">FAQ</a></li>
+                <li><a href="/docs.html" aria-current="page" data-i18n="nav.docs">Docs</a></li>
+                <li><a href="/blog.html" data-i18n="nav.blog">Blog</a></li>
+                <li><a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main id="main">
+        <header class="page-head">
+            <div class="container">
+                <span class="eyebrow" data-i18n="docs.eyebrow">Documentation</span>
+                <h1 data-i18n="docs.title">Set up CloudBridge</h1>
+                <p data-i18n="docs.sub">Install the app, connect a cloud account, and read your first bill. Everything runs locally.</p>
+            </div>
+        </header>
+
+        <div class="container">
+            <div class="docs-layout">
+                <aside class="docs-side" aria-label="Documentation sections">
+                    <ul>
+                        <li><a href="#installation" data-i18n="docs.side.install">Installation</a></li>
+                        <li><a href="#configuration" data-i18n="docs.side.config">Configuration</a></li>
+                        <li><a href="#usage" data-i18n="docs.side.usage">Usage</a></li>
+                        <li><a href="#storage" data-i18n="docs.side.storage">Data Storage</a></li>
+                        <li><a href="#security" data-i18n="docs.side.security">Security</a></li>
+                    </ul>
+                </aside>
+
+                <div class="docs-content">
+                    <section id="installation">
+                        <h2 data-i18n="docs.install.title">Installation</h2>
+                        <p data-i18n-html="docs.install.p1">Download the latest build from the <a href="https://github.com/JetSquirrel/cloudbridge/releases" target="_blank" rel="noopener noreferrer">Releases</a> page:</p>
+                        <table class="docs-table">
+                            <thead>
+                                <tr><th data-i18n="docs.install.platform">Platform</th><th data-i18n="docs.install.file">File</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr><td>Windows (x64)</td><td><code>cloudbridge-windows-x64.exe</code></td></tr>
+                                <tr><td>macOS (Apple Silicon)</td><td><code>cloudbridge-macos-arm64.dmg</code></td></tr>
+                            </tbody>
+                        </table>
+                        <div class="note" data-i18n-html="docs.install.windows"><strong>Windows:</strong> SmartScreen may warn about unsigned executables. Click "More info" → "Run anyway" to proceed.</div>
+                        <div class="note" data-i18n-html="docs.install.macos"><strong>macOS:</strong> Open the <code>.dmg</code> and drag CloudBridge to Applications. The app is ad-hoc signed but not notarized, so the first launch needs a right-click → Open. If macOS still refuses, run <code>xattr -cr /Applications/CloudBridge.app</code>.</div>
+                        <p data-i18n-html="docs.install.p2">Linux and Intel Macs are not published as binaries; both build from source. You need Rust 1.75+, and on Windows the <code>fxc.exe</code> shader compiler from the Windows SDK in your PATH:</p>
+                        <pre><code>git clone https://github.com/JetSquirrel/cloudbridge.git
+cd cloudbridge
+cargo run --release</code></pre>
+                    </section>
+
+                    <section id="configuration">
+                        <h2 data-i18n="docs.config.title">Configuration</h2>
+
+                        <h3>AWS</h3>
+                        <ol data-i18n-html="docs.config.aws.steps">
+                            <li>Create an IAM user with Cost Explorer access.</li>
+                            <li>Attach the policy below (also in <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/policies.md" target="_blank" rel="noopener noreferrer">docs/policies.md</a>).</li>
+                            <li>Generate an Access Key ID and Secret Access Key.</li>
+                            <li>Add the account in CloudBridge.</li>
+                        </ol>
+                        <pre><code>{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ce:GetCostAndUsage",
+                "ce:GetCostForecast",
+                "ce:GetDimensionValues",
+                "ce:GetTags"
+            ],
+            "Resource": "*"
+        }
+    ]
+}</code></pre>
+                        <p data-i18n="docs.config.aws.note">AWS Cost Explorer charges $0.01 per request. CloudBridge keeps this near zero: a billing period is re-fetched at most once every 6 hours, and one request per period carries everything.</p>
+
+                        <h3>Alibaba Cloud</h3>
+                        <ol data-i18n-html="docs.config.aliyun.steps">
+                            <li>Open the <a href="https://ram.console.aliyun.com/" target="_blank" rel="noopener noreferrer">RAM console</a> and create a RAM user for API access.</li>
+                            <li>Attach the built-in <code>AliyunBSSReadOnlyAccess</code> system policy.</li>
+                            <li>Create an AccessKey for the user.</li>
+                            <li>Add the account in CloudBridge.</li>
+                        </ol>
+                        <p data-i18n="docs.config.aliyun.note">The Alibaba Cloud billing API is free of charge.</p>
+
+                        <h3>DeepSeek</h3>
+                        <ol data-i18n-html="docs.config.deepseek.steps">
+                            <li>Open <a href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer">platform.deepseek.com</a> and create an API key.</li>
+                            <li>Add the account in CloudBridge using that key.</li>
+                        </ol>
+                        <p data-i18n="docs.config.deepseek.note">DeepSeek reports a balance (granted and topped-up) instead of cost data. The balance API is free of charge.</p>
+                    </section>
+
+                    <section id="usage">
+                        <h2 data-i18n="docs.usage.title">Usage</h2>
+                        <h3 data-i18n="docs.usage.accounts.title">Adding an account</h3>
+                        <ol data-i18n-html="docs.usage.accounts.steps">
+                            <li>Go to <strong>Accounts</strong> in the sidebar.</li>
+                            <li>Pick the provider and enter a name and credentials.</li>
+                            <li>Click <strong>Validate &amp; Add</strong>.</li>
+                        </ol>
+                        <h3 data-i18n="docs.usage.dashboard.title">Reading the dashboard</h3>
+                        <p data-i18n="docs.usage.dashboard.p1">The overview cards show the current month, last month, the month-over-month change, and the active account count. Click an account card for service-level detail; the expanded card charts the daily cost trend, read from the ledger. DeepSeek reports a balance, so it has no trend.</p>
+                        <h3 data-i18n="docs.usage.currency.title">Choosing a reporting currency</h3>
+                        <p data-i18n-html="docs.usage.currency.p1">Go to <strong>Settings → Reporting</strong> and pick the currency totals are shown in. Charges keep the currency they were billed in — only the view they are read through changes, so switching back and forth costs nothing. A charge no rate covers is reported, never counted at par.</p>
+                        <h3 data-i18n="docs.usage.refresh.title">Refreshing</h3>
+                        <p data-i18n-html="docs.usage.refresh.p1">A billing period is re-fetched at most once every 6 hours. <strong>Refresh</strong> picks up anything stale; <strong>Force Refresh</strong> re-fetches regardless, at the cost of another paid API call.</p>
+                    </section>
+
+                    <section id="storage">
+                        <h2 data-i18n="docs.storage.title">Data Storage</h2>
+                        <p data-i18n="docs.storage.p1">Everything lives on your machine:</p>
+                        <table class="docs-table">
+                            <thead>
+                                <tr><th data-i18n="docs.install.platform">Platform</th><th data-i18n="docs.storage.location">Location</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr><td>Windows</td><td><code>%APPDATA%\CloudBridge\data\</code></td></tr>
+                                <tr><td>macOS</td><td><code>~/Library/Application Support/CloudBridge/</code></td></tr>
+                                <tr><td>Linux</td><td><code>~/.local/share/CloudBridge/</code></td></tr>
+                            </tbody>
+                        </table>
+                        <ul data-i18n-html="docs.storage.files">
+                            <li><code>billing.duckdb</code> — the ledger: every charge, in the currency it was billed in</li>
+                            <li><code>cloudbridge.duckdb</code> — accounts and settings</li>
+                            <li><code>raw/</code> — provider responses as fetched, partitioned by source, account, and billing period</li>
+                            <li><code>config.json</code> — application configuration</li>
+                        </ul>
+                        <p data-i18n="docs.storage.p2">Credentials are not in any of these files. They live in the OS keyring.</p>
+                    </section>
+
+                    <section id="security">
+                        <h2 data-i18n="docs.security.title">Security</h2>
+                        <ul data-i18n-html="docs.security.list">
+                            <li>Credentials live in your OS keyring (Windows Credential Manager, macOS Keychain, Linux Secret Service) — never in the database.</li>
+                            <li>No data is transmitted except direct API calls to your cloud providers.</li>
+                            <li>Raw billing payloads are written to a local directory and nowhere else.</li>
+                            <li>The executable contains no embedded credentials.</li>
+                        </ul>
+                        <p data-i18n-html="docs.security.p1">Questions the docs don't answer? <a href="https://github.com/JetSquirrel/cloudbridge/issues" target="_blank" rel="noopener noreferrer">Open an issue</a>.</p>
+                    </section>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <div class="container">
+            <span data-i18n="footer.copy">&copy; 2024-2026 CloudBridge. Released under MIT License.</span>
+            <span>AWS · Alibaba Cloud · DeepSeek</span>
+        </div>
+    </footer>
+
+    <!-- Same i18n scaffolding as index.html; see that file for how to add a locale. -->
+    <script>
+        (function () {
+            var LOCALES = {
+                en: {} // default: strings live in the markup
+            };
+
+            function applyLocale(locale) {
+                var dict = LOCALES[locale];
+                if (!dict) return;
+                document.querySelectorAll('[data-i18n]').forEach(function (el) {
+                    var key = el.getAttribute('data-i18n');
+                    if (typeof dict[key] === 'string') el.textContent = dict[key];
+                });
+                document.querySelectorAll('[data-i18n-html]').forEach(function (el) {
+                    var key = el.getAttribute('data-i18n-html');
+                    if (typeof dict[key] === 'string') el.innerHTML = dict[key];
+                });
+                document.documentElement.lang = locale;
+            }
+
+            var saved = null;
+            try { saved = localStorage.getItem('cloudbridge-locale'); } catch (e) {}
+            var browser = (navigator.language || 'en').slice(0, 2);
+            applyLocale(saved && LOCALES[saved] ? saved : (LOCALES[browser] ? browser : 'en'));
+        })();
+    </script>
+</body>
+</html>

@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="CloudBridge blog - release notes and engineering decisions behind the local-first multi-cloud cost ledger.">
+    <meta name="theme-color" content="#0E1420">
+    <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/blog.html">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌉</text></svg>">
+    <title>Blog - CloudBridge</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'IBM Plex Sans', sans-serif;
+            color: #47536B;
+            background: #FAFBFC;
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        :root {
+            --ink: #0E1420;
+            --paper: #FAFBFC;
+            --hairline: #E3E8EF;
+            --hairline-dark: #263349;
+            --fg-strong: #101828;
+            --fg-body: #47536B;
+            --fg-faint: #7A8699;
+            --signal: #2F6FED;
+            --local: #2FA97C;
+            --radius: 6px;
+            --nav-height: 4.5rem;
+            --font-display: 'Space Grotesk', sans-serif;
+            --font-mono: 'IBM Plex Mono', monospace;
+        }
+
+        h1, h2 {
+            font-family: var(--font-display);
+            color: var(--fg-strong);
+            letter-spacing: -0.02em;
+            line-height: 1.15;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem;
+        }
+
+        .skip-link {
+            position: absolute;
+            left: -9999px;
+            top: 0;
+            background: var(--ink);
+            color: #fff;
+            padding: 0.75rem 1.25rem;
+            z-index: 200;
+            text-decoration: none;
+            font-family: var(--font-mono);
+            font-size: 0.875rem;
+        }
+
+        .skip-link:focus {
+            left: 0;
+        }
+
+        /* Navigation (shared) */
+        nav {
+            background: var(--paper);
+            border-bottom: 1px solid var(--hairline);
+            height: var(--nav-height);
+            display: flex;
+            align-items: center;
+            padding: 0 1rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        nav .container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 2rem;
+            width: 100%;
+        }
+
+        .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.6rem;
+            font-family: var(--font-display);
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--fg-strong);
+            text-decoration: none;
+            letter-spacing: -0.02em;
+            white-space: nowrap;
+        }
+
+        .logo::before {
+            content: '';
+            width: 0.6rem;
+            height: 0.6rem;
+            background: var(--local);
+            flex-shrink: 0;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            list-style: none;
+            overflow-x: auto;
+            white-space: nowrap;
+            min-width: 0;
+            scrollbar-width: none;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .nav-links::-webkit-scrollbar {
+            display: none;
+        }
+
+        .nav-links a {
+            font-family: var(--font-mono);
+            color: var(--fg-body);
+            text-decoration: none;
+            font-size: 0.875rem;
+            transition: color 0.15s;
+        }
+
+        .nav-links a:hover,
+        .nav-links a[aria-current="page"] {
+            color: var(--signal);
+        }
+
+        /* Page head */
+        .page-head {
+            padding: 4rem 0 2.5rem;
+            border-bottom: 1px solid var(--hairline);
+        }
+
+        .page-head .eyebrow {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            font-weight: 500;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--local);
+            display: block;
+            margin-bottom: 1rem;
+        }
+
+        .page-head h1 {
+            font-size: 2.75rem;
+            font-weight: 700;
+        }
+
+        .page-head p {
+            margin-top: 1rem;
+            font-size: 1.125rem;
+            max-width: 40rem;
+        }
+
+        /* Post list */
+        .post-list {
+            padding: 1rem 0 6rem;
+            max-width: 56rem;
+        }
+
+        .post-row {
+            display: grid;
+            grid-template-columns: 9rem 1fr;
+            gap: 2rem;
+            padding: 2rem 0;
+            border-bottom: 1px solid var(--hairline);
+            text-decoration: none;
+            color: var(--fg-body);
+            align-items: baseline;
+        }
+
+        .post-row .date {
+            font-family: var(--font-mono);
+            font-size: 0.8125rem;
+            color: var(--fg-faint);
+        }
+
+        .post-row h2 {
+            font-size: 1.375rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            transition: color 0.15s;
+        }
+
+        .post-row:hover h2 {
+            color: var(--signal);
+        }
+
+        .post-row p {
+            font-size: 1rem;
+        }
+
+        .post-row .tag {
+            font-family: var(--font-mono);
+            font-size: 0.6875rem;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--signal);
+            display: block;
+            margin-bottom: 0.4rem;
+        }
+
+        /* Footer (shared, compact) */
+        footer {
+            background: var(--ink);
+            color: #8FA0BC;
+            padding: 2rem 0;
+            border-top: 1px solid var(--hairline-dark);
+        }
+
+        footer .container {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            flex-wrap: wrap;
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--fg-faint);
+        }
+
+        footer a {
+            color: #8FA0BC;
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            color: #fff;
+        }
+
+        @media (max-width: 768px) {
+            .page-head {
+                padding: 2.5rem 0 2rem;
+            }
+
+            .page-head h1 {
+                font-size: 2rem;
+            }
+
+            .post-row {
+                grid-template-columns: 1fr;
+                gap: 0.5rem;
+            }
+
+            .nav-links {
+                gap: 1.25rem;
+            }
+        }
+
+        a:focus-visible {
+            outline: 2px solid var(--signal);
+            outline-offset: 2px;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            html {
+                scroll-behavior: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <a class="skip-link" href="#main" data-i18n="a11y.skip">Skip to content</a>
+
+    <nav aria-label="Main navigation">
+        <div class="container">
+            <a href="/" class="logo">CloudBridge</a>
+            <ul class="nav-links">
+                <li><a href="/#features" data-i18n="nav.features">Features</a></li>
+                <li><a href="/#how-it-works" data-i18n="nav.how">How It Works</a></li>
+                <li><a href="/#download" data-i18n="nav.download">Download</a></li>
+                <li><a href="/#faq" data-i18n="nav.faq">FAQ</a></li>
+                <li><a href="/docs.html" data-i18n="nav.docs">Docs</a></li>
+                <li><a href="/blog.html" aria-current="page" data-i18n="nav.blog">Blog</a></li>
+                <li><a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main id="main">
+        <header class="page-head">
+            <div class="container">
+                <span class="eyebrow" data-i18n="blog.eyebrow">Blog</span>
+                <h1 data-i18n="blog.title">Release notes and decisions</h1>
+                <p data-i18n="blog.sub">What shipped, and why it is built the way it is.</p>
+            </div>
+        </header>
+
+        <div class="container">
+            <div class="post-list">
+                <a class="post-row" href="/blog/cloudbridge-0-2-0.html">
+                    <span class="date">2026-09-01</span>
+                    <div>
+                        <span class="tag" data-i18n="blog.post1.tag">Release</span>
+                        <h2 data-i18n="blog.post1.title">0.2.0: a cost viewer becomes a ledger</h2>
+                        <p data-i18n="blog.post1.desc">Charges from every source now land in one FOCUS-shaped fact table, raw payloads are kept so a mapping fix costs nothing to replay, and a total is finally a single currency.</p>
+                    </div>
+                </a>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <div class="container">
+            <span data-i18n="footer.copy">&copy; 2024-2026 CloudBridge. Released under MIT License.</span>
+            <span>AWS · Alibaba Cloud · DeepSeek</span>
+        </div>
+    </footer>
+
+    <!-- Same i18n scaffolding as index.html; see that file for how to add a locale. -->
+    <script>
+        (function () {
+            var LOCALES = {
+                en: {} // default: strings live in the markup
+            };
+
+            function applyLocale(locale) {
+                var dict = LOCALES[locale];
+                if (!dict) return;
+                document.querySelectorAll('[data-i18n]').forEach(function (el) {
+                    var key = el.getAttribute('data-i18n');
+                    if (typeof dict[key] === 'string') el.textContent = dict[key];
+                });
+                document.documentElement.lang = locale;
+            }
+
+            var saved = null;
+            try { saved = localStorage.getItem('cloudbridge-locale'); } catch (e) {}
+            var browser = (navigator.language || 'en').slice(0, 2);
+            applyLocale(saved && LOCALES[saved] ? saved : (LOCALES[browser] ? browser : 'en'));
+        })();
+    </script>
+</body>
+</html>
