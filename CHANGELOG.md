@@ -83,6 +83,8 @@ next.
 - Alibaba Cloud's trend window covers two billing periods rather than
   seven days, because its bill overview reports one row per product per
   month
+- macOS ships as a `.dmg` holding `CloudBridge.app`, ad-hoc signed, rather
+  than a zipped bare executable that Finder took for a document
 
 ### Fixed
 - **Cross-cloud totals no longer add dollars to yuan.** Every amount on

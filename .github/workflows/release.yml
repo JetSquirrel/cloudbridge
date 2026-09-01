@@ -26,7 +26,7 @@ jobs:
           - os: macos-14
             target: aarch64-apple-darwin
             artifact_name: cloudbridge
-            asset_name: cloudbridge-macos-arm64.zip
+            asset_name: cloudbridge-macos-arm64.dmg
 
     runs-on: ${{ matrix.os }}
 
@@ -84,9 +84,11 @@ jobs:
       - name: Prepare artifact (macOS)
         if: runner.os == 'macOS'
         run: |
-          cp "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}" "cloudbridge-macos-arm64"
-          chmod +x "cloudbridge-macos-arm64"
-          zip -j "${{ matrix.asset_name }}" "cloudbridge-macos-arm64"
+          VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          scripts/package-macos.sh \
+            "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}" \
+            "${{ matrix.asset_name }}" \
+            "$VERSION"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -141,6 +143,6 @@ jobs:
           fail_on_unmatched_files: false
           files: |
             artifacts/cloudbridge-windows-x64.exe/cloudbridge-windows-x64.exe
-            artifacts/cloudbridge-macos-arm64.zip/cloudbridge-macos-arm64.zip
+            artifacts/cloudbridge-macos-arm64.dmg/cloudbridge-macos-arm64.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
