@@ -32,7 +32,9 @@ lazy_static::lazy_static! {
 /// v2 drops the two response caches. The dashboard reads the ledger now,
 /// which records when each period was ingested, so a separate copy of
 /// display-shaped API responses has nothing left to do.
-const APP_SCHEMA_VERSION: i32 = 2;
+///
+/// v3 restores the primary keys that the v1 rebuild silently dropped.
+const APP_SCHEMA_VERSION: i32 = 3;
 
 /// Initialize database
 pub fn init_database() -> Result<()> {
@@ -72,6 +74,10 @@ fn prepare_schema(conn: &Connection) -> Result<()> {
 
     create_tables(conn)?;
 
+    if version < 3 {
+        migrate_to_v3(conn)?;
+    }
+
     conn.execute(
         "INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (?, ?)",
         params![APP_SCHEMA_VERSION, Utc::now().to_rfc3339()],
@@ -82,14 +88,23 @@ fn prepare_schema(conn: &Connection) -> Result<()> {
 
 /// The current shape. Anything a migration already rebuilt is left alone.
 ///
-/// Tables are declared without foreign keys: DuckDB will not drop or alter a
-/// table another table points at, which is what makes a rebuild like
-/// [`rebuild_accounts_v1`] necessary in the first place. `delete_account`
-/// cleans up dependants instead.
-fn create_tables(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        r#"
-        CREATE TABLE IF NOT EXISTS cloud_accounts (
+/// The tables of this database, each as `(name, column definition, the
+/// columns to carry over when it is rebuilt)`.
+///
+/// One definition per table, because a rebuild has to produce exactly what
+/// a fresh install would: `CREATE TABLE ... AS SELECT` copies rows and
+/// column types but *not* constraints, and a `cloud_accounts` without its
+/// primary key cannot be written to at all — DuckDB implements
+/// `INSERT OR REPLACE` as an upsert and refuses one with no key to conflict
+/// on.
+///
+/// No foreign keys: DuckDB will not drop or alter a table another table
+/// points at, which is what makes a rebuild necessary in the first place.
+/// `delete_account` cleans up dependants instead.
+const TABLES: &[(&str, &str, &str)] = &[
+    (
+        "cloud_accounts",
+        r#"(
             id             VARCHAR PRIMARY KEY,
             name           VARCHAR NOT NULL,
             -- A registry SourceId; see cloud::registry. Stored verbatim, so
@@ -99,19 +114,75 @@ fn create_tables(conn: &Connection) -> Result<()> {
             created_at     VARCHAR NOT NULL,
             last_synced_at VARCHAR,
             enabled        BOOLEAN NOT NULL DEFAULT true
-        );
-
-        CREATE TABLE IF NOT EXISTS budgets (
+        )"#,
+        "id, name, source_id, region, created_at, last_synced_at, enabled",
+    ),
+    (
+        "budgets",
+        r#"(
             account_id      VARCHAR PRIMARY KEY,
             monthly_budget  DOUBLE NOT NULL,
             currency        VARCHAR NOT NULL,
             alert_threshold DOUBLE NOT NULL DEFAULT 80.0,
             created_at      VARCHAR NOT NULL,
             updated_at      VARCHAR NOT NULL
-        );
+        )"#,
+        "account_id, monthly_budget, currency, alert_threshold, created_at, updated_at",
+    ),
+];
 
-                "#,
+fn create_tables(conn: &Connection) -> Result<()> {
+    for (table, definition, _) in TABLES {
+        conn.execute_batch(&format!("CREATE TABLE IF NOT EXISTS {table} {definition}"))?;
+    }
+
+    Ok(())
+}
+
+/// Whether a table has a primary key, which is what `INSERT OR REPLACE`
+/// needs to exist at all.
+fn has_primary_key(conn: &Connection, table: &str) -> Result<bool> {
+    let count: i64 = conn.query_row(
+        "SELECT count(*) FROM duckdb_constraints()
+         WHERE table_name = ? AND constraint_type = 'PRIMARY KEY'",
+        params![table],
+        |row| row.get(0),
     )?;
+
+    Ok(count > 0)
+}
+
+/// Rebuild a table in its declared shape, carrying the rows across.
+fn rebuild_table(conn: &Connection, table: &str, definition: &str, columns: &str) -> Result<()> {
+    let scratch = format!("{table}_rebuild");
+
+    conn.execute_batch(&format!(
+        "DROP TABLE IF EXISTS {scratch};
+         CREATE TABLE {scratch} {definition};
+         INSERT INTO {scratch} ({columns}) SELECT {columns} FROM {table};
+         DROP TABLE {table};
+         ALTER TABLE {scratch} RENAME TO {table};"
+    ))?;
+
+    Ok(())
+}
+
+/// Give back the primary keys that the v1 rebuild dropped.
+///
+/// v1 moved rows with `CREATE TABLE ... AS SELECT`, which does not carry
+/// constraints across. The tables looked right and read fine, so the loss
+/// only surfaced on the next write: saving an account failed with "there
+/// are no UNIQUE/PRIMARY KEY constraints that refer to this table". A
+/// database that already has its keys — a fresh install — is left alone.
+fn migrate_to_v3(conn: &Connection) -> Result<()> {
+    for (table, definition, columns) in TABLES {
+        if column_names(conn, table)?.is_empty() || has_primary_key(conn, table)? {
+            continue;
+        }
+
+        tracing::info!("Restoring the primary key on {}", table);
+        rebuild_table(conn, table, definition, columns)?;
+    }
 
     Ok(())
 }
@@ -182,25 +253,27 @@ fn rebuild_accounts_v1(conn: &Connection, account_columns: &[String]) -> Result<
         )?;
     }
 
-    conn.execute(
-        &format!(
-            "CREATE OR REPLACE TABLE cloud_accounts_v1 AS
-             SELECT id, name, {source_column} AS source_id, region,
-                    created_at, last_synced_at, enabled
-             FROM cloud_accounts"
-        ),
-        [],
-    )?;
-    conn.execute_batch(
-        "DROP TABLE cloud_accounts;
-         ALTER TABLE cloud_accounts_v1 RENAME TO cloud_accounts;",
-    )?;
+    // Written out in full rather than with CREATE TABLE AS SELECT, so the
+    // primary key survives; see [`TABLES`].
+    let (_, accounts_definition, _) = TABLES[0];
+    conn.execute_batch(&format!(
+        "CREATE OR REPLACE TABLE cloud_accounts_v1 {accounts_definition};
+         INSERT INTO cloud_accounts_v1
+             (id, name, source_id, region, created_at, last_synced_at, enabled)
+         SELECT id, name, {source_column}, region, created_at, last_synced_at, enabled
+         FROM cloud_accounts;
+         DROP TABLE cloud_accounts;
+         ALTER TABLE cloud_accounts_v1 RENAME TO cloud_accounts;"
+    ))?;
 
     if has_budgets {
-        conn.execute_batch(
-            "CREATE TABLE budgets AS SELECT * FROM budgets_v1_backup;
-             DROP TABLE budgets_v1_backup;",
-        )?;
+        let (_, budgets_definition, budgets_columns) = TABLES[1];
+        conn.execute_batch(&format!(
+            "CREATE TABLE budgets {budgets_definition};
+             INSERT INTO budgets ({budgets_columns})
+             SELECT {budgets_columns} FROM budgets_v1_backup;
+             DROP TABLE budgets_v1_backup;"
+        ))?;
     }
 
     Ok(())
@@ -710,6 +783,99 @@ mod tests {
             .query_row("SELECT monthly_budget FROM budgets", [], |row| row.get(0))
             .unwrap();
         assert_eq!(budget, 100.0);
+    }
+
+    /// The write that `save_account` makes. DuckDB implements it as an
+    /// upsert, so it needs a primary key to conflict on.
+    fn upsert_account(conn: &Connection, id: &str, name: &str) -> Result<()> {
+        conn.execute(
+            r#"
+            INSERT OR REPLACE INTO cloud_accounts
+            (id, name, source_id, region, created_at, last_synced_at, enabled)
+            VALUES (?, ?, 'AWS', 'us-east-1', '2026-08-01T00:00:00+00:00', NULL, true)
+            "#,
+            params![id, name],
+        )?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn an_upgraded_database_can_still_be_written_to() {
+        let conn = legacy_database();
+        prepare_schema(&conn).unwrap();
+
+        upsert_account(&conn, "acct-1", "Prod renamed").unwrap();
+        upsert_account(&conn, "acct-2", "Staging").unwrap();
+
+        let (accounts, renamed): (i64, String) = conn
+            .query_row(
+                "SELECT count(*), max(name) FROM cloud_accounts WHERE id = 'acct-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        // Replacing an account updates it rather than duplicating it.
+        assert_eq!(accounts, 1);
+        assert_eq!(renamed, "Prod renamed");
+    }
+
+    #[test]
+    fn a_database_that_lost_its_keys_gets_them_back() {
+        // What 0.2.0 left behind: the v1 rebuild moved rows with
+        // CREATE TABLE AS SELECT, which drops constraints.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at VARCHAR NOT NULL);
+             INSERT INTO schema_version VALUES (2, '2026-09-01T00:00:00+00:00');
+             CREATE TABLE cloud_accounts AS
+                 SELECT 'acct-1' AS id, 'Prod' AS name, 'AWS' AS source_id,
+                        'us-east-1' AS region, '2026-08-01T00:00:00+00:00' AS created_at,
+                        NULL::VARCHAR AS last_synced_at, true AS enabled;
+             CREATE TABLE budgets AS
+                 SELECT 'acct-1' AS account_id, 100.0 AS monthly_budget, 'USD' AS currency,
+                        80.0 AS alert_threshold, '2026-08-01T00:00:00+00:00' AS created_at,
+                        '2026-08-01T00:00:00+00:00' AS updated_at;",
+        )
+        .unwrap();
+        assert!(!has_primary_key(&conn, "cloud_accounts").unwrap());
+        assert!(upsert_account(&conn, "acct-2", "Staging").is_err());
+
+        prepare_schema(&conn).unwrap();
+
+        assert!(has_primary_key(&conn, "cloud_accounts").unwrap());
+        assert!(has_primary_key(&conn, "budgets").unwrap());
+        assert_eq!(current_schema_version(&conn).unwrap(), APP_SCHEMA_VERSION);
+        upsert_account(&conn, "acct-2", "Staging").unwrap();
+
+        // The rebuild keeps what was there.
+        let names: Vec<String> = conn
+            .prepare("SELECT name FROM cloud_accounts ORDER BY id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(names, vec!["Prod".to_string(), "Staging".to_string()]);
+        let budget: f64 = conn
+            .query_row("SELECT monthly_budget FROM budgets", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(budget, 100.0);
+    }
+
+    #[test]
+    fn a_database_that_already_has_its_keys_is_left_alone() {
+        let conn = Connection::open_in_memory().unwrap();
+        prepare_schema(&conn).unwrap();
+        upsert_account(&conn, "acct-1", "Prod").unwrap();
+
+        prepare_schema(&conn).unwrap();
+
+        let accounts: i64 = conn
+            .query_row("SELECT count(*) FROM cloud_accounts", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(accounts, 1);
+        assert!(has_primary_key(&conn, "cloud_accounts").unwrap());
     }
 
     #[test]
