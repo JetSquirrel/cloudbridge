@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="CloudBridge blog - release notes and engineering decisions behind the local-first multi-cloud cost ledger.">
+    <meta name="description" content="Why CloudBridge normalizes every provider into FOCUS column names — adopting the FinOps Foundation's open billing specification at the scale of a personal ledger.">
     <meta name="theme-color" content="#0E1420">
-    <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/blog.html">
+    <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/blog/why-focus.html">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌉</text></svg>">
-    <title>Blog - CloudBridge</title>
+    <title>Why the ledger speaks FOCUS - CloudBridge Blog</title>
 
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -35,6 +35,7 @@
 
         :root {
             --ink: #0E1420;
+            --panel: #151E30;
             --paper: #FAFBFC;
             --hairline: #E3E8EF;
             --hairline-dark: #263349;
@@ -149,13 +150,14 @@
             color: var(--signal);
         }
 
-        /* Page head */
-        .page-head {
-            padding: 4rem 0 2.5rem;
-            border-bottom: 1px solid var(--hairline);
+        /* Article */
+        .post {
+            max-width: 44rem;
+            margin: 0 auto;
+            padding: 4rem 0 6rem;
         }
 
-        .page-head .eyebrow {
+        .post .eyebrow {
             font-family: var(--font-mono);
             font-size: 0.75rem;
             font-weight: 500;
@@ -163,66 +165,71 @@
             text-transform: uppercase;
             color: var(--local);
             display: block;
-            margin-bottom: 1rem;
+            margin-bottom: 1.25rem;
         }
 
-        .page-head h1 {
-            font-size: 2.75rem;
+        .post h1 {
+            font-size: 2.5rem;
             font-weight: 700;
+            margin-bottom: 1.5rem;
         }
 
-        .page-head p {
-            margin-top: 1rem;
-            font-size: 1.125rem;
-            max-width: 40rem;
-        }
-
-        /* Post list */
-        .post-list {
-            padding: 1rem 0 6rem;
-            max-width: 56rem;
-        }
-
-        .post-row {
-            display: grid;
-            grid-template-columns: 9rem 1fr;
-            gap: 2rem;
-            padding: 2rem 0;
+        .post .lede {
+            font-size: 1.25rem;
+            color: var(--fg-strong);
+            margin-bottom: 2.5rem;
+            padding-bottom: 2.5rem;
             border-bottom: 1px solid var(--hairline);
-            text-decoration: none;
-            color: var(--fg-body);
-            align-items: baseline;
         }
 
-        .post-row .date {
+        .post h2 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin: 3rem 0 1rem;
+        }
+
+        .post p {
+            margin-bottom: 1.25rem;
+            line-height: 1.8;
+        }
+
+        .post a {
+            color: var(--signal);
+        }
+
+        .post code {
             font-family: var(--font-mono);
             font-size: 0.8125rem;
-            color: var(--fg-faint);
+            background: #fff;
+            border: 1px solid var(--hairline);
+            padding: 0.05rem 0.4rem;
+            border-radius: 4px;
         }
 
-        .post-row h2 {
-            font-size: 1.375rem;
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-            transition: color 0.15s;
+        .post ul {
+            margin: 0 0 1.25rem 1.25rem;
         }
 
-        .post-row:hover h2 {
-            color: var(--signal);
-        }
-
-        .post-row p {
-            font-size: 1rem;
-        }
-
-        .post-row .tag {
-            font-family: var(--font-mono);
-            font-size: 0.6875rem;
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
-            color: var(--signal);
-            display: block;
+        .post li {
             margin-bottom: 0.4rem;
+            line-height: 1.7;
+        }
+
+        .post-nav {
+            margin-top: 4rem;
+            padding-top: 2rem;
+            border-top: 1px solid var(--hairline);
+            font-family: var(--font-mono);
+            font-size: 0.875rem;
+        }
+
+        .post-nav a {
+            color: var(--signal);
+            text-decoration: none;
+        }
+
+        .post-nav a:hover {
+            text-decoration: underline;
         }
 
         /* Footer (shared, compact) */
@@ -253,17 +260,12 @@
         }
 
         @media (max-width: 768px) {
-            .page-head {
-                padding: 2.5rem 0 2rem;
+            .post {
+                padding: 2.5rem 0 4rem;
             }
 
-            .page-head h1 {
-                font-size: 2rem;
-            }
-
-            .post-row {
-                grid-template-columns: 1fr;
-                gap: 0.5rem;
+            .post h1 {
+                font-size: 1.875rem;
             }
 
             .nav-links {
@@ -302,34 +304,40 @@
     </nav>
 
     <main id="main">
-        <header class="page-head">
-            <div class="container">
-                <span class="eyebrow" data-i18n="blog.eyebrow">Blog</span>
-                <h1 data-i18n="blog.title">Release notes and decisions</h1>
-                <p data-i18n="blog.sub">What shipped, and why it is built the way it is.</p>
-            </div>
-        </header>
+        <article class="post">
+            <span class="eyebrow">Decisions · 2026-09-01</span>
+            <h1>Why the ledger speaks FOCUS</h1>
+            <p class="lede">CloudBridge normalizes every provider into column names borrowed from FOCUS, the FinOps Foundation's open billing specification. Here's why a personal app adopted a spec written for enterprises.</p>
 
-        <div class="container">
-            <div class="post-list">
-                <a class="post-row" href="/blog/why-focus.html">
-                    <span class="date">2026-09-01</span>
-                    <div>
-                        <span class="tag" data-i18n="blog.post2.tag">Decisions</span>
-                        <h2 data-i18n="blog.post2.title">Why the ledger speaks FOCUS</h2>
-                        <p data-i18n="blog.post2.desc">Why a personal app adopted the FinOps Foundation's open billing specification — and which three concepts it actually implemented.</p>
-                    </div>
-                </a>
-                <a class="post-row" href="/blog/cloudbridge-0-2-0.html">
-                    <span class="date">2026-09-01</span>
-                    <div>
-                        <span class="tag" data-i18n="blog.post1.tag">Release</span>
-                        <h2 data-i18n="blog.post1.title">0.2.0: a cost viewer becomes a ledger</h2>
-                        <p data-i18n="blog.post1.desc">Charges from every source now land in one FOCUS-shaped fact table, raw payloads are kept so a mapping fix costs nothing to replay, and a total is finally a single currency.</p>
-                    </div>
-                </a>
+            <h2>Every bill speaks a dialect</h2>
+            <p>AWS reports a <code>RECORD_TYPE</code> per line item. Alibaba Cloud splits a charge into vouchers, coupons, and discounts. DeepSeek doesn't bill per use at all — it reports a balance. Any tool that reads more than one provider ends up writing a translator per dialect, and every total computed across them is an act of faith. The FinOps Foundation calls this the universal challenge of normalizing billing data, and wrote <a href="https://focus.finops.org/" target="_blank" rel="noopener noreferrer">FOCUS</a> as the answer: one open specification for cost and usage data, one shared column vocabulary across vendors.</p>
+
+            <h2>Adopt the shape, not the ceremony</h2>
+            <p>The Foundation's <a href="https://www.finops.org/wg/adopting-focus-the-finops-open-cost-and-usage-specification/" target="_blank" rel="noopener noreferrer">adoption guide</a> walks organizations through five stages — Decide, Design, Build, Test, Launch — with cross-functional teams and pilot programs. A desktop app needs two of them: decide the scope, then build it. The guide itself says to scope adoption to your needs, so the ledger implements exactly the three FOCUS concepts that carry their weight for a personal ledger: <code>billed_cost</code>, <code>effective_cost</code>, and <code>charge_category</code>. No more, until a real bill export demands it.</p>
+
+            <h2>What the shape buys</h2>
+            <p>The guide's benefit table reads like CloudBridge's own changelog:</p>
+            <ul>
+                <li><strong>Reduced complexity of billing files.</strong> One set of columns across AWS, Alibaba Cloud, and DeepSeek — a credit is a <code>Credit</code> everywhere, and no total ever adds dollars to yuan by accident.</li>
+                <li><strong>Easier integration of new vendors.</strong> A new source is a table row plus a mapping into the same columns, not a new enum variant with five <code>match</code> arms. Azure and GCP slot into a shape that already exists.</li>
+                <li><strong>Future-proofing.</strong> The column names are the ones a real AWS CUR or Alibaba Cloud bill export already uses, so the export channel on the roadmap lands with no schema change.</li>
+                <li><strong>A common language.</strong> Anyone who knows FOCUS — a growing share of FinOps practitioners — can open <code>billing.duckdb</code> and read it without a manual.</li>
+            </ul>
+
+            <h2>The same architecture, shrunk to one machine</h2>
+            <p>The guide's reference architecture is a data lake: raw exports land partitioned by vendor and period, transformation reads from the lake, reporting reads the transformed output. CloudBridge runs that exact pattern locally — provider responses persist unchanged as Parquet under <code>raw/</code>, partitioned by source, account, and billing period, and normalization is a pure function from a stored batch to ledger rows. The payoff the guide promises is the same one we get: a mapping fix replays what is on disk instead of paying for another fetch.</p>
+
+            <h2>Further reading</h2>
+            <ul>
+                <li><a href="https://www.finops.org/wg/adopting-focus-the-finops-open-cost-and-usage-specification/" target="_blank" rel="noopener noreferrer">Adopting FOCUS</a> — the FinOps Foundation's adoption working group paper</li>
+                <li><a href="https://focus.finops.org/" target="_blank" rel="noopener noreferrer">focus.finops.org</a> — the specification itself</li>
+                <li><a href="/blog/cloudbridge-0-2-0.html">0.2.0: a cost viewer becomes a ledger</a> — what the FOCUS-shaped schema ships with</li>
+            </ul>
+
+            <div class="post-nav">
+                <a href="/blog.html" data-i18n="post.back">← All posts</a>
             </div>
-        </div>
+        </article>
     </main>
 
     <footer>
@@ -352,6 +360,10 @@
                 document.querySelectorAll('[data-i18n]').forEach(function (el) {
                     var key = el.getAttribute('data-i18n');
                     if (typeof dict[key] === 'string') el.textContent = dict[key];
+                });
+                document.querySelectorAll('[data-i18n-html]').forEach(function (el) {
+                    var key = el.getAttribute('data-i18n-html');
+                    if (typeof dict[key] === 'string') el.innerHTML = dict[key];
                 });
                 document.documentElement.lang = locale;
             }
