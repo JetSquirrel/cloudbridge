@@ -7,13 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0] - TBD
+## [0.2.0] - 2026-09-01
 
-### Planned
-- Azure support
-- Google Cloud Platform support
-- Cost alerts and notifications
-- Budget tracking
+The release that turns a multi-cloud cost viewer into a ledger. Charges
+from every source land in one FOCUS-shaped fact table, raw payloads are
+kept so a mapping fix costs nothing to replay, and a total is finally a
+single currency. See [docs/roadmap.md](docs/roadmap.md) for what comes
+next.
 
 ### Added
 - **FOCUS billing ledger** (roadmap P0/PR2)
@@ -58,6 +58,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Display account balance instead of cost for DeepSeek accounts
   - Balance breakdown showing granted and topped-up balances
   - Support for multiple currencies (CNY, USD)
+- **Billing source registry** (roadmap P0/PR1) — a source is a table row
+  with a capability descriptor, not an enum variant with five `match` arms
+- **Reporting currency setting**, with a built-in dated rate table
+- **Project roadmap** at `docs/roadmap.md`, and a rebuilt documentation
+  site
 
 ### Changed
 - The response cache tables are gone (application schema v2). A refresh
@@ -68,14 +73,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `CloudService` is now `BillingSource`, with `fetch` and `normalize` split
   apart: the first touches the network and interprets nothing, the second
   interprets and touches nothing
-- Billing source registry replaces the `CloudProvider` enum; an unknown
-  source id is skipped with a warning instead of being read as AWS
+- An unknown source id is skipped with a warning instead of being read as
+  AWS
 - Application database is versioned and rebuilt at schema v1: the dead
   `cost_data` table and the credential columns are gone, `provider` is now
-  `source_id`, and accounts and budgets are carried across. Credentials
-  live in the OS keyring only.
+  `source_id`, and accounts and budgets are carried across
+- A refresh now ingests the current and previous billing period in two
+  Cost Explorer calls, where the dashboard previously made three
+- Alibaba Cloud's trend window covers two billing periods rather than
+  seven days, because its bill overview reports one row per product per
+  month
 
 ### Fixed
+- **Cross-cloud totals no longer add dollars to yuan.** Every amount on
+  the dashboard is converted through `v_charge_normalized` at a rate dated
+  no later than the charge
+- A DeepSeek balance is no longer counted as a month's spend
+- Dark Mode switch actually changes the theme
+- Version display in Settings, and the refresh-interval row that did
+  nothing is gone
+- Illegible active item in the sidebar
+
+### Security
+- Credentials live in the OS keyring only. The v1 migration moves any that
+  were still in the database and drops the columns that held them
+- Raw billing payloads are written to a local directory and nowhere else
+
+## [0.1.2] - 2026-02-13
+
+### Added
+- GitHub Pages documentation site
+
+### Changed
+- macOS release artifact is packaged as a zip
+
+### Fixed
+- AccessKey input on the account form ignored what was typed into it
+- Download links for artifacts the release never built
 
 ## [0.1.1] - 2024-12-10
 
@@ -134,4 +168,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **0.2.0** - DeepSeek support, and a FOCUS billing ledger behind the dashboard
+- **0.1.2** - Documentation site and packaging fixes
 - **0.1.0** - Initial release with AWS and Alibaba Cloud support
