@@ -37,23 +37,37 @@
 - **📊 Cost Visualization**
   - Monthly cost overview with month-over-month comparison
   - Per-service cost breakdown
-  - Cost trend charts 
+  - Cost trend charts
   - Daily cost statistics (total, average, max, min)
 
+- **💱 One Currency**
+  - Charges are stored in the currency they were billed in and converted
+    for display, each at a rate dated no later than the charge itself
+  - Pick your reporting currency in Settings; nothing is rewritten
+  - A charge no rate covers is reported, never counted at par
+
+- **🧾 A Real Ledger**
+  - Every source normalizes into one fact table named after
+    [FOCUS](https://focus.finops.org/) columns, so credits, refunds, taxes
+    and fees are each labelled as themselves
+  - Raw provider responses are kept as Parquet, so a mapping fix replays
+    what is on disk instead of paying for another fetch
+  - Re-ingesting an unchanged bill produces identical rows
+
 - **🔒 Security First**
-  - AES-256-GCM encryption for stored credentials
+  - Credentials live in your OS keyring, never in the database
   - Credentials never leave your local machine
   - No cloud sync, no telemetry
 
-- **⚡ Smart Caching**
-  - Intelligent 6-hour cache mechanism
-  - Minimize API calls and costs
-  - Force refresh when needed
+- **⚡ Frugal with Paid APIs**
+  - A period is re-fetched at most once every 6 hours
+  - Cost Explorer is asked for everything in one request per period
+  - Force refresh when you need it now
 
 - **🎨 Modern UI**
   - Built with [GPUI](https://gpui.rs/) - Zed's GPU-accelerated UI framework
   - Native performance
-  - Dark theme by default
+  - Light and dark themes
 
 ## 📦 Installation
 
@@ -64,8 +78,10 @@ Download the latest release for your platform from the [Releases](https://github
 | Platform | Download |
 |----------|----------|
 | Windows (x64) | `cloudbridge-windows-x64.exe` |
-| macOS (Intel) | `cloudbridge-macos-x64.zip` |
 | macOS (Apple Silicon) | `cloudbridge-macos-arm64.zip` |
+
+> Intel Macs and Linux are not published as binaries; both build from
+> source.
 
 > **Note for Windows users:** Windows SmartScreen may show a warning for unsigned executables. Click "More info" → "Run anyway" to proceed. The application is safe and [open source](https://github.com/JetSquirrel/cloudbridge).
 
@@ -164,12 +180,20 @@ The compiled binary will be at:
    - Month-over-month change
    - Active accounts count
 3. Click on any account card to expand service-level details (or balance breakdown for DeepSeek)
-4. Click **Trend** to view the 30-day cost chart (not available for DeepSeek)
+4. The expanded card charts the daily cost trend, read from the ledger
+   (DeepSeek reports a balance, so it has no trend)
+
+### Choosing a Reporting Currency
+
+Go to **Settings → Reporting** and pick the currency totals are shown in.
+Charges keep the currency they were billed in; only the view they are read
+through changes, so switching back and forth costs nothing.
 
 ### Refreshing Data
 
-- **Automatic:** Data is cached for 6 hours and auto-refreshes when stale
-- **Manual:** Click **Refresh** button to force refresh all data
+- **Automatic:** A billing period is re-fetched at most once every 6 hours
+- **Manual:** **Refresh** picks up anything stale; **Force Refresh**
+  re-fetches regardless, at the cost of another paid API call
 
 ## 🗺️ Roadmap
 
@@ -179,12 +203,12 @@ provider APIs, token plans and subscriptions — in one ledger, one currency,
 on one machine. See **[docs/roadmap.md](docs/roadmap.md)** for the detailed
 plan and its rationale.
 
-### P0 — FOCUS normalization (in progress)
-- [ ] Source registry replacing the hardcoded provider enum
-- [ ] `fct_charge` fact table, batch-tracked transactional ingest
-- [ ] Split fetch from normalize, raw Parquet layer
-- [ ] AWS / Alibaba Cloud / DeepSeek mapped to FOCUS columns
-- [ ] Cross-currency totals via a rate table and reporting currency
+### P0 — FOCUS normalization (done in 0.2.0)
+- [x] Source registry replacing the hardcoded provider enum
+- [x] `fct_charge` fact table, batch-tracked transactional ingest
+- [x] Split fetch from normalize, raw Parquet layer
+- [x] AWS / Alibaba Cloud / DeepSeek mapped to FOCUS columns
+- [x] Cross-currency totals via a rate table and reporting currency
 
 ### P1
 - [ ] Bill file export channel (S3 / OSS + Parquet)
@@ -210,13 +234,19 @@ CloudBridge stores all data locally:
 
 | Platform | Location |
 |----------|----------|
-| Windows | `%APPDATA%\com.cloudbridge\CloudBridge\` |
-| macOS | `~/Library/Application Support/com.cloudbridge.CloudBridge/` |
-| Linux | `~/.local/share/cloudbridge/` |
+| Windows | `%APPDATA%\CloudBridge\data\` |
+| macOS | `~/Library/Application Support/CloudBridge/` |
+| Linux | `~/.local/share/CloudBridge/` |
 
 Files:
-- `cloudbridge.duckdb` - Local database (credentials encrypted)
-- `config.json` - Application configuration (contains encryption key)
+- `billing.duckdb` - The ledger: every charge, in the currency it was billed in
+- `cloudbridge.duckdb` - Accounts and settings
+- `raw/` - Provider responses as fetched, partitioned by source, account
+  and billing period
+- `config.json` - Application configuration
+
+Credentials are not in any of them: they are stored in the OS keyring
+(Windows Credential Manager, macOS Keychain, Linux Secret Service).
 
 > ⚠️ **Important:** Never share your `config.json` together with the database file, as this would expose your encrypted credentials.
 
