@@ -163,15 +163,39 @@
     <main>
         <div>
             <div class="code">404</div>
-            <h1>This page moved or never existed.</h1>
-            <p>The link may be outdated, or the URL may have a typo. Here's where you can go instead:</p>
+            <h1 data-i18n="notfound.title">This page moved or never existed.</h1>
+            <p data-i18n="notfound.desc">The link may be outdated, or the URL may have a typo. Here's where you can go instead:</p>
             <div class="links">
-                <a href="/cloudbridge/" class="btn btn-primary">Home</a>
-                <a href="/cloudbridge/#download" class="btn btn-outline">Download</a>
-                <a href="/cloudbridge/#faq" class="btn btn-outline">FAQ</a>
+                <a href="/cloudbridge/" class="btn btn-primary" data-i18n="notfound.home">Home</a>
+                <a href="/cloudbridge/#download" class="btn btn-outline" data-i18n="notfound.download">Download</a>
+                <a href="/cloudbridge/#faq" class="btn btn-outline" data-i18n="notfound.faq">FAQ</a>
                 <a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer" class="btn btn-outline">GitHub</a>
             </div>
         </div>
     </main>
+
+    <!-- Same i18n scaffolding as index.html; see that file for how to add a locale. -->
+    <script>
+        (function () {
+            var LOCALES = {
+                en: {} // default: strings live in the markup
+            };
+
+            function applyLocale(locale) {
+                var dict = LOCALES[locale];
+                if (!dict) return;
+                document.querySelectorAll('[data-i18n]').forEach(function (el) {
+                    var key = el.getAttribute('data-i18n');
+                    if (typeof dict[key] === 'string') el.textContent = dict[key];
+                });
+                document.documentElement.lang = locale;
+            }
+
+            var saved = null;
+            try { saved = localStorage.getItem('cloudbridge-locale'); } catch (e) {}
+            var browser = (navigator.language || 'en').slice(0, 2);
+            applyLocale(saved && LOCALES[saved] ? saved : (LOCALES[browser] ? browser : 'en'));
+        })();
+    </script>
 </body>
 </html>
