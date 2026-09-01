@@ -60,6 +60,59 @@ impl From<String> for SourceId {
     }
 }
 
+/// Where a source's credentials conventionally sit in the environment.
+///
+/// Each slot lists the variables a provider's own tooling reads, most
+/// canonical first, so an account can be filled in from a shell that is
+/// already configured instead of being copied by hand.
+pub struct EnvCredentials {
+    pub access_key: &'static [&'static str],
+    /// Empty for a source that authenticates with a single key.
+    pub secret_key: &'static [&'static str],
+    pub region: &'static [&'static str],
+}
+
+/// Credentials found in the environment, ready to fill a form with.
+pub struct FoundCredentials {
+    pub access_key: String,
+    pub secret_key: Option<String>,
+    pub region: Option<String>,
+    /// The variable the access key came from, so the UI can say which
+    /// environment it is offering.
+    pub access_key_var: &'static str,
+}
+
+impl EnvCredentials {
+    /// Read what the environment has, or `None` when it has no key.
+    ///
+    /// A missing secret or region is not a failure — the user can fill in
+    /// the rest — but without a key there is nothing to offer.
+    pub fn read(&self) -> Option<FoundCredentials> {
+        self.read_with(|name| std::env::var(name).ok())
+    }
+
+    /// [`Self::read`] against an arbitrary lookup, so the ordering rules
+    /// can be tested without touching the process environment.
+    fn read_with(&self, lookup: impl Fn(&str) -> Option<String>) -> Option<FoundCredentials> {
+        let first_set = |names: &'static [&'static str]| {
+            names.iter().find_map(|name| {
+                lookup(name)
+                    .filter(|value| !value.trim().is_empty())
+                    .map(|value| (*name, value.trim().to_string()))
+            })
+        };
+
+        let (access_key_var, access_key) = first_set(self.access_key)?;
+
+        Some(FoundCredentials {
+            access_key,
+            secret_key: first_set(self.secret_key).map(|(_, value)| value),
+            region: first_set(self.region).map(|(_, value)| value),
+            access_key_var,
+        })
+    }
+}
+
 /// Everything the application needs to know about a billing source.
 pub struct SourceDescriptor {
     /// Stable identifier; see [`SourceId`].
@@ -75,6 +128,9 @@ pub struct SourceDescriptor {
     /// the source has no notion of a region.
     pub default_region: Option<&'static str>,
     pub reporting: Reporting,
+    /// Environment variables this source's credentials can be read from,
+    /// or `None` for a source with no such convention.
+    pub env_credentials: Option<EnvCredentials>,
     /// Builds the client. A function pointer keeps construction in this
     /// table instead of a `match` in every caller.
     pub build: fn(SourceContext) -> Box<dyn BillingSource>,
@@ -116,6 +172,11 @@ impl SourceDescriptor {
         }
     }
 
+    /// Credentials for this source found in the environment, if any.
+    pub fn credentials_from_env(&self) -> Option<FoundCredentials> {
+        self.env_credentials.as_ref().and_then(EnvCredentials::read)
+    }
+
     /// Whether this source reports a balance rather than a period cost.
     pub fn is_snapshot(&self) -> bool {
         matches!(self.reporting, Reporting::Snapshot)
@@ -133,6 +194,12 @@ static SOURCES: &[SourceDescriptor] = &[
         reporting: Reporting::Periodic {
             trend_window_days: 30,
         },
+        env_credentials: Some(EnvCredentials {
+            access_key: &["AWS_ACCESS_KEY_ID"],
+            secret_key: &["AWS_SECRET_ACCESS_KEY"],
+            // AWS_REGION wins, as it does in the SDKs.
+            region: &["AWS_REGION", "AWS_DEFAULT_REGION"],
+        }),
         build: |ctx| {
             Box::new(AwsCloudService::new(
                 ctx.access_key_id,
@@ -155,6 +222,11 @@ static SOURCES: &[SourceDescriptor] = &[
         reporting: Reporting::Periodic {
             trend_window_days: 62,
         },
+        env_credentials: Some(EnvCredentials {
+            access_key: &["ALIBABA_CLOUD_ACCESS_KEY_ID", "ALICLOUD_ACCESS_KEY"],
+            secret_key: &["ALIBABA_CLOUD_ACCESS_KEY_SECRET", "ALICLOUD_SECRET_KEY"],
+            region: &["ALIBABA_CLOUD_REGION_ID", "ALICLOUD_REGION"],
+        }),
         build: |ctx| {
             Box::new(AliyunCloudService::new(
                 ctx.access_key_id,
@@ -171,6 +243,11 @@ static SOURCES: &[SourceDescriptor] = &[
         secret_key_label: None,
         default_region: None,
         reporting: Reporting::Snapshot,
+        env_credentials: Some(EnvCredentials {
+            access_key: &["DEEPSEEK_API_KEY"],
+            secret_key: &[],
+            region: &[],
+        }),
         build: |ctx| {
             Box::new(DeepSeekService::new(
                 ctx.access_key_id,
@@ -243,5 +320,84 @@ mod tests {
                 None => assert_eq!(source.region_placeholder(), "(Not required)"),
             }
         }
+    }
+
+    /// A lookup over a fixed set of variables.
+    fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.to_string())
+        }
+    }
+
+    fn aws_env() -> &'static EnvCredentials {
+        get("AWS")
+            .expect("AWS is registered")
+            .env_credentials
+            .as_ref()
+            .expect("AWS reads credentials from the environment")
+    }
+
+    #[test]
+    fn a_configured_shell_fills_every_field() {
+        let found = aws_env()
+            .read_with(env(&[
+                ("AWS_ACCESS_KEY_ID", "AKIAEXAMPLE"),
+                ("AWS_SECRET_ACCESS_KEY", "secret"),
+                ("AWS_REGION", "eu-west-1"),
+            ]))
+            .expect("credentials are there");
+
+        assert_eq!(found.access_key, "AKIAEXAMPLE");
+        assert_eq!(found.secret_key.as_deref(), Some("secret"));
+        assert_eq!(found.region.as_deref(), Some("eu-west-1"));
+        assert_eq!(found.access_key_var, "AWS_ACCESS_KEY_ID");
+    }
+
+    #[test]
+    fn the_canonical_variable_wins_over_the_older_one() {
+        let found = aws_env()
+            .read_with(env(&[
+                ("AWS_ACCESS_KEY_ID", "AKIAEXAMPLE"),
+                ("AWS_DEFAULT_REGION", "us-east-1"),
+                ("AWS_REGION", "eu-west-1"),
+            ]))
+            .unwrap();
+
+        assert_eq!(found.region.as_deref(), Some("eu-west-1"));
+    }
+
+    #[test]
+    fn a_shell_with_no_key_offers_nothing() {
+        // A secret alone is not something to fill a form with.
+        assert!(aws_env()
+            .read_with(env(&[("AWS_SECRET_ACCESS_KEY", "secret")]))
+            .is_none());
+        // Nor is a variable that is set but empty.
+        assert!(aws_env()
+            .read_with(env(&[("AWS_ACCESS_KEY_ID", "   ")]))
+            .is_none());
+    }
+
+    #[test]
+    fn a_single_key_source_needs_no_secret() {
+        let deepseek = get("DeepSeek").unwrap().env_credentials.as_ref().unwrap();
+
+        let found = deepseek
+            .read_with(env(&[("DEEPSEEK_API_KEY", "sk-example")]))
+            .unwrap();
+        assert_eq!(found.access_key, "sk-example");
+        assert_eq!(found.secret_key, None);
+        assert_eq!(found.region, None);
+    }
+
+    #[test]
+    fn surrounding_whitespace_is_not_part_of_a_key() {
+        let found = aws_env()
+            .read_with(env(&[("AWS_ACCESS_KEY_ID", " AKIAEXAMPLE\n")]))
+            .unwrap();
+        assert_eq!(found.access_key, "AKIAEXAMPLE");
     }
 }

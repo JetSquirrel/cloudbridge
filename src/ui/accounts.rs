@@ -10,7 +10,7 @@ use gpui_component::{
 };
 use uuid::Uuid;
 
-use crate::cloud::registry::{self, SourceDescriptor};
+use crate::cloud::registry::{self, FoundCredentials, SourceDescriptor};
 use crate::cloud::CloudAccount;
 use crate::db;
 
@@ -31,6 +31,11 @@ pub struct AccountsView {
     region_input: Entity<InputState>,
     /// Billing source selected in the add dialog
     selected_source: &'static SourceDescriptor,
+    /// Credentials for that source found in the environment, if any.
+    ///
+    /// Read when the source changes rather than on every render, and kept
+    /// so the button can say which variable it is offering.
+    env_credentials: Option<FoundCredentials>,
 }
 
 impl AccountsView {
@@ -44,16 +49,19 @@ impl AccountsView {
                 .default_value("us-east-1")
         });
 
+        let default_source = registry::default_source();
+
         let mut view = Self {
             accounts: Vec::new(),
             show_add_dialog: false,
+            env_credentials: default_source.credentials_from_env(),
             error: None,
             success: None,
             name_input,
             ak_input,
             sk_input,
             region_input,
-            selected_source: registry::default_source(),
+            selected_source: default_source,
         };
 
         view.load_accounts();
@@ -75,6 +83,9 @@ impl AccountsView {
     fn show_add_dialog(&mut self, cx: &mut Context<Self>) {
         self.show_add_dialog = true;
         self.selected_source = registry::default_source();
+        // Re-read: the environment can have changed since the last time
+        // the dialog was open.
+        self.env_credentials = self.selected_source.credentials_from_env();
         self.error = None;
         self.success = None;
         cx.notify();
@@ -87,6 +98,7 @@ impl AccountsView {
         cx: &mut Context<Self>,
     ) {
         self.selected_source = source;
+        self.env_credentials = source.credentials_from_env();
 
         // Every label comes from the descriptor, so a new source needs no
         // change here.
@@ -100,6 +112,37 @@ impl AccountsView {
             state.set_placeholder(source.region_placeholder(), window, cx);
             state.set_value(source.default_region.unwrap_or_default(), window, cx);
         });
+
+        cx.notify();
+    }
+
+    /// Copy what the environment has into the form.
+    ///
+    /// Only what it actually holds: a missing secret or region leaves the
+    /// field as it was, rather than blanking a value the user just typed.
+    fn fill_from_env(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(found) = self.env_credentials.as_ref() else {
+            return;
+        };
+        let (access_key, secret_key, region) = (
+            found.access_key.clone(),
+            found.secret_key.clone(),
+            found.region.clone(),
+        );
+
+        self.ak_input.update(cx, |state, cx| {
+            state.set_value(access_key, window, cx);
+        });
+        if let Some(secret_key) = secret_key {
+            self.sk_input.update(cx, |state, cx| {
+                state.set_value(secret_key, window, cx);
+            });
+        }
+        if let Some(region) = region {
+            self.region_input.update(cx, |state, cx| {
+                state.set_value(region, window, cx);
+            });
+        }
 
         cx.notify();
     }
@@ -479,6 +522,31 @@ impl AccountsView {
                                     .gap_1()
                                     .child(div().text_sm().child("Region"))
                                     .child(Input::new(&self.region_input)),
+                            )
+                            // Only offered when the environment actually
+                            // has something: an app launched from Finder
+                            // does not inherit a shell's variables, and a
+                            // button that does nothing is worse than none.
+                            .when_some(
+                                self.env_credentials
+                                    .as_ref()
+                                    .map(|found| found.access_key_var),
+                                |el, variable| {
+                                    el.child(
+                                        div().h_flex().justify_end().child(
+                                            Button::new("fill-from-env")
+                                                .label(format!("Fill from {}", variable))
+                                                .ghost()
+                                                .tooltip(
+                                                    "Copy the credentials this shell exported \
+                                                     into the form",
+                                                )
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.fill_from_env(window, cx);
+                                                })),
+                                        ),
+                                    )
+                                },
                             ),
                     )
                     // Error message
