@@ -37,3 +37,4 @@ Desktop.ini
 *.duckdb
 *.duckdb.wal
 config.json
+scripts/.venv/

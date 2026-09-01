@@ -1,13 +1,43 @@
-<!DOCTYPE html>
+#!/usr/bin/env python3
+"""Render blog posts from Markdown to HTML.
+
+Usage:
+    scripts/.venv/bin/python scripts/render-blog.py
+
+Each post is a Markdown file in docs/blog/ with front matter:
+
+    ---
+    title: "Post title"
+    description: "One-sentence lede, shown under the title."
+    date: 2026-09-01
+    tag: Release
+    ---
+
+    Body in Markdown...
+
+The rendered HTML is written next to the .md file and committed, so
+GitHub Pages keeps serving static files. The .md source is not linked
+anywhere; the .html output is what the blog index points at.
+"""
+
+import re
+import sys
+from pathlib import Path
+
+import markdown
+
+BLOG_DIR = Path(__file__).resolve().parent.parent / "docs" / "blog"
+
+TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Why CloudBridge normalizes every provider into FOCUS column names — adopting the FinOps Foundation's open billing specification at the scale of a personal ledger.">
+    <meta name="description" content="{description}">
     <meta name="theme-color" content="#0E1420">
-    <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/blog/why-focus.html">
+    <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/blog/{slug}.html">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌉</text></svg>">
-    <title>Why the ledger speaks FOCUS - CloudBridge Blog</title>
+    <title>{title} - CloudBridge Blog</title>
 
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -15,25 +45,25 @@
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 
     <style>
-        * {
+        * {{
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-        }
+        }}
 
-        html {
+        html {{
             scroll-behavior: smooth;
-        }
+        }}
 
-        body {
+        body {{
             font-family: 'IBM Plex Sans', sans-serif;
             color: #47536B;
             background: #FAFBFC;
             line-height: 1.6;
             overflow-x: hidden;
-        }
+        }}
 
-        :root {
+        :root {{
             --ink: #0E1420;
             --panel: #151E30;
             --paper: #FAFBFC;
@@ -48,22 +78,22 @@
             --nav-height: 4.5rem;
             --font-display: 'Space Grotesk', sans-serif;
             --font-mono: 'IBM Plex Mono', monospace;
-        }
+        }}
 
-        h1, h2 {
+        h1, h2 {{
             font-family: var(--font-display);
             color: var(--fg-strong);
             letter-spacing: -0.02em;
             line-height: 1.15;
-        }
+        }}
 
-        .container {
+        .container {{
             max-width: 1200px;
             margin: 0 auto;
             padding: 0 2rem;
-        }
+        }}
 
-        .skip-link {
+        .skip-link {{
             position: absolute;
             left: -9999px;
             top: 0;
@@ -74,14 +104,14 @@
             text-decoration: none;
             font-family: var(--font-mono);
             font-size: 0.875rem;
-        }
+        }}
 
-        .skip-link:focus {
+        .skip-link:focus {{
             left: 0;
-        }
+        }}
 
         /* Navigation (shared) */
-        nav {
+        nav {{
             background: var(--paper);
             border-bottom: 1px solid var(--hairline);
             height: var(--nav-height);
@@ -91,17 +121,17 @@
             position: sticky;
             top: 0;
             z-index: 100;
-        }
+        }}
 
-        nav .container {
+        nav .container {{
             display: flex;
             justify-content: space-between;
             align-items: center;
             gap: 2rem;
             width: 100%;
-        }
+        }}
 
-        .logo {
+        .logo {{
             display: inline-flex;
             align-items: center;
             gap: 0.6rem;
@@ -112,17 +142,17 @@
             text-decoration: none;
             letter-spacing: -0.02em;
             white-space: nowrap;
-        }
+        }}
 
-        .logo::before {
+        .logo::before {{
             content: '';
             width: 0.6rem;
             height: 0.6rem;
             background: var(--local);
             flex-shrink: 0;
-        }
+        }}
 
-        .nav-links {
+        .nav-links {{
             display: flex;
             gap: 2rem;
             list-style: none;
@@ -131,33 +161,33 @@
             min-width: 0;
             scrollbar-width: none;
             -webkit-overflow-scrolling: touch;
-        }
+        }}
 
-        .nav-links::-webkit-scrollbar {
+        .nav-links::-webkit-scrollbar {{
             display: none;
-        }
+        }}
 
-        .nav-links a {
+        .nav-links a {{
             font-family: var(--font-mono);
             color: var(--fg-body);
             text-decoration: none;
             font-size: 0.875rem;
             transition: color 0.15s;
-        }
+        }}
 
         .nav-links a:hover,
-        .nav-links a[aria-current="page"] {
+        .nav-links a[aria-current="page"] {{
             color: var(--signal);
-        }
+        }}
 
         /* Article */
-        .post {
+        .post {{
             max-width: 44rem;
             margin: 0 auto;
             padding: 4rem 0 6rem;
-        }
+        }}
 
-        .post .eyebrow {
+        .post .eyebrow {{
             font-family: var(--font-mono);
             font-size: 0.75rem;
             font-weight: 500;
@@ -166,81 +196,98 @@
             color: var(--local);
             display: block;
             margin-bottom: 1.25rem;
-        }
+        }}
 
-        .post h1 {
+        .post h1 {{
             font-size: 2.5rem;
             font-weight: 700;
             margin-bottom: 1.5rem;
-        }
+        }}
 
-        .post .lede {
+        .post .lede {{
             font-size: 1.25rem;
             color: var(--fg-strong);
             margin-bottom: 2.5rem;
             padding-bottom: 2.5rem;
             border-bottom: 1px solid var(--hairline);
-        }
+        }}
 
-        .post h2 {
+        .post h2 {{
             font-size: 1.5rem;
             font-weight: 700;
             margin: 3rem 0 1rem;
-        }
+        }}
 
-        .post p {
+        .post p {{
             margin-bottom: 1.25rem;
             line-height: 1.8;
-        }
+        }}
 
-        .post a {
+        .post a {{
             color: var(--signal);
-        }
+        }}
 
-        .post code {
+        .post code {{
             font-family: var(--font-mono);
             font-size: 0.8125rem;
             background: #fff;
             border: 1px solid var(--hairline);
             padding: 0.05rem 0.4rem;
             border-radius: 4px;
-        }
+        }}
 
-        .post ul {
+        .post pre {{
+            background: var(--ink);
+            border-radius: var(--radius);
+            padding: 1.25rem 1.5rem;
+            overflow-x: auto;
+            margin-bottom: 1.25rem;
+        }}
+
+        .post pre code {{
+            background: none;
+            border: none;
+            padding: 0;
+            color: #C4CEDE;
+            font-size: 0.8125rem;
+            line-height: 1.7;
+        }}
+
+        .post ul, .post ol {{
             margin: 0 0 1.25rem 1.25rem;
-        }
+        }}
 
-        .post li {
+        .post li {{
             margin-bottom: 0.4rem;
             line-height: 1.7;
-        }
+        }}
 
-        .post-nav {
+        .post-nav {{
             margin-top: 4rem;
             padding-top: 2rem;
             border-top: 1px solid var(--hairline);
             font-family: var(--font-mono);
             font-size: 0.875rem;
-        }
+        }}
 
-        .post-nav a {
+        .post-nav a {{
             color: var(--signal);
             text-decoration: none;
-        }
+        }}
 
-        .post-nav a:hover {
+        .post-nav a:hover {{
             text-decoration: underline;
-        }
+        }}
 
         /* Footer (shared, compact) */
-        footer {
+        footer {{
             background: var(--ink);
             color: #8FA0BC;
             padding: 2rem 0;
             border-top: 1px solid var(--hairline-dark);
-        }
+        }}
 
-        footer .container {
+        footer .container {{
             display: flex;
             justify-content: space-between;
             gap: 1rem;
@@ -248,41 +295,41 @@
             font-family: var(--font-mono);
             font-size: 0.75rem;
             color: var(--fg-faint);
-        }
+        }}
 
-        footer a {
+        footer a {{
             color: #8FA0BC;
             text-decoration: none;
-        }
+        }}
 
-        footer a:hover {
+        footer a:hover {{
             color: #fff;
-        }
+        }}
 
-        @media (max-width: 768px) {
-            .post {
+        @media (max-width: 768px) {{
+            .post {{
                 padding: 2.5rem 0 4rem;
-            }
+            }}
 
-            .post h1 {
+            .post h1 {{
                 font-size: 1.875rem;
-            }
+            }}
 
-            .nav-links {
+            .nav-links {{
                 gap: 1.25rem;
-            }
-        }
+            }}
+        }}
 
-        a:focus-visible {
+        a:focus-visible {{
             outline: 2px solid var(--signal);
             outline-offset: 2px;
-        }
+        }}
 
-        @media (prefers-reduced-motion: reduce) {
-            html {
+        @media (prefers-reduced-motion: reduce) {{
+            html {{
                 scroll-behavior: auto;
-            }
-        }
+            }}
+        }}
     </style>
 </head>
 <body>
@@ -299,36 +346,14 @@
         </div>
     </nav>
 
+    <!-- GENERATED FROM {slug}.md - edit the Markdown, then re-run scripts/render-blog.py -->
     <main id="main">
         <article class="post">
-            <span class="eyebrow">Decisions · 2026-09-01</span>
-            <h1>Why the ledger speaks FOCUS</h1>
-            <p class="lede">CloudBridge normalizes every provider into column names borrowed from FOCUS, the FinOps Foundation's open billing specification. Here's why a personal app adopted a spec written for enterprises.</p>
+            <span class="eyebrow">{tag} · {date}</span>
+            <h1>{title}</h1>
+            <p class="lede">{description}</p>
 
-            <h2>Every bill speaks a dialect</h2>
-            <p>AWS reports a <code>RECORD_TYPE</code> per line item. Alibaba Cloud splits a charge into vouchers, coupons, and discounts. DeepSeek doesn't bill per use at all — it reports a balance. Any tool that reads more than one provider ends up writing a translator per dialect, and every total computed across them is an act of faith. The FinOps Foundation calls this the universal challenge of normalizing billing data, and wrote <a href="https://focus.finops.org/" target="_blank" rel="noopener noreferrer">FOCUS</a> as the answer: one open specification for cost and usage data, one shared column vocabulary across vendors.</p>
-
-            <h2>Adopt the shape, not the ceremony</h2>
-            <p>The Foundation's <a href="https://www.finops.org/wg/adopting-focus-the-finops-open-cost-and-usage-specification/" target="_blank" rel="noopener noreferrer">adoption guide</a> walks organizations through five stages — Decide, Design, Build, Test, Launch — with cross-functional teams and pilot programs. A desktop app needs two of them: decide the scope, then build it. The guide itself says to scope adoption to your needs, so the ledger implements exactly the three FOCUS concepts that carry their weight for a personal ledger: <code>billed_cost</code>, <code>effective_cost</code>, and <code>charge_category</code>. No more, until a real bill export demands it.</p>
-
-            <h2>What the shape buys</h2>
-            <p>The guide's benefit table reads like CloudBridge's own changelog:</p>
-            <ul>
-                <li><strong>Reduced complexity of billing files.</strong> One set of columns across AWS, Alibaba Cloud, and DeepSeek — a credit is a <code>Credit</code> everywhere, and no total ever adds dollars to yuan by accident.</li>
-                <li><strong>Easier integration of new vendors.</strong> A new source is a table row plus a mapping into the same columns, not a new enum variant with five <code>match</code> arms. Azure and GCP slot into a shape that already exists.</li>
-                <li><strong>Future-proofing.</strong> The column names are the ones a real AWS CUR or Alibaba Cloud bill export already uses, so the export channel on the roadmap lands with no schema change.</li>
-                <li><strong>A common language.</strong> Anyone who knows FOCUS — a growing share of FinOps practitioners — can open <code>billing.duckdb</code> and read it without a manual.</li>
-            </ul>
-
-            <h2>The same architecture, shrunk to one machine</h2>
-            <p>The guide's reference architecture is a data lake: raw exports land partitioned by vendor and period, transformation reads from the lake, reporting reads the transformed output. CloudBridge runs that exact pattern locally — provider responses persist unchanged as Parquet under <code>raw/</code>, partitioned by source, account, and billing period, and normalization is a pure function from a stored batch to ledger rows. The payoff the guide promises is the same one we get: a mapping fix replays what is on disk instead of paying for another fetch.</p>
-
-            <h2>Further reading</h2>
-            <ul>
-                <li><a href="https://www.finops.org/wg/adopting-focus-the-finops-open-cost-and-usage-specification/" target="_blank" rel="noopener noreferrer">Adopting FOCUS</a> — the FinOps Foundation's adoption working group paper</li>
-                <li><a href="https://focus.finops.org/" target="_blank" rel="noopener noreferrer">focus.finops.org</a> — the specification itself</li>
-                <li><a href="/blog/cloudbridge-0-2-0.html">0.2.0: a cost viewer becomes a ledger</a> — what the FOCUS-shaped schema ships with</li>
-            </ul>
+            {content}
 
             <div class="post-nav">
                 <a href="/blog.html" data-i18n="post.back">← All posts</a>
@@ -345,30 +370,78 @@
 
     <!-- Same i18n scaffolding as index.html; see that file for how to add a locale. -->
     <script>
-        (function () {
-            var LOCALES = {
-                en: {} // default: strings live in the markup
-            };
+        (function () {{
+            var LOCALES = {{
+                en: {{}} // default: strings live in the markup
+            }};
 
-            function applyLocale(locale) {
+            function applyLocale(locale) {{
                 var dict = LOCALES[locale];
                 if (!dict) return;
-                document.querySelectorAll('[data-i18n]').forEach(function (el) {
+                document.querySelectorAll('[data-i18n]').forEach(function (el) {{
                     var key = el.getAttribute('data-i18n');
                     if (typeof dict[key] === 'string') el.textContent = dict[key];
-                });
-                document.querySelectorAll('[data-i18n-html]').forEach(function (el) {
+                }});
+                document.querySelectorAll('[data-i18n-html]').forEach(function (el) {{
                     var key = el.getAttribute('data-i18n-html');
                     if (typeof dict[key] === 'string') el.innerHTML = dict[key];
-                });
+                }});
                 document.documentElement.lang = locale;
-            }
+            }}
 
             var saved = null;
-            try { saved = localStorage.getItem('cloudbridge-locale'); } catch (e) {}
+            try {{ saved = localStorage.getItem('cloudbridge-locale'); }} catch (e) {{}}
             var browser = (navigator.language || 'en').slice(0, 2);
             applyLocale(saved && LOCALES[saved] ? saved : (LOCALES[browser] ? browser : 'en'));
-        })();
+        }})();
     </script>
 </body>
 </html>
+"""
+
+
+def parse_front_matter(text: str) -> tuple[dict, str]:
+    """Split 'key: value' front matter from the Markdown body."""
+    match = re.match(r"^---\n(.*?)\n---\n+(.*)$", text, re.S)
+    if not match:
+        raise ValueError("missing front matter (--- ... ---)")
+    meta = {}
+    for line in match.group(1).splitlines():
+        key, _, value = line.partition(":")
+        meta[key.strip()] = value.strip().strip('"')
+    return meta, match.group(2)
+
+
+def render(md_path: Path) -> Path:
+    meta, body = parse_front_matter(md_path.read_text(encoding="utf-8"))
+    slug = md_path.stem
+    for key in ("title", "description", "date", "tag"):
+        if key not in meta:
+            raise ValueError(f"{md_path.name}: front matter missing '{key}'")
+    content = markdown.markdown(body, extensions=["extra"])
+    html = TEMPLATE.format(
+        slug=slug,
+        title=meta["title"],
+        description=meta["description"],
+        date=meta["date"],
+        tag=meta["tag"],
+        content=content,
+    )
+    out_path = md_path.with_suffix(".html")
+    out_path.write_text(html, encoding="utf-8")
+    return out_path
+
+
+def main() -> int:
+    posts = sorted(BLOG_DIR.glob("*.md"))
+    if not posts:
+        print("no posts found in", BLOG_DIR)
+        return 1
+    for md_path in posts:
+        out = render(md_path)
+        print(f"{md_path.name} -> {out.name}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
