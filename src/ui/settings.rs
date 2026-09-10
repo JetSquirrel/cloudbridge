@@ -2,9 +2,35 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::{button::*, switch::*, *};
+use gpui_component::{button::*, select::*, *};
 
-use crate::config::{load_config, save_config, AppConfig, SUPPORTED_REPORTING_CURRENCIES};
+use crate::config::{
+    load_config, save_config, AppConfig, REFRESH_INTERVAL_CHOICES_HOURS,
+    SUPPORTED_REPORTING_CURRENCIES,
+};
+
+/// One entry in the theme picker.
+#[derive(Clone)]
+struct ThemeItem {
+    name: SharedString,
+    dark: bool,
+}
+
+impl SelectItem for ThemeItem {
+    type Value = SharedString;
+
+    fn title(&self) -> SharedString {
+        if self.dark {
+            format!("{} (dark)", self.name).into()
+        } else {
+            self.name.clone()
+        }
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self.name
+    }
+}
 
 /// Settings View
 pub struct SettingsView {
@@ -12,30 +38,73 @@ pub struct SettingsView {
     config: AppConfig,
     /// Save status
     save_status: Option<String>,
+    /// Theme picker state
+    theme_select: Entity<SelectState<SearchableVec<ThemeItem>>>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl SettingsView {
-    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let config = load_config().unwrap_or_default();
+
+        // Every theme the registry holds, sorted default-first / light-first.
+        let items: Vec<ThemeItem> = ThemeRegistry::global(cx)
+            .sorted_themes()
+            .iter()
+            .map(|theme| ThemeItem {
+                name: theme.name.clone(),
+                dark: theme.mode.is_dark(),
+            })
+            .collect();
+
+        // What the picker shows as chosen: the persisted name, or the
+        // CloudBridge theme the dark-mode flag implies for old configs.
+        let current = config.theme.name.clone().unwrap_or_else(|| {
+            if config.theme.dark_mode {
+                super::theme::DARK_THEME_NAME.to_string()
+            } else {
+                super::theme::LIGHT_THEME_NAME.to_string()
+            }
+        });
+        let selected = items.iter().position(|item| item.name.as_str() == current);
+
+        let theme_select = cx.new(|cx| {
+            SelectState::new(
+                SearchableVec::new(items),
+                selected.map(|ix| IndexPath::default().row(ix)),
+                window,
+                cx,
+            )
+            .searchable(true)
+        });
+
+        let subscription = cx.subscribe(&theme_select, |this, _, event, cx| {
+            if let SelectEvent::Confirm(Some(name)) = event {
+                this.set_theme(name, cx);
+            }
+        });
 
         Self {
             config,
             save_status: None,
+            theme_select,
+            _subscriptions: vec![subscription],
         }
     }
 
-    fn set_dark_mode(&mut self, dark: bool, window: &mut Window, cx: &mut Context<Self>) {
-        self.config.theme.dark_mode = dark;
-        Theme::change(
-            if dark {
-                ThemeMode::Dark
-            } else {
-                ThemeMode::Light
-            },
-            Some(window),
-            cx,
-        );
-        self.save_config(cx);
+    /// Apply a theme picked in the selector and remember it.
+    ///
+    /// `dark_mode` is persisted alongside as a derived hint for old readers
+    /// that only know the flag. An unknown name (theme file vanished between
+    /// listing and picking) is not persisted.
+    fn set_theme(&mut self, name: &SharedString, cx: &mut Context<Self>) {
+        super::theme::apply_theme_by_name(name, cx);
+
+        if let Some(theme) = ThemeRegistry::global(cx).themes().get(name.as_str()) {
+            self.config.theme.dark_mode = theme.mode.is_dark();
+            self.config.theme.name = Some(name.to_string());
+            self.save_config(cx);
+        }
     }
 
     /// Change the currency every amount is shown in.
@@ -52,6 +121,17 @@ impl SettingsView {
             return;
         }
 
+        self.save_config(cx);
+    }
+
+    /// Change how long a billing period stays fresh before a refresh will
+    /// fetch it again.
+    ///
+    /// Takes effect on the next refresh; nothing is re-fetched here. A
+    /// longer interval is the cheaper one — Cost Explorer bills per
+    /// request — which is why the default is a day.
+    fn set_refresh_interval(&mut self, hours: u32, cx: &mut Context<Self>) {
+        self.config.refresh_interval_hours = hours;
         self.save_config(cx);
     }
 
@@ -95,8 +175,8 @@ impl SettingsView {
 
 impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let dark_mode = self.config.theme.dark_mode;
         let reporting_currency = self.config.reporting_currency.clone();
+        let refresh_interval_hours = self.config.refresh_interval_hours;
 
         div()
             .size_full()
@@ -120,20 +200,14 @@ impl Render for SettingsView {
                         .justify_between()
                         .items_center()
                         .child(
-                            div().v_flex().child(div().child("Dark Mode")).child(
+                            div().v_flex().child(div().child("Theme")).child(
                                 div()
                                     .text_sm()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child("Use dark theme"),
+                                    .child("Applies immediately and is remembered across launches"),
                             ),
                         )
-                        .child(
-                            Switch::new("dark-mode")
-                                .checked(dark_mode)
-                                .on_click(cx.listener(|this, checked: &bool, window, cx| {
-                                    this.set_dark_mode(*checked, window, cx);
-                                })),
-                        ),
+                        .child(Select::new(&self.theme_select).w(px(280.0))),
                     cx,
                 ),
             )
@@ -165,6 +239,43 @@ impl Render for SettingsView {
                                     })
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.set_reporting_currency(currency, cx);
+                                    }))
+                            }),
+                        )),
+                    cx,
+                ),
+            )
+            // Refreshing
+            .child(
+                self.render_section(
+                    "Refreshing",
+                    div()
+                        .h_flex()
+                        .justify_between()
+                        .items_center()
+                        .child(
+                            div().v_flex().child(div().child("Refresh interval")).child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(
+                                        "A billing period is fetched again only once \
+                                             this has passed. Longer is cheaper: AWS Cost \
+                                             Explorer bills per request. Force Refresh \
+                                             ignores it; an imported bill file is never \
+                                             re-fetched.",
+                                    ),
+                            ),
+                        )
+                        .child(div().h_flex().gap_2().children(
+                            REFRESH_INTERVAL_CHOICES_HOURS.iter().map(|hours| {
+                                Button::new(SharedString::from(format!("refresh-{hours}h")))
+                                    .label(format!("{hours}h"))
+                                    .when(*hours == refresh_interval_hours, |button| {
+                                        button.primary()
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.set_refresh_interval(*hours, cx);
                                     }))
                             }),
                         )),

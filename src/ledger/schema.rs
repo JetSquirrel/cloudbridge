@@ -15,7 +15,13 @@ use chrono::Utc;
 use duckdb::{params, Connection};
 
 /// Bumped whenever the statements below change shape.
-pub const SCHEMA_VERSION: i32 = 1;
+///
+/// v2 adds `ingest_batch.channel`: whether a period was fetched from a
+/// billing API or imported from the provider's own bill export. The two
+/// are not interchangeable — an export is the same month at instance
+/// level — so a refresh has to be able to tell that a month was imported
+/// and leave it alone.
+pub const SCHEMA_VERSION: i32 = 2;
 
 /// The view the application reads: every charge with its amount also
 /// expressed in the reporting currency.
@@ -63,7 +69,13 @@ pub fn apply(conn: &Connection) -> Result<()> {
             row_count      BIGINT NOT NULL DEFAULT 0,
             -- Path of the raw payload this batch was normalized from.
             -- Filled in by PR3, once fetch persists Parquet.
-            source_ref     VARCHAR
+            source_ref     VARCHAR,
+            -- api | file. Last, because v2 adds it with ALTER TABLE to a
+            -- ledger that already exists, and a fresh file should have the
+            -- same column order as an upgraded one. Read through
+            -- coalesce(): the added column is nullable, since DuckDB will
+            -- not add a NOT NULL one to a table that already has rows.
+            channel        VARCHAR NOT NULL DEFAULT 'api'
         );
 
         -- The fact table. One row per charge, in the currency the provider
@@ -135,6 +147,7 @@ pub fn apply(conn: &Connection) -> Result<()> {
         "#,
     )?;
 
+    migrate(conn)?;
     seed_builtin_rates(conn)?;
 
     conn.execute(
@@ -146,6 +159,34 @@ pub fn apply(conn: &Connection) -> Result<()> {
     )?;
 
     Ok(())
+}
+
+/// Bring a ledger that already exists up to the current shape.
+///
+/// Every change to this schema has been additive so far, and this one is a
+/// column with a default, so there is no rebuild machinery here as there is
+/// in [`crate::db`] — an `ALTER TABLE` is the whole migration. Driven by
+/// which columns are present, so it is a no-op on a fresh file and safe to
+/// re-enter.
+fn migrate(conn: &Connection) -> Result<()> {
+    if !has_column(conn, "ingest_batch", "channel")? {
+        tracing::info!("Adding channel to ingest_batch");
+        // Existing rows are all API fetches: the file channel did not
+        // exist when they were written.
+        conn.execute_batch("ALTER TABLE ingest_batch ADD COLUMN channel VARCHAR DEFAULT 'api'")?;
+    }
+
+    Ok(())
+}
+
+fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let count: i64 = conn.query_row(
+        "SELECT count(*) FROM duckdb_columns() WHERE table_name = ? AND column_name = ?",
+        params![table, column],
+        |row| row.get(0),
+    )?;
+
+    Ok(count > 0)
 }
 
 /// Insert the rates that ship with the build, leaving any other row alone.
@@ -200,4 +241,76 @@ pub fn apply_reporting_currency(conn: &Connection, currency: &str) -> Result<()>
     ))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The v1 shape, as a ledger written before the channel column existed.
+    const V1_INGEST_BATCH: &str = "CREATE TABLE ingest_batch (
+             batch_id       VARCHAR PRIMARY KEY,
+             provider       VARCHAR NOT NULL,
+             account_id     VARCHAR NOT NULL,
+             billing_period VARCHAR NOT NULL,
+             started_at     TIMESTAMP NOT NULL,
+             completed_at   TIMESTAMP,
+             status         VARCHAR NOT NULL,
+             row_count      BIGINT NOT NULL DEFAULT 0,
+             source_ref     VARCHAR
+         );
+         INSERT INTO ingest_batch VALUES
+             ('b-1', 'Aliyun', 'acct-2', '2026-08',
+              CAST('2026-08-01 00:00:00' AS TIMESTAMP),
+              CAST('2026-08-01 00:00:00' AS TIMESTAMP), 'complete', 3, NULL);";
+
+    #[test]
+    fn a_fresh_ledger_starts_at_the_current_version() {
+        let conn = Connection::open_in_memory().unwrap();
+        apply(&conn).unwrap();
+
+        let version: i32 = conn
+            .query_row("SELECT max(version) FROM schema_version", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        assert!(has_column(&conn, "ingest_batch", "channel").unwrap());
+    }
+
+    /// A ledger written before v2 keeps its rows, and they read as the API
+    /// fetches they were.
+    #[test]
+    fn an_existing_ledger_gains_the_channel_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(V1_INGEST_BATCH).unwrap();
+
+        apply(&conn).unwrap();
+
+        assert!(has_column(&conn, "ingest_batch", "channel").unwrap());
+        let channel: Option<String> = conn
+            .query_row("SELECT channel FROM ingest_batch", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            crate::ledger::Channel::from_stored(channel.as_deref()),
+            crate::ledger::Channel::Api
+        );
+    }
+
+    /// `apply` runs on every start.
+    #[test]
+    fn applying_twice_changes_nothing() {
+        let conn = Connection::open_in_memory().unwrap();
+        apply(&conn).unwrap();
+        apply(&conn).unwrap();
+
+        let columns: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM duckdb_columns() WHERE table_name = 'ingest_batch'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(columns, 10);
+    }
 }

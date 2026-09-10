@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Bill file import** — a second channel into the ledger, beside the
+  billing APIs. A bill export downloaded from a provider's console is
+  parsed into the same `fct_charge` rows a fetch produces, so an imported
+  month is indistinguishable downstream from a fetched one.
+  - **Alibaba Cloud bill detail (账单明细)** — the finer of its two
+    channels. `QueryBillOverview` reports one row per product per month,
+    so Model Studio (百炼) arrives as a single figure; the export carries
+    the billing item, the instance and the usage quantity, so the same
+    month becomes one row per model and `pricing_unit` finally holds
+    `Tokens`
+  - **Volcengine bill detail (账单明细)** — new source, added for Ark
+    (火山方舟), which the bill reports per endpoint and token type
+  - **OpenAI cost or usage export** — new source; spend is attributed to
+    the project, recorded as `billing_account_id`
+  - **Anthropic (Claude) cost or usage export** — new source; spend is
+    attributed to the workspace, and cache reads and cache writes stay
+    separate priced units rather than being folded into an input total
+  - A **usage** export carries token counts and no money. Those rows are
+    recorded with `billed_cost` NULL and `cost_basis = absent`: pricing
+    them at list would put a number in `billed_cost` that nobody was
+    charged. A **cost** export keeps a quantity only where exactly one
+    token column is filled in, since input and output tokens are priced
+    differently and their sum is not what the amount was charged for
+  - One file may span several months; each is imported as its own
+    whole-period replacement. An import therefore **replaces** the months
+    it covers rather than adding to them — the export is the provider's own
+    bill, so adding it to an API reading of the same month would double the
+    total
+  - Imported files are copied into the raw store under the same
+    Hive-partitioned layout as fetched payloads, so a mapping fix replays
+    from the copy CloudBridge kept
+  - Column names are matched through alias lists covering the Chinese
+    console, the English console and each provider's API field names. A
+    column that matches nothing is an error naming the columns the file
+    does have — none of these exports is a documented file format
+  - Non-UTF-8 files are refused with the instruction that fixes them,
+    rather than decoded on a guess that would mangle every name in the bill
+- A source can now exist without a billing API. Volcengine, OpenAI and
+  Anthropic ask for no credentials, and the dashboard does not try to
+  refresh them over the network
+- `ingest_batch.channel` records whether a period was fetched or imported
+  (ledger schema v2, an additive column; an existing ledger is migrated in
+  place and its rows read as fetches). An imported month is never replaced
+  by an automatic fetch, **including under Force Refresh** — the export is
+  the finer reading, and force means "do not trust the freshness window",
+  not "discard what I imported". Re-import to update it
+
+### Changed
+- **The refresh interval is 24 hours, and configurable.** It was a fixed 6
+  hours. A provider's bill does not move faster than a day in any way worth
+  paying for — Cost Explorer bills per request — so the default is now a
+  day, changeable in **Settings → Refreshing** (6, 12, 24 or 48 hours).
+  `AppConfig::refresh_interval_minutes` was persisted and never acted on;
+  it is replaced by `refresh_interval_hours`, and the rename is deliberate
+  rather than a change of unit — reading the stored 60 as a *minute* window
+  would have quietly moved every existing install to refreshing hourly. An
+  old config starts at the new default and keeps every setting the user did
+  choose
+- Alibaba Cloud's API normalizer and both bill-detail parsers now share one
+  decomposition of a "gross, deductions, net" bill line, so a credit is
+  labelled identically whichever channel it arrived through and the two
+  reconcile against each other
+
 ## [0.2.0] - 2026-09-01
 
 The release that turns a multi-cloud cost viewer into a ledger. Charges

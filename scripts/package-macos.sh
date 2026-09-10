@@ -27,6 +27,12 @@ if [ -f assets/icon.icns ]; then
   cp assets/icon.icns "$APP/Contents/Resources/CloudBridge.icns"
 fi
 
+# Theme JSON files: main.rs looks for ../Resources/themes relative to the
+# executable when ./themes does not exist in the working directory.
+if [ -d themes ]; then
+  cp -R themes "$APP/Contents/Resources/themes"
+fi
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

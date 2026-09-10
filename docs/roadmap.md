@@ -62,7 +62,10 @@ All three structural problems are closed:
 
 What P0 did *not* do, and P1 owns: instance-level detail. Alibaba Cloud's
 bill overview is one row per product per month, so its trend chart is as
-coarse as its source data.
+coarse as its source data. P1's bill file import closes this for the
+sources that publish an export — importing 账单明细 gives Alibaba Cloud a
+row per instance per billing item, and Model Studio (百炼) a row per
+model.
 
 ## P0 — FOCUS normalization
 
@@ -235,9 +238,30 @@ normalizes, and nothing else.
 
 ## P1
 
-- **Bill file export channel (S3 / OSS + Parquet).** Replaces per-request
-  API polling with the providers' own bill exports: instance-level detail,
-  no per-call cost, full history. Only a new `fetch` implementation.
+- **Bill file import — landed.** The providers' own bill exports, read from
+  a file the user downloaded: instance-level detail, no per-call cost, and
+  for a model service the only channel that reports a model at all.
+  Alibaba Cloud (账单明细, which is what makes Model Studio 百炼 legible
+  per model), Volcengine (for Ark 火山方舟), OpenAI and Anthropic.
+
+  As landed this is a parser plus a registry field, not a new `fetch`: an
+  import writes through the same whole-period replacement, so an imported
+  month supersedes a fetched one instead of being added to it. Two
+  decisions worth recording:
+
+  - A source need not have a billing API. `SourceDescriptor::build` is
+    optional, and Volcengine, OpenAI and Anthropic ask for no credentials
+    at all — the file channel signs nothing, so requiring a key would put
+    a secret in the keyring for nothing to use.
+  - A usage export, which carries token counts and no money, lands with
+    `billed_cost` NULL and `cost_basis = absent`. This is the first thing
+    to use that column for what it was added for. Multiplying tokens by a
+    list price would put a figure in `billed_cost` that nobody was charged.
+
+- **Bill file export channel (S3 / OSS + Parquet).** The same exports
+  collected automatically rather than downloaded by hand: full history, no
+  per-call cost. Only a new `fetch` implementation — the parsers above are
+  already in place.
 - **Tag allocation with an explicit "unallocated" node.** The unallocated
   share is the number that matters — it tells you how much of the bill you
   cannot yet explain.

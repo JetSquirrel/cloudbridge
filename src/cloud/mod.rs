@@ -2,6 +2,8 @@
 
 pub mod aliyun;
 pub mod aws;
+pub mod billfile;
+pub mod deduction;
 pub mod deepseek;
 pub mod raw;
 pub mod registry;
@@ -13,10 +15,6 @@ use serde::{Deserialize, Serialize};
 use crate::ledger::{BalanceSnapshot, Charge};
 pub use raw::{RawBatch, RawPart};
 pub use registry::{SourceDescriptor, SourceId};
-
-/// Shown in place of a source's name when its id is not in the registry.
-/// Accounts like that are filtered out on load, so this is a backstop.
-const UNKNOWN_SOURCE: &str = "Unknown";
 
 /// The credentials a [`BillingSource`] is built from.
 ///
@@ -39,10 +37,6 @@ pub struct CloudAccount {
     pub name: String,
     /// Billing source this account belongs to; see [`registry`].
     pub source_id: SourceId,
-    /// Access Key ID (encrypted storage)
-    pub access_key_id: String,
-    /// Secret Access Key (encrypted storage)
-    pub secret_access_key: String,
     /// Region (optional)
     pub region: Option<String>,
     /// Created time
@@ -51,6 +45,22 @@ pub struct CloudAccount {
     pub last_synced_at: Option<DateTime<Utc>>,
     /// Is enabled
     pub enabled: bool,
+    /// The first characters of the access key, kept in the database so a
+    /// list of accounts can be shown without reading the keyring — see
+    /// [`access_key_hint`]. `None` for an account stored before the hint
+    /// was recorded.
+    pub access_key_hint: Option<String>,
+}
+
+/// How much of an access key is kept as a hint.
+const HINT_CHARS: usize = 8;
+
+/// The part of an access key worth keeping in the clear: enough to tell two
+/// accounts apart in a list, never enough to authenticate with.
+///
+/// The secret half is never hinted at, at any length.
+pub fn access_key_hint(access_key: &str) -> String {
+    access_key.chars().take(HINT_CHARS).collect()
 }
 
 impl CloudAccount {
@@ -60,19 +70,16 @@ impl CloudAccount {
         self.source_id.descriptor()
     }
 
-    /// Short label for the source, for badges and log lines.
-    pub fn short_name(&self) -> &'static str {
-        self.descriptor().map_or(UNKNOWN_SOURCE, |s| s.short_name)
-    }
-
-    /// Credentials in the shape [`SourceDescriptor::build`] expects, with the
-    /// source's default region filled in when the account stored none.
-    pub fn context(&self, descriptor: &SourceDescriptor) -> SourceContext {
-        SourceContext {
-            access_key_id: self.access_key_id.clone(),
-            secret_access_key: self.secret_access_key.clone(),
-            region: descriptor.region_or_default(self.region.clone()),
-        }
+    /// The access key as the UI shows it, or `None` for an account whose
+    /// hint was never recorded.
+    ///
+    /// Reading the key itself would mean a keyring prompt, which is not
+    /// something a list of accounts should cost; see
+    /// [`crate::db::account_context`].
+    pub fn masked_access_key(&self) -> Option<String> {
+        self.access_key_hint
+            .as_ref()
+            .map(|hint| format!("{}****", hint))
     }
 }
 

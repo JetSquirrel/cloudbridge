@@ -28,11 +28,25 @@
 
 ## ✨ Features
 
-- **🌐 Multi-Cloud Support**
-  - Amazon Web Services (AWS) - Full support
-  - Alibaba Cloud (阿里云) - Full support
-  - DeepSeek - Full support (balance tracking)
-  - Azure & GCP - Coming soon
+- **🌐 Clouds and Model Providers**
+  - Amazon Web Services (AWS) — billing API
+  - Alibaba Cloud (阿里云) — billing API, plus bill import for
+    Model Studio (百炼) model-level detail
+  - Volcengine (火山引擎) — bill import, for Ark (火山方舟)
+  - OpenAI — bill import (cost or usage export)
+  - Anthropic (Claude) — bill import (cost or usage export)
+  - DeepSeek — balance tracking
+  - Azure & GCP — coming soon
+
+- **🧾 Import the Bill You Downloaded**
+  - Point CloudBridge at a bill export from your provider's console and it
+    normalizes into the same ledger the billing APIs feed
+  - Model spend arrives per model, with `pricing_unit` holding `Tokens`
+  - A usage export that carries no amounts is recorded as usage with
+    `cost_basis = absent` — never priced at list and passed off as spend
+  - One file can cover several months; each is replaced as a whole
+  - The file is copied into the raw store, so a mapping fix replays it
+    without asking you to find the download again
 
 - **📊 Cost Visualization**
   - Monthly cost overview with month-over-month comparison
@@ -161,15 +175,63 @@ The compiled binary will be at:
 
 > **Note:** DeepSeek displays your account balance (including granted and topped-up balances) instead of cost data. The balance query API is free of charge.
 
+### Bill File Import
+
+Volcengine, OpenAI and Anthropic are read from the bill export their
+console produces rather than from a billing API, so they need no
+credentials at all: add the account, then use **Import bill** on its row.
+Alibaba Cloud accepts both, and its export is the finer of the two — the
+billing API reports Model Studio (百炼) as one figure a month, while the
+export reports it per model.
+
+| Source | Where the export comes from | What it adds |
+|--------|-----------------------------|--------------|
+| Alibaba Cloud | Expenses and Costs → Bill Details → Export | Model Studio (百炼) per model; instance-level detail for everything else |
+| Volcengine | Billing → Bill Details → Export | Ark (火山方舟) per endpoint and token type |
+| OpenAI | Usage → Export | Cost or token usage, per project and model |
+| Anthropic (Claude) | Usage or Cost → Export | Cost or token usage, per workspace and model |
+
+Two things to know before importing:
+
+- **An import replaces every month the file covers.** The export is the
+  provider's own bill, so it supersedes whatever the billing API reported
+  for the same month rather than being added to it. The corollary: a file
+  narrowed to a single product in the console replaces that whole month
+  with that one product, so export the full bill unless one product is
+  genuinely all you want.
+- **The file must be UTF-8.** Both Chinese consoles can produce a GBK
+  export. CloudBridge refuses one rather than guessing, because a guessed
+  encoding would quietly mangle every product name in the bill — re-export
+  as UTF-8, or open it and save it again as CSV UTF-8.
+
+Column names are matched through a list of aliases covering the Chinese
+console, the English console and each provider's own API field names.
+None of these exports is a documented file format, so if yours uses a name
+CloudBridge does not know, the import names the column it could not find
+and lists the ones your file does have.
+
 ## 🚀 Usage
 
 ### Adding a Cloud Account
 
 1. Launch CloudBridge
 2. Navigate to **Accounts** in the sidebar
-3. Select your cloud provider (AWS, Alibaba Cloud, or DeepSeek)
-4. Enter account name and credentials
-5. Click **Validate & Add**
+3. Select your source
+4. Enter an account name, and credentials if the source uses a billing API
+   (Volcengine, OpenAI and Anthropic are read from a file, so they ask for
+   none)
+5. Click **Save**
+
+### Importing a Bill File
+
+1. Download the bill export from your provider's console — see
+   [Bill File Import](#bill-file-import) for where each one lives
+2. Go to **Accounts** and click **Import bill** on the account's row
+3. Pick the file
+
+CloudBridge reports how many charges it wrote and which months it
+replaced. Re-importing a corrected export of the same month is safe: the
+month is replaced, not added to.
 
 ### Viewing Cost Data
 
@@ -191,9 +253,19 @@ through changes, so switching back and forth costs nothing.
 
 ### Refreshing Data
 
-- **Automatic:** A billing period is re-fetched at most once every 6 hours
-- **Manual:** **Refresh** picks up anything stale; **Force Refresh**
-  re-fetches regardless, at the cost of another paid API call
+- **Automatic:** A billing period is re-fetched at most once per refresh
+  interval — **24 hours by default**. Change it in
+  **Settings → Refreshing** (6, 12, 24 or 48 hours). Longer is cheaper:
+  AWS Cost Explorer bills per request, and a provider's bill does not move
+  faster than a day in any way worth paying for
+- **Manual:** **Refresh** picks up anything past the interval;
+  **Force Refresh** re-fetches regardless, at the cost of another paid API
+  call
+- **An imported month is never re-fetched**, by either. The export you
+  imported is the finer of the two readings — for Model Studio (百炼) it is
+  the only one that reports a model at all — so a refresh would coarsen a
+  bill you went and downloaded. To update an imported month, import a
+  corrected export of it.
 
 ## 🗺️ Roadmap
 
@@ -211,6 +283,8 @@ plan and its rationale.
 - [x] Cross-currency totals via a rate table and reporting currency
 
 ### P1
+- [x] Bill file import from the console's own export (Alibaba Cloud,
+      Volcengine, OpenAI, Anthropic)
 - [ ] Bill file export channel (S3 / OSS + Parquet)
 - [ ] Tag-based allocation with an explicit "unallocated" node
 - [ ] Sankey cost flow
@@ -241,9 +315,10 @@ CloudBridge stores all data locally:
 Files:
 - `billing.duckdb` - The ledger: every charge, in the currency it was billed in
 - `cloudbridge.duckdb` - Accounts and settings
-- `raw/` - Provider responses as fetched, partitioned by source, account
-  and billing period
-- `config.json` - Application configuration
+- `raw/` - Provider responses as fetched, and bill files as imported,
+  partitioned by source, account and billing period
+- `config.json` - Application configuration, including the reporting
+  currency and the refresh interval
 
 Credentials are not in any of them: they are stored in the OS keyring
 (Windows Credential Manager, macOS Keychain, Linux Secret Service).

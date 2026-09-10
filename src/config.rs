@@ -6,8 +6,17 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-/// Default data refresh interval, in minutes
-pub const DEFAULT_REFRESH_INTERVAL_MINUTES: u32 = 60;
+/// How long a billing period stays fresh after it is ingested, until the
+/// user picks otherwise.
+///
+/// A day, rather than the few hours this used to be: a provider's bill does
+/// not move faster than that in any way worth paying for. Cost Explorer
+/// bills per request, the Alibaba Cloud bill settles a few times a day, and
+/// a mid-month figure that is a few hours stale is not one anybody acts on.
+pub const DEFAULT_REFRESH_INTERVAL_HOURS: u32 = 24;
+
+/// Intervals offered in Settings, in hours.
+pub const REFRESH_INTERVAL_CHOICES_HOURS: &[u32] = &[6, 12, 24, 48];
 
 /// Currency every amount is shown in until the user picks another.
 pub const DEFAULT_REPORTING_CURRENCY: &str = "USD";
@@ -22,11 +31,17 @@ pub struct AppConfig {
     pub encryption_key: Option<String>,
     /// Theme settings
     pub theme: ThemeConfig,
-    /// Data refresh interval (minutes).
+    /// How long a billing period stays fresh after it is ingested, in
+    /// hours.
     ///
-    /// Persisted but not acted on yet: nothing schedules a refresh from it,
-    /// so it has no Settings UI either. Wire both up together.
-    pub refresh_interval_minutes: u32,
+    /// Replaces `refresh_interval_minutes`, which was persisted and never
+    /// acted on. The rename is deliberate rather than a change of unit:
+    /// that field defaulted to 60, so reading a stored 60 as a *minute*
+    /// window would have quietly moved every existing install to refreshing
+    /// hourly — which costs money on Cost Explorer. Serde ignores the
+    /// unknown key, so an old config simply starts at the new default.
+    #[serde(default = "default_refresh_interval_hours")]
+    pub refresh_interval_hours: u32,
     /// Currency every amount is converted to for display. Charges are
     /// stored in the currency they were billed in; this only changes the
     /// view they are read through.
@@ -38,12 +53,16 @@ fn default_reporting_currency() -> String {
     DEFAULT_REPORTING_CURRENCY.to_string()
 }
 
+fn default_refresh_interval_hours() -> u32 {
+    DEFAULT_REFRESH_INTERVAL_HOURS
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             encryption_key: None,
             theme: ThemeConfig::default(),
-            refresh_interval_minutes: DEFAULT_REFRESH_INTERVAL_MINUTES,
+            refresh_interval_hours: default_refresh_interval_hours(),
             reporting_currency: default_reporting_currency(),
         }
     }
@@ -52,7 +71,15 @@ impl Default for AppConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ThemeConfig {
     /// Whether to use dark mode. Defaults to light.
+    ///
+    /// Derived from `name` whenever a theme is picked; kept because it is
+    /// what builds before the theme picker knew how to persist.
     pub dark_mode: bool,
+    /// Name of the selected theme, as it appears in the theme registry
+    /// (e.g. "CloudBridge Light", "Ayu Dark"). `None` means no theme was
+    /// ever picked: choose between the CloudBridge pair by `dark_mode`.
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 /// Get application data directory
@@ -107,10 +134,10 @@ pub fn load_config() -> Result<AppConfig> {
     if config_path.exists() {
         let content = fs::read_to_string(&config_path)?;
         let mut config: AppConfig = serde_json::from_str(&content)?;
-        // Configs written before AppConfig had a real Default stored 0 here,
-        // which is not a usable interval.
-        if config.refresh_interval_minutes == 0 {
-            config.refresh_interval_minutes = DEFAULT_REFRESH_INTERVAL_MINUTES;
+        // Zero is not a usable interval: it would re-fetch every period on
+        // every load, which is exactly what this window exists to prevent.
+        if config.refresh_interval_hours == 0 {
+            config.refresh_interval_hours = default_refresh_interval_hours();
         }
         if config.reporting_currency.is_empty() {
             config.reporting_currency = default_reporting_currency();
@@ -130,4 +157,83 @@ pub fn save_config(config: &AppConfig) -> Result<()> {
     let content = serde_json::to_string_pretty(config)?;
     fs::write(&config_path, content)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The important one. A config written by a build where the interval was
+    /// dead holds `refresh_interval_minutes: 60`. Reading that as the new
+    /// setting — under either name — would move every existing install to
+    /// refreshing hourly, and AWS Cost Explorer bills per request.
+    #[test]
+    fn a_config_from_before_the_setting_existed_starts_at_the_default() {
+        let old = r#"{
+            "encryption_key": null,
+            "theme": { "dark_mode": false },
+            "refresh_interval_minutes": 60,
+            "reporting_currency": "CNY"
+        }"#;
+
+        let config: AppConfig = serde_json::from_str(old).expect("an old config still parses");
+
+        assert_eq!(
+            config.refresh_interval_hours,
+            DEFAULT_REFRESH_INTERVAL_HOURS
+        );
+        // Everything the user did choose is kept.
+        assert_eq!(config.reporting_currency, "CNY");
+    }
+
+    #[test]
+    fn an_interval_the_user_chose_is_the_one_read_back() {
+        let config: AppConfig = serde_json::from_str(
+            r#"{"encryption_key":null,"theme":{"dark_mode":false},
+                "refresh_interval_hours":6,"reporting_currency":"USD"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.refresh_interval_hours, 6);
+    }
+
+    #[test]
+    fn the_default_is_a_day_and_is_offered_in_settings() {
+        assert_eq!(
+            AppConfig::default().refresh_interval_hours,
+            DEFAULT_REFRESH_INTERVAL_HOURS
+        );
+        assert!(
+            REFRESH_INTERVAL_CHOICES_HOURS.contains(&DEFAULT_REFRESH_INTERVAL_HOURS),
+            "the default has to be selectable, or Settings shows nothing chosen"
+        );
+    }
+
+    /// A config written before the theme picker holds
+    /// `theme: { "dark_mode": ... }` and nothing else.
+    #[test]
+    fn a_config_from_before_the_theme_picker_has_no_theme_name() {
+        let config: AppConfig = serde_json::from_str(
+            r#"{"encryption_key":null,"theme":{"dark_mode":true},
+                "refresh_interval_hours":24,"reporting_currency":"USD"}"#,
+        )
+        .expect("an old config still parses");
+
+        assert_eq!(config.theme.name, None);
+        // The dark-mode flag survives as the fallback for choosing a theme.
+        assert!(config.theme.dark_mode);
+    }
+
+    #[test]
+    fn a_picked_theme_name_round_trips() {
+        let mut config = AppConfig::default();
+        config.theme.name = Some("Ayu Dark".to_string());
+        config.theme.dark_mode = true;
+
+        let read_back: AppConfig =
+            serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+
+        assert_eq!(read_back.theme.name.as_deref(), Some("Ayu Dark"));
+        assert!(read_back.theme.dark_mode);
+    }
 }

@@ -11,7 +11,9 @@ use chrono::{DateTime, Utc};
 use duckdb::{params, Connection};
 use std::sync::{Arc, Mutex};
 
-use crate::cloud::{BillingPeriod, BudgetInfo, BudgetStatus, CloudAccount, SourceId};
+use crate::alerts::{AlertEvent, AlertRule, AlertStatus, Severity};
+use crate::cloud::{self, BillingPeriod, BudgetInfo, BudgetStatus, CloudAccount};
+use crate::cloud::{SourceContext, SourceDescriptor, SourceId};
 use crate::config::get_database_path;
 use crate::crypto::get_crypto_manager;
 use crate::ledger::{query, PeriodKey};
@@ -34,7 +36,20 @@ lazy_static::lazy_static! {
 /// display-shaped API responses has nothing left to do.
 ///
 /// v3 restores the primary keys that the v1 rebuild silently dropped.
-const APP_SCHEMA_VERSION: i32 = 3;
+///
+/// v4 adds `access_key_hint`, the leading characters of an account's access
+/// key. Listing accounts used to read every credential out of the keyring
+/// just to print `AK: AKIA1234****`, and on macOS each read can raise a
+/// system password prompt — one that comes back after every rebuild of the
+/// app, because the keyring item's access control is tied to the binary
+/// that created it. The hint is the part of that display which is not a
+/// secret, so it lives in the database and the keyring is left to the work
+/// that actually signs a request.
+///
+/// v5 adds `alert_rule` and `alert_event`, the state of the alerting
+/// engine (see [`crate::alerts`]). New tables only; `create_tables` runs
+/// on every start, so an existing database gains them without a rebuild.
+const APP_SCHEMA_VERSION: i32 = 5;
 
 /// Initialize database
 pub fn init_database() -> Result<()> {
@@ -51,7 +66,7 @@ pub fn init_database() -> Result<()> {
 
 /// Bring a database file up to [`APP_SCHEMA_VERSION`], creating it from
 /// scratch if it is empty.
-fn prepare_schema(conn: &Connection) -> Result<()> {
+pub(crate) fn prepare_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS schema_version (
@@ -76,6 +91,9 @@ fn prepare_schema(conn: &Connection) -> Result<()> {
 
     if version < 3 {
         migrate_to_v3(conn)?;
+    }
+    if version < 4 {
+        migrate_to_v4(conn)?;
     }
 
     conn.execute(
@@ -113,9 +131,13 @@ const TABLES: &[(&str, &str, &str)] = &[
             region         VARCHAR,
             created_at     VARCHAR NOT NULL,
             last_synced_at VARCHAR,
-            enabled        BOOLEAN NOT NULL DEFAULT true
+            enabled        BOOLEAN NOT NULL DEFAULT true,
+            -- Last, because v4 adds it with ALTER TABLE to a database that
+            -- already exists, and a fresh install should have the same
+            -- column order as an upgraded one.
+            access_key_hint VARCHAR
         )"#,
-        "id, name, source_id, region, created_at, last_synced_at, enabled",
+        "id, name, source_id, region, created_at, last_synced_at, enabled, access_key_hint",
     ),
     (
         "budgets",
@@ -128,6 +150,36 @@ const TABLES: &[(&str, &str, &str)] = &[
             updated_at      VARCHAR NOT NULL
         )"#,
         "account_id, monthly_budget, currency, alert_threshold, created_at, updated_at",
+    ),
+    (
+        "alert_rule",
+        r#"(
+            id            VARCHAR PRIMARY KEY,
+            kind          VARCHAR NOT NULL,   -- cost-growth-anomaly | balance-floor | untagged-ratio
+            name          VARCHAR NOT NULL,
+            scope         VARCHAR NOT NULL,
+            enabled       BOOLEAN NOT NULL DEFAULT true,
+            config        VARCHAR NOT NULL,   -- JSON object text
+            last_fired_at VARCHAR
+        )"#,
+        "id, kind, name, scope, enabled, config, last_fired_at",
+    ),
+    (
+        "alert_event",
+        r#"(
+            id            VARCHAR PRIMARY KEY,
+            rule_id       VARCHAR NOT NULL,
+            severity      VARCHAR NOT NULL,   -- critical | warning
+            title         VARCHAR NOT NULL,
+            body          VARCHAR NOT NULL,
+            fields_json   VARCHAR NOT NULL,   -- {"fields": [...], "context": {...}}
+            stat_json     VARCHAR,
+            created_at    VARCHAR NOT NULL,
+            status        VARCHAR NOT NULL,   -- open | snoozed | resolved | dismissed
+            snoozed_until VARCHAR,
+            dedupe_key    VARCHAR NOT NULL
+        )"#,
+        "id, rule_id, severity, title, body, fields_json, stat_json, created_at, status, snoozed_until, dedupe_key",
     ),
 ];
 
@@ -153,13 +205,22 @@ fn has_primary_key(conn: &Connection, table: &str) -> Result<bool> {
 }
 
 /// Rebuild a table in its declared shape, carrying the rows across.
+///
+/// Only the declared columns the table actually has, so a rebuild does not
+/// depend on which of the later migrations have run yet.
 fn rebuild_table(conn: &Connection, table: &str, definition: &str, columns: &str) -> Result<()> {
+    let present = column_names(conn, table)?;
+    let carried = columns
+        .split(", ")
+        .filter(|column| present.iter().any(|name| name == column))
+        .collect::<Vec<_>>()
+        .join(", ");
     let scratch = format!("{table}_rebuild");
 
     conn.execute_batch(&format!(
         "DROP TABLE IF EXISTS {scratch};
          CREATE TABLE {scratch} {definition};
-         INSERT INTO {scratch} ({columns}) SELECT {columns} FROM {table};
+         INSERT INTO {scratch} ({carried}) SELECT {carried} FROM {table};
          DROP TABLE {table};
          ALTER TABLE {scratch} RENAME TO {table};"
     ))?;
@@ -183,6 +244,24 @@ fn migrate_to_v3(conn: &Connection) -> Result<()> {
         tracing::info!("Restoring the primary key on {}", table);
         rebuild_table(conn, table, definition, columns)?;
     }
+
+    Ok(())
+}
+
+/// Add the column that lets an account be listed without a keyring read.
+///
+/// Left NULL for accounts already stored: filling it in would mean reading
+/// every credential at startup, which is the prompt this column exists to
+/// stop. It is written the next time something legitimately needs those
+/// credentials — see [`account_context`].
+fn migrate_to_v4(conn: &Connection) -> Result<()> {
+    let columns = column_names(conn, "cloud_accounts")?;
+    if columns.is_empty() || columns.iter().any(|c| c == "access_key_hint") {
+        return Ok(());
+    }
+
+    tracing::info!("Adding access_key_hint to cloud_accounts");
+    conn.execute_batch("ALTER TABLE cloud_accounts ADD COLUMN access_key_hint VARCHAR")?;
 
     Ok(())
 }
@@ -346,15 +425,37 @@ fn get_connection() -> Result<std::sync::MutexGuard<'static, Option<Connection>>
     Ok(db)
 }
 
-/// Save cloud account
-pub fn save_account(account: &CloudAccount) -> Result<()> {
-    // Secrets go to the OS keyring; the database holds only the account's
-    // identity and settings.
-    secret_store::store_account_secrets(
-        &account.id,
-        &account.access_key_id,
-        &account.secret_access_key,
-    )?;
+/// Run a read against the app-state connection, for callers (the alerting
+/// engine) that hold several stores at once.
+pub(crate) fn with_connection<T>(f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+    let db = get_connection()?;
+    f(db.as_ref().unwrap())
+}
+
+/// Save a cloud account: the credentials to the OS keyring, everything
+/// else to the database.
+///
+/// The hint stored on the row is derived from the key given here rather
+/// than taken from `account`, so the database cannot end up describing a
+/// key it was not saved with.
+/// An account with no access key stores nothing in the keyring.
+///
+/// A source whose bill arrives by file import needs no credentials, and an
+/// empty keyring entry would be worse than none: [`account_context`] reads
+/// a pair back and would hand a request an empty key to sign with, which
+/// fails as an authentication error rather than as the missing credential
+/// it is.
+pub fn save_account(
+    account: &CloudAccount,
+    access_key_id: &str,
+    secret_access_key: &str,
+) -> Result<()> {
+    let hint = if access_key_id.is_empty() {
+        None
+    } else {
+        secret_store::store_account_secrets(&account.id, access_key_id, secret_access_key)?;
+        Some(cloud::access_key_hint(access_key_id))
+    };
 
     let db = get_connection()?;
     let conn = db.as_ref().unwrap();
@@ -362,8 +463,8 @@ pub fn save_account(account: &CloudAccount) -> Result<()> {
     conn.execute(
         r#"
         INSERT OR REPLACE INTO cloud_accounts
-        (id, name, source_id, region, created_at, last_synced_at, enabled)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        (id, name, source_id, region, created_at, last_synced_at, enabled, access_key_hint)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         "#,
         params![
             account.id,
@@ -373,7 +474,59 @@ pub fn save_account(account: &CloudAccount) -> Result<()> {
             account.created_at.to_rfc3339(),
             account.last_synced_at.map(|dt| dt.to_rfc3339()),
             account.enabled,
+            hint,
         ],
+    )?;
+
+    Ok(())
+}
+
+/// The credentials for an account, read from the keyring at the moment they
+/// are needed.
+///
+/// Deliberately not part of [`get_all_accounts`]: on macOS a keyring read
+/// can raise a system password prompt, and the prompt returns after every
+/// rebuild of the app, since the item's access control names the binary
+/// that stored it. Listing accounts — which the dashboard does on every
+/// load — is not a reason to ask for the login password, so only work that
+/// signs a request reads a secret.
+pub fn account_context(
+    account: &CloudAccount,
+    descriptor: &SourceDescriptor,
+) -> Result<SourceContext> {
+    let (access_key_id, secret_access_key) = secret_store::get_account_secrets(&account.id)?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "No credentials in the keyring for account {}; they have to be re-entered",
+                account.name
+            )
+        })?;
+
+    // An account stored before v4 has no hint. Record it now, from a key
+    // that has just been read anyway, rather than reading one for the sake
+    // of the display.
+    if account.access_key_hint.is_none() {
+        if let Err(e) = set_access_key_hint(&account.id, &access_key_id) {
+            tracing::warn!("Could not record the key hint for {}: {}", account.name, e);
+        }
+    }
+
+    Ok(SourceContext {
+        access_key_id,
+        secret_access_key,
+        region: descriptor.region_or_default(account.region.clone()),
+    })
+}
+
+/// Record the leading characters of an account's access key, for a list
+/// that must not read the key itself.
+fn set_access_key_hint(account_id: &str, access_key_id: &str) -> Result<()> {
+    let db = get_connection()?;
+    let conn = db.as_ref().unwrap();
+
+    conn.execute(
+        "UPDATE cloud_accounts SET access_key_hint = ? WHERE id = ?",
+        params![cloud::access_key_hint(access_key_id), account_id],
     )?;
 
     Ok(())
@@ -381,11 +534,13 @@ pub fn save_account(account: &CloudAccount) -> Result<()> {
 
 /// Get all cloud accounts
 pub fn get_all_accounts() -> Result<Vec<CloudAccount>> {
-    let db = get_connection()?;
-    let conn = db.as_ref().unwrap();
+    with_connection(get_all_accounts_of)
+}
 
+pub(crate) fn get_all_accounts_of(conn: &Connection) -> Result<Vec<CloudAccount>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, source_id, region, created_at, last_synced_at, enabled FROM cloud_accounts",
+        "SELECT id, name, source_id, region, created_at, last_synced_at, enabled, access_key_hint
+         FROM cloud_accounts",
     )?;
 
     let rows = stmt
@@ -398,12 +553,15 @@ pub fn get_all_accounts() -> Result<Vec<CloudAccount>> {
                 row.get::<_, String>(4)?,
                 row.get::<_, Option<String>>(5)?,
                 row.get::<_, bool>(6)?,
+                row.get::<_, Option<String>>(7)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut result = Vec::new();
-    for (id, name, source_id, region, created_at_str, last_synced_str, enabled) in rows {
+    for (id, name, source_id, region, created_at_str, last_synced_str, enabled, access_key_hint) in
+        rows
+    {
         // An id with no descriptor comes from a build that knew a source this
         // one does not. Skip the row rather than guessing: silently reading it
         // as some other provider would sign requests with the wrong scheme and
@@ -418,21 +576,10 @@ pub fn get_all_accounts() -> Result<Vec<CloudAccount>> {
             continue;
         }
 
-        // Credentials live only in the OS keyring (schema v1 moved the last
-        // of them out of the database). An account whose secrets are gone is
-        // still listed, so the user can see it and re-enter them.
-        let (access_key_id, secret_access_key) = match secret_store::get_account_secrets(&id)? {
-            Some(secrets) => secrets,
-            None => {
-                tracing::warn!(
-                    "No credentials in the keyring for account {} ({}); it needs to be re-entered",
-                    name,
-                    id
-                );
-                (String::new(), String::new())
-            }
-        };
-
+        // No keyring read here: the credentials are fetched only when
+        // something is about to authenticate with them, by
+        // [`account_context`]. An account whose secrets have gone is still
+        // listed — that is discovered when it is next used.
         let created_at = DateTime::parse_from_rfc3339(&created_at_str)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now());
@@ -444,12 +591,11 @@ pub fn get_all_accounts() -> Result<Vec<CloudAccount>> {
             id,
             name,
             source_id,
-            access_key_id,
-            secret_access_key,
             region,
             created_at,
             last_synced_at,
             enabled,
+            access_key_hint,
         });
     }
 
@@ -519,9 +665,10 @@ pub fn save_budget(budget: &BudgetInfo) -> Result<()> {
 /// Get budget for an account
 #[allow(dead_code)] // TODO(v0.2.0): remove once the budget UI calls this
 pub fn get_budget(account_id: &str) -> Result<Option<BudgetInfo>> {
-    let db = get_connection()?;
-    let conn = db.as_ref().unwrap();
+    with_connection(|conn| get_budget_of(conn, account_id))
+}
 
+pub(crate) fn get_budget_of(conn: &Connection, account_id: &str) -> Result<Option<BudgetInfo>> {
     let mut stmt = conn.prepare(
         "SELECT account_id, monthly_budget, currency, alert_threshold, created_at, updated_at
          FROM budgets WHERE account_id = ?",
@@ -671,6 +818,253 @@ pub fn get_all_budget_statuses() -> Result<Vec<BudgetStatus>> {
     Ok(statuses)
 }
 
+/// Record that an account was successfully refreshed.
+pub fn mark_account_synced(account_id: &str, at: DateTime<Utc>) -> Result<()> {
+    let db = get_connection()?;
+    let conn = db.as_ref().unwrap();
+
+    conn.execute(
+        "UPDATE cloud_accounts SET last_synced_at = ? WHERE id = ?",
+        params![at.to_rfc3339(), account_id],
+    )?;
+
+    Ok(())
+}
+
+// ==================== Alert Functions ====================
+//
+// Each function has a `*_to(conn)` twin so the alerting engine
+// (crate::alerts) can be evaluated against an in-memory database in tests,
+// exactly as the ledger's `*_of` functions are.
+
+/// Save or update an alerting rule.
+pub(crate) fn save_alert_rule_to(conn: &Connection, rule: &AlertRule) -> Result<()> {
+    conn.execute(
+        r#"
+        INSERT OR REPLACE INTO alert_rule
+        (id, kind, name, scope, enabled, config, last_fired_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        "#,
+        params![
+            rule.id,
+            rule.kind,
+            rule.name,
+            rule.scope,
+            rule.enabled,
+            rule.config.to_string(),
+            rule.last_fired_at.map(|at| at.to_rfc3339()),
+        ],
+    )?;
+
+    Ok(())
+}
+
+/// Every alerting rule, in the order they were first stored.
+pub fn get_alert_rules() -> Result<Vec<AlertRule>> {
+    with_connection(get_alert_rules_of)
+}
+
+pub(crate) fn get_alert_rules_of(conn: &Connection) -> Result<Vec<AlertRule>> {
+    let mut stmt = conn
+        .prepare("SELECT id, kind, name, scope, enabled, config, last_fired_at FROM alert_rule")?;
+
+    let rules = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, bool>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, Option<String>>(6)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    rules
+        .into_iter()
+        .map(|(id, kind, name, scope, enabled, config, last_fired_at)| {
+            Ok(AlertRule {
+                id,
+                kind,
+                name,
+                scope,
+                enabled,
+                config: serde_json::from_str(&config).unwrap_or(serde_json::json!({})),
+                last_fired_at: last_fired_at
+                    .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                    .map(|dt| dt.with_timezone(&Utc)),
+            })
+        })
+        .collect()
+}
+
+/// Enable or disable a rule. A disabled rule keeps its events but fires no
+/// new ones.
+pub fn set_alert_rule_enabled(id: &str, enabled: bool) -> Result<()> {
+    with_connection(|conn| set_alert_rule_enabled_to(conn, id, enabled))
+}
+
+pub(crate) fn set_alert_rule_enabled_to(conn: &Connection, id: &str, enabled: bool) -> Result<()> {
+    conn.execute(
+        "UPDATE alert_rule SET enabled = ? WHERE id = ?",
+        params![enabled, id],
+    )?;
+
+    Ok(())
+}
+
+/// Record when a rule last produced an event, for the "last fired" the
+/// Rules page shows.
+pub(crate) fn mark_rule_fired_to(conn: &Connection, id: &str, at: DateTime<Utc>) -> Result<()> {
+    conn.execute(
+        "UPDATE alert_rule SET last_fired_at = ? WHERE id = ?",
+        params![at.to_rfc3339(), id],
+    )?;
+
+    Ok(())
+}
+
+/// Delete an alerting rule. Its past events stay: they are history, not
+/// part of the rule.
+pub fn delete_alert_rule(id: &str) -> Result<()> {
+    with_connection(|conn| delete_alert_rule_to(conn, id))
+}
+
+pub(crate) fn delete_alert_rule_to(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM alert_rule WHERE id = ?", params![id])?;
+
+    Ok(())
+}
+
+/// Record a new alert event.
+pub(crate) fn insert_alert_event_to(conn: &Connection, event: &AlertEvent) -> Result<()> {
+    conn.execute(
+        r#"
+        INSERT OR REPLACE INTO alert_event
+        (id, rule_id, severity, title, body, fields_json, stat_json, created_at,
+         status, snoozed_until, dedupe_key)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#,
+        params![
+            event.id,
+            event.rule_id,
+            event.severity.as_str(),
+            event.title,
+            event.body,
+            event.fields_json,
+            event.stat_json,
+            event.created_at.to_rfc3339(),
+            event.status.as_str(),
+            event.snoozed_until.map(|at| at.to_rfc3339()),
+            event.dedupe_key,
+        ],
+    )?;
+
+    Ok(())
+}
+
+/// Events in one of the given states, newest first.
+pub fn get_alert_events(statuses: &[AlertStatus]) -> Result<Vec<AlertEvent>> {
+    with_connection(|conn| get_alert_events_of(conn, statuses))
+}
+
+pub(crate) fn get_alert_events_of(
+    conn: &Connection,
+    statuses: &[AlertStatus],
+) -> Result<Vec<AlertEvent>> {
+    if statuses.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = statuses.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let mut stmt = conn.prepare(&format!(
+        "SELECT id, rule_id, severity, title, body, fields_json, stat_json, created_at,
+                status, snoozed_until, dedupe_key
+         FROM alert_event
+         WHERE status IN ({placeholders})
+         ORDER BY created_at DESC"
+    ))?;
+
+    let rows = stmt
+        .query_map(
+            duckdb::params_from_iter(statuses.iter().map(|s| s.as_str())),
+            event_from_row,
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows)
+}
+
+/// The open or snoozed event under a dedupe key, if there is one — the
+/// check that keeps a condition from alerting twice while it still holds.
+pub(crate) fn find_live_alert_event_of(
+    conn: &Connection,
+    dedupe_key: &str,
+) -> Result<Option<AlertEvent>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, rule_id, severity, title, body, fields_json, stat_json, created_at,
+                status, snoozed_until, dedupe_key
+         FROM alert_event
+         WHERE dedupe_key = ? AND status IN ('open', 'snoozed')
+         ORDER BY created_at DESC
+         LIMIT 1",
+    )?;
+
+    let mut rows = stmt.query_map(params![dedupe_key], event_from_row)?;
+    Ok(rows.next().transpose()?)
+}
+
+/// Move an event to a new state. `snoozed_until` matters only for
+/// [`AlertStatus::Snoozed`].
+pub fn set_alert_event_status(
+    id: &str,
+    status: AlertStatus,
+    snoozed_until: Option<DateTime<Utc>>,
+) -> Result<()> {
+    with_connection(|conn| set_alert_event_status_to(conn, id, status, snoozed_until))
+}
+
+pub(crate) fn set_alert_event_status_to(
+    conn: &Connection,
+    id: &str,
+    status: AlertStatus,
+    snoozed_until: Option<DateTime<Utc>>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE alert_event SET status = ?, snoozed_until = ? WHERE id = ?",
+        params![status.as_str(), snoozed_until.map(|at| at.to_rfc3339()), id],
+    )?;
+
+    Ok(())
+}
+
+/// One row of `alert_event`, in the column order every query here uses.
+fn event_from_row(row: &duckdb::Row<'_>) -> duckdb::Result<AlertEvent> {
+    let created_at: String = row.get(7)?;
+    let status: String = row.get(8)?;
+    let snoozed_until: Option<String> = row.get(9)?;
+
+    Ok(AlertEvent {
+        id: row.get(0)?,
+        rule_id: row.get(1)?,
+        severity: Severity::from_stored(&row.get::<_, String>(2)?),
+        title: row.get(3)?,
+        body: row.get(4)?,
+        fields_json: row.get(5)?,
+        stat_json: row.get(6)?,
+        created_at: DateTime::parse_from_rfc3339(&created_at)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now()),
+        status: AlertStatus::from_stored(&status),
+        snoozed_until: snoozed_until
+            .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+            .map(|dt| dt.with_timezone(&Utc)),
+        dedupe_key: row.get(10)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -740,7 +1134,8 @@ mod tests {
                 "region",
                 "created_at",
                 "last_synced_at",
-                "enabled"
+                "enabled",
+                "access_key_hint"
             ]
         );
         assert!(!table_exists(&conn, "cost_data"));
@@ -876,6 +1271,147 @@ mod tests {
             .unwrap();
         assert_eq!(accounts, 1);
         assert!(has_primary_key(&conn, "cloud_accounts").unwrap());
+    }
+
+    /// The column arrives on an existing database without disturbing it,
+    /// and without a hint being invented for accounts already stored —
+    /// filling those in would mean the keyring read this column exists to
+    /// avoid.
+    #[test]
+    fn the_key_hint_column_is_added_to_an_existing_database() {
+        let conn = legacy_database();
+
+        prepare_schema(&conn).unwrap();
+
+        let columns = column_names(&conn, "cloud_accounts").unwrap();
+        assert_eq!(columns.last().unwrap(), "access_key_hint");
+        let (name, hint): (String, Option<String>) = conn
+            .query_row(
+                "SELECT name, access_key_hint FROM cloud_accounts WHERE id = 'acct-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "Prod");
+        assert_eq!(hint, None);
+
+        // And a fresh install ends up with the same shape.
+        let fresh = Connection::open_in_memory().unwrap();
+        prepare_schema(&fresh).unwrap();
+        assert_eq!(column_names(&fresh, "cloud_accounts").unwrap(), columns);
+    }
+
+    /// A database that needs both the v3 rebuild and the v4 column gets
+    /// them in an order that leaves the rows intact — the rebuild carries
+    /// the columns the table has, not the ones it is about to gain.
+    #[test]
+    fn a_database_two_versions_behind_survives_both_migrations() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at VARCHAR NOT NULL);
+             INSERT INTO schema_version VALUES (2, '2026-09-01T00:00:00+00:00');
+             CREATE TABLE cloud_accounts AS
+                 SELECT 'acct-1' AS id, 'Prod' AS name, 'AWS' AS source_id,
+                        'us-east-1' AS region, '2026-08-01T00:00:00+00:00' AS created_at,
+                        NULL::VARCHAR AS last_synced_at, true AS enabled;",
+        )
+        .unwrap();
+
+        prepare_schema(&conn).unwrap();
+
+        assert!(has_primary_key(&conn, "cloud_accounts").unwrap());
+        let (name, hint): (String, Option<String>) = conn
+            .query_row(
+                "SELECT name, access_key_hint FROM cloud_accounts",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "Prod");
+        assert_eq!(hint, None);
+    }
+
+    /// The hint is a label, not a credential: enough of the key to tell
+    /// two accounts apart, and never the secret half.
+    #[test]
+    fn a_key_hint_is_only_the_start_of_the_key() {
+        let key = "AKIAIOSFODNN7EXAMPLE";
+        let hint = cloud::access_key_hint(key);
+
+        assert_eq!(hint, "AKIAIOSF");
+        assert!(key.starts_with(&hint));
+        assert!(hint.len() < key.len());
+        // A short key is not padded out to look longer than it is.
+        assert_eq!(cloud::access_key_hint("sk-123"), "sk-123");
+    }
+
+    #[test]
+    fn a_fresh_database_has_the_alert_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        prepare_schema(&conn).unwrap();
+
+        assert!(table_exists(&conn, "alert_rule"));
+        assert!(table_exists(&conn, "alert_event"));
+        assert!(has_primary_key(&conn, "alert_rule").unwrap());
+        assert!(has_primary_key(&conn, "alert_event").unwrap());
+    }
+
+    /// The round trip the alerting engine takes: store a rule, fire an
+    /// event under it, snooze the event, find it again by its dedupe key.
+    #[test]
+    fn alert_rules_and_events_round_trip() {
+        let conn = Connection::open_in_memory().unwrap();
+        prepare_schema(&conn).unwrap();
+
+        let rule = AlertRule {
+            id: "balance-floor".to_string(),
+            kind: "balance-floor".to_string(),
+            name: "Balance floor".to_string(),
+            scope: "Prepaid accounts".to_string(),
+            enabled: true,
+            config: serde_json::json!({ "floor": 200.0 }),
+            last_fired_at: None,
+        };
+        save_alert_rule_to(&conn, &rule).unwrap();
+
+        let rules = get_alert_rules_of(&conn).unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].config["floor"], 200.0);
+
+        let until = Utc::now() + chrono::Duration::hours(24);
+        let event = AlertEvent {
+            id: "ev-1".to_string(),
+            rule_id: rule.id.clone(),
+            severity: Severity::Warning,
+            title: "DeepSeek balance below floor".to_string(),
+            body: "Balance is ¥8.14 against a ¥200 floor.".to_string(),
+            fields_json: r#"{"fields": [], "context": {}}"#.to_string(),
+            stat_json: None,
+            created_at: Utc::now(),
+            status: AlertStatus::Open,
+            snoozed_until: None,
+            dedupe_key: "balance|DeepSeek|acct-3|2026-09-06".to_string(),
+        };
+        insert_alert_event_to(&conn, &event).unwrap();
+
+        let live = find_live_alert_event_of(&conn, &event.dedupe_key)
+            .unwrap()
+            .expect("the open event is live");
+        assert_eq!(live.severity, Severity::Warning);
+
+        set_alert_event_status_to(&conn, "ev-1", AlertStatus::Snoozed, Some(until)).unwrap();
+        let snoozed = find_live_alert_event_of(&conn, &event.dedupe_key)
+            .unwrap()
+            .expect("a snoozed event is still live");
+        assert_eq!(snoozed.status, AlertStatus::Snoozed);
+
+        set_alert_event_status_to(&conn, "ev-1", AlertStatus::Resolved, None).unwrap();
+        assert!(find_live_alert_event_of(&conn, &event.dedupe_key)
+            .unwrap()
+            .is_none());
+        let resolved =
+            get_alert_events_of(&conn, &[AlertStatus::Resolved, AlertStatus::Dismissed]).unwrap();
+        assert_eq!(resolved.len(), 1);
     }
 
     #[test]

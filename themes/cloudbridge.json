@@ -1,0 +1,107 @@
+{
+  "name": "CloudBridge",
+  "author": "JetSquirrel",
+  "url": "https://github.com/JetSquirrel/cloudbridge",
+  "themes": [
+    {
+      "name": "CloudBridge Light",
+      "mode": "light",
+      "is_default": true,
+      "radius": 12,
+      "radius.lg": 14,
+      "colors": {
+        "background": "#F4EDDE",
+        "foreground": "#221A10",
+        "border": "#E4D9C0",
+        "muted.background": "#EFE7D4",
+        "muted.foreground": "#8A7B60",
+
+        "primary.background": "#B85C1E",
+        "primary.hover.background": "#A34E14",
+        "primary.active.background": "#8F4310",
+        "primary.foreground": "#FFFFFF",
+
+        "secondary.background": "#EFE7D4",
+        "secondary.foreground": "#221A10",
+
+        "sidebar.background": "#EDE3CE",
+        "sidebar.foreground": "#221A10",
+        "sidebar.border": "#E4D9C0",
+        "sidebar.accent.background": "#B85C1E",
+        "sidebar.accent.foreground": "#FFFFFF",
+        "sidebar.primary.background": "#B85C1E",
+        "sidebar.primary.foreground": "#FFFFFF",
+
+        "tiles.background": "#FBF7EC",
+        "popover.background": "#FBF7EC",
+        "popover.foreground": "#221A10",
+        "list.background": "#FBF7EC",
+        "table.background": "#FBF7EC",
+
+        "accent.background": "#EFE7D4",
+        "accent.foreground": "#221A10",
+
+        "progress.bar.background": "#7C8A5A",
+
+        "chart.1": "#B85C1E",
+        "chart.2": "#7C8A5A",
+        "chart.3": "#A39B8A",
+        "chart.4": "#9AA876",
+        "chart.5": "#5C6B3A",
+
+        "base.red": "#B85C1E",
+        "base.red.light": "#F8E3D2",
+        "base.green": "#5C6B3A",
+        "base.green.light": "#E4EBD3",
+        "base.yellow": "#C89B3C",
+        "base.blue": "#4A6B8A",
+
+        "link": "#B85C1E",
+        "link.hover": "#A34E14",
+        "link.active": "#8F4310",
+        "selection.background": "#E4D9C0",
+        "ring": "#B85C1E"
+      }
+    },
+    {
+      "name": "CloudBridge Dark",
+      "mode": "dark",
+      "colors": {
+        "background": "#221A10",
+        "foreground": "#F4EDDE",
+        "border": "#3D3222",
+        "muted.background": "#2E2416",
+        "muted.foreground": "#8A7B60",
+
+        "primary.background": "#D4763A",
+        "primary.hover.background": "#E08A52",
+        "primary.foreground": "#221A10",
+
+        "sidebar.background": "#1B1409",
+        "sidebar.foreground": "#F4EDDE",
+        "sidebar.border": "#3D3222",
+        "sidebar.accent.background": "#D4763A",
+        "sidebar.accent.foreground": "#221A10",
+
+        "tiles.background": "#2E2416",
+        "popover.background": "#2E2416",
+        "popover.foreground": "#F4EDDE",
+
+        "progress.bar.background": "#7C8A5A",
+
+        "chart.1": "#D4763A",
+        "chart.2": "#7C8A5A",
+        "chart.3": "#A39B8A",
+        "chart.4": "#9AA876",
+        "chart.5": "#8A9A6A",
+
+        "base.red": "#D4763A",
+        "base.red.light": "#4A2E1A",
+        "base.green": "#9AA876",
+        "base.green.light": "#2E3620",
+
+        "link": "#D4763A"
+      }
+    }
+  ]
+}

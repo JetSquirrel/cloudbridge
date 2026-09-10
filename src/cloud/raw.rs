@@ -249,6 +249,35 @@ pub fn check_path_segment(value: &str, what: &str) -> Result<()> {
     Ok(())
 }
 
+/// Where the raw payloads live on this machine, for the UI to show.
+pub fn raw_dir_path() -> Result<PathBuf> {
+    crate::config::get_raw_data_dir()
+}
+
+/// Total size of the raw store, in bytes. A store that does not exist yet
+/// is empty, not an error.
+pub fn raw_dir_size() -> Result<u64> {
+    fn size_of(dir: &Path) -> Result<u64> {
+        let mut total = 0;
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let metadata = entry.metadata()?;
+            if metadata.is_dir() {
+                total += size_of(&entry.path())?;
+            } else {
+                total += metadata.len();
+            }
+        }
+        Ok(total)
+    }
+
+    let root = raw_dir_path()?;
+    if !root.is_dir() {
+        return Ok(0);
+    }
+    size_of(&root)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,0 +1,5 @@
+date,project_id,project_name,line_item,model,amount_value,amount_currency,input_tokens,output_tokens
+2026-08-09,proj_abc,Prod API,gpt-5 input,gpt-5,12.50,usd,1250000,
+2026-08-09,proj_abc,Prod API,gpt-5 output,gpt-5,7.25,usd,,145000
+2026-08-20,proj_def,Batch jobs,gpt-5-mini input,gpt-5-mini,0.40,usd,800000,
+2026-09-01,proj_abc,Prod API,gpt-5 input,gpt-5,3.00,usd,300000,

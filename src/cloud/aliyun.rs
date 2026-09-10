@@ -7,9 +7,10 @@ use serde::Deserialize;
 use sha1::Sha1;
 use std::collections::BTreeMap;
 
+use super::deduction;
 use super::raw::RawPart;
 use super::{BillingPeriod, BillingSource, Normalized, RawBatch};
-use crate::ledger::{Charge, ChargeCategory};
+use crate::ledger::Charge;
 
 type HmacSha1 = Hmac<Sha1>;
 
@@ -204,13 +205,6 @@ impl BillingSource for AliyunCloudService {
 /// Name the bill overview payload is stored under in a raw batch.
 const PART_BILL_OVERVIEW: &str = "bill_overview";
 
-/// Description given to the row that closes the gap when the named
-/// deductions do not add up to the difference between gross and net.
-const UNRECONCILED: &str = "Unreconciled";
-
-/// Half a fen. Below this the gap is rounding, not a missing deduction.
-const RECONCILIATION_TOLERANCE: f64 = 0.005;
-
 /// Turn a fetched `QueryBillOverview` payload into ledger rows.
 ///
 /// Pure — every input is in `batch`. The overview is per product for the
@@ -218,11 +212,9 @@ const RECONCILIATION_TOLERANCE: f64 = 0.005;
 /// instance-level detail arrives with the bill export channel in P1.
 ///
 /// Each product becomes a `Usage` charge at its **gross** amount plus one
-/// `Credit` row per deduction that reduced it. Alibaba Cloud reports both
-/// figures on one line, and putting the net amount on the usage row *and*
-/// the deductions beside it would count them twice. Decomposed this way
-/// the rows sum to `PretaxAmount` — what was actually charged — while
-/// still saying what the discount was worth and where it came from.
+/// `Credit` row per deduction that reduced it — see [`deduction::decompose`],
+/// which the console's own bill export normalizes through as well, so the
+/// two channels produce rows that reconcile with each other.
 pub fn normalize(batch: &RawBatch) -> Result<Normalized> {
     let part = batch
         .part(PART_BILL_OVERVIEW)
@@ -267,45 +259,14 @@ pub fn normalize(batch: &RawBatch) -> Result<Normalized> {
             ..Charge::new(start, end, currency.clone())
         };
 
-        charges.push(Charge {
-            billed_cost: Some(gross),
-            list_cost: Some(gross),
-            ..template()
-        });
-
-        let mut deducted = 0.0;
-        for (name, amount) in item.deductions() {
-            if amount == 0.0 {
-                continue;
-            }
-            deducted += amount;
-            charges.push(Charge {
-                charge_category: ChargeCategory::Credit,
-                charge_description: Some(name.to_string()),
-                billed_cost: Some(-amount),
-                ..template()
-            });
-        }
-
-        // Anything left between gross, the deductions we know the names of,
-        // and the net figure is money the bill accounts for and this parser
-        // does not. Recording it keeps the total honest and makes the gap
-        // visible instead of losing it.
-        let residual = gross - deducted - net;
-        if residual.abs() > RECONCILIATION_TOLERANCE {
-            tracing::warn!(
-                "Alibaba Cloud bill for {} does not reconcile: {:.2} {} unaccounted for",
-                item.product_name.as_deref().unwrap_or("?"),
-                residual,
-                currency
-            );
-            charges.push(Charge {
-                charge_category: ChargeCategory::Adjustment,
-                charge_description: Some(UNRECONCILED.to_string()),
-                billed_cost: Some(-residual),
-                ..template()
-            });
-        }
+        deduction::decompose(
+            &mut charges,
+            template,
+            gross,
+            net,
+            &item.deductions(),
+            item.product_name.as_deref().unwrap_or("?"),
+        );
     }
 
     Ok(Normalized {
@@ -397,8 +358,9 @@ impl BillOverviewItem {
 
 #[cfg(test)]
 mod tests {
+    use super::deduction::UNRECONCILED;
     use super::*;
-    use crate::ledger::CostBasis;
+    use crate::ledger::{ChargeCategory, CostBasis};
 
     /// One recorded QueryBillOverview response.
     const BILL_OVERVIEW: &str = include_str!("testdata/aliyun_bill_overview.json");

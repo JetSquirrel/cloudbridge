@@ -12,12 +12,9 @@
 //! mid-month and retroactively correct prior months, so a row-by-row upsert
 //! would leave behind entries the provider has since deleted and the total
 //! would stop matching theirs.
-//!
-//! Nothing writes here yet — PR4 (AWS) and PR5 (Alibaba Cloud, DeepSeek)
-//! do, through [`replace_period`] and [`record_balance`]. Until then the
-//! module is exercised only by its tests.
 
-// Written by PR4/PR5 and read by PR6; remove once the AWS normalizer lands.
+// Some query entry points are read only through the page view-models and
+// the budget UI, which the page phase wires up.
 #![allow(dead_code)]
 
 pub mod query;
@@ -83,6 +80,41 @@ impl CostBasis {
             Self::Derived => "derived",
             Self::Estimated => "estimated",
             Self::Absent => "absent",
+        }
+    }
+}
+
+/// How a period's rows reached the ledger.
+///
+/// Recorded because the two channels are not interchangeable. A bill export
+/// the user imported is the provider's own bill at instance level; an
+/// automatic API refresh of the same month is coarser, and would replace it
+/// with less.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Channel {
+    /// Fetched from the provider's billing API.
+    Api,
+    /// Imported from a bill export the user downloaded.
+    File,
+}
+
+impl Channel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Api => "api",
+            Self::File => "file",
+        }
+    }
+
+    /// The channel a stored value names.
+    ///
+    /// Anything unrecognized — including the NULL a row written before the
+    /// column existed reads as — is an API fetch, which is what those rows
+    /// were.
+    pub fn from_stored(value: Option<&str>) -> Self {
+        match value {
+            Some("file") => Self::File,
+            _ => Self::Api,
         }
     }
 }
@@ -208,7 +240,7 @@ fn with_connection<T>(f: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T>
 }
 
 /// Same, for the reads in [`query`], which need no transaction.
-fn with_connection_ref<T>(f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+pub(crate) fn with_connection_ref<T>(f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
     let guard = LEDGER_CONNECTION
         .lock()
         .map_err(|e| anyhow!("Failed to lock ledger connection: {}", e))?;
@@ -236,14 +268,16 @@ pub fn new_batch_id() -> String {
 
 /// Replace everything stored for `key` with `charges`, in one transaction.
 ///
-/// `source_ref` points at the raw payload the rows were normalized from.
+/// `source_ref` points at the raw payload the rows were normalized from,
+/// and `channel` records which of the two ways in produced them.
 pub fn replace_period(
     key: &PeriodKey,
     batch_id: &str,
     charges: &[Charge],
     source_ref: Option<&str>,
+    channel: Channel,
 ) -> Result<()> {
-    with_connection(|conn| write_period(conn, key, batch_id, charges, source_ref))
+    with_connection(|conn| write_period(conn, key, batch_id, charges, source_ref, channel))
 }
 
 /// Record a balance observation. Re-observing the same instant overwrites,
@@ -375,12 +409,13 @@ fn parse_timestamp(value: &str) -> Result<DateTime<Utc>> {
     )
 }
 
-fn write_period(
+pub(crate) fn write_period(
     conn: &mut Connection,
     key: &PeriodKey,
     batch_id: &str,
     charges: &[Charge],
     source_ref: Option<&str>,
+    channel: Channel,
 ) -> Result<()> {
     let now = Utc::now().format(TIMESTAMP_FORMAT).to_string();
     let ids = charge_ids(key, charges);
@@ -402,8 +437,8 @@ fn write_period(
     tx.execute(
         "INSERT INTO ingest_batch
          (batch_id, provider, account_id, billing_period, started_at, completed_at,
-          status, row_count, source_ref)
-         VALUES (?, ?, ?, ?, CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), 'complete', ?, ?)",
+          status, row_count, source_ref, channel)
+         VALUES (?, ?, ?, ?, CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), 'complete', ?, ?, ?)",
         params![
             batch_id,
             key.provider,
@@ -413,6 +448,7 @@ fn write_period(
             now,
             charges.len() as i64,
             source_ref,
+            channel.as_str(),
         ],
     )?;
 
@@ -477,7 +513,7 @@ fn write_period(
     Ok(())
 }
 
-fn write_balance(conn: &mut Connection, snapshot: &BalanceSnapshot) -> Result<()> {
+pub(crate) fn write_balance(conn: &mut Connection, snapshot: &BalanceSnapshot) -> Result<()> {
     let now = Utc::now().format(TIMESTAMP_FORMAT).to_string();
 
     conn.execute(
@@ -608,10 +644,10 @@ mod tests {
         let key = key();
         let charges = vec![usage("EC2", 12.5, 1), usage("S3", 0.75, 1)];
 
-        write_period(&mut conn, &key, "b-1", &charges, None).unwrap();
+        write_period(&mut conn, &key, "b-1", &charges, None, Channel::Api).unwrap();
         let first = stored(&conn, &key);
 
-        write_period(&mut conn, &key, "b-2", &charges, None).unwrap();
+        write_period(&mut conn, &key, "b-2", &charges, None, Channel::Api).unwrap();
         let second = stored(&conn, &key);
 
         assert_eq!(first, second);
@@ -633,6 +669,7 @@ mod tests {
                 usage("RDS", 3.0, 1),
             ],
             None,
+            Channel::Api,
         )
         .unwrap();
 
@@ -644,6 +681,7 @@ mod tests {
             "b-2",
             &[usage("EC2", 11.0, 1), usage("S3", 0.75, 1)],
             None,
+            Channel::Api,
         )
         .unwrap();
 
@@ -660,8 +698,24 @@ mod tests {
         let mut conn = conn();
         let key = key();
 
-        write_period(&mut conn, &key, "b-1", &[usage("EC2", 12.5, 1)], None).unwrap();
-        write_period(&mut conn, &key, "b-2", &[usage("EC2", 11.0, 1)], None).unwrap();
+        write_period(
+            &mut conn,
+            &key,
+            "b-1",
+            &[usage("EC2", 12.5, 1)],
+            None,
+            Channel::Api,
+        )
+        .unwrap();
+        write_period(
+            &mut conn,
+            &key,
+            "b-2",
+            &[usage("EC2", 11.0, 1)],
+            None,
+            Channel::Api,
+        )
+        .unwrap();
 
         assert_eq!(scalar_i64(&conn, "SELECT count(*) FROM ingest_batch"), 2);
         assert_eq!(
@@ -685,17 +739,34 @@ mod tests {
         let july = PeriodKey::new("AWS", "acct-1", "2026-07");
         let other_account = PeriodKey::new("AWS", "acct-2", "2026-08");
 
-        write_period(&mut conn, &july, "b-1", &[usage("EC2", 9.0, 1)], None).unwrap();
+        write_period(
+            &mut conn,
+            &july,
+            "b-1",
+            &[usage("EC2", 9.0, 1)],
+            None,
+            Channel::Api,
+        )
+        .unwrap();
         write_period(
             &mut conn,
             &other_account,
             "b-2",
             &[usage("EC2", 5.0, 1)],
             None,
+            Channel::Api,
         )
         .unwrap();
-        write_period(&mut conn, &august, "b-3", &[usage("EC2", 12.5, 1)], None).unwrap();
-        write_period(&mut conn, &august, "b-4", &[], None).unwrap();
+        write_period(
+            &mut conn,
+            &august,
+            "b-3",
+            &[usage("EC2", 12.5, 1)],
+            None,
+            Channel::Api,
+        )
+        .unwrap();
+        write_period(&mut conn, &august, "b-4", &[], None, Channel::Api).unwrap();
 
         assert!(stored(&conn, &august).is_empty());
         assert_eq!(stored(&conn, &july).len(), 1);
@@ -708,11 +779,11 @@ mod tests {
         let key = key();
         let charges = vec![usage("EC2", 12.5, 1), usage("EC2", 4.0, 1)];
 
-        write_period(&mut conn, &key, "b-1", &charges, None).unwrap();
+        write_period(&mut conn, &key, "b-1", &charges, None, Channel::Api).unwrap();
         let first = stored(&conn, &key);
         assert_eq!(first.len(), 2);
 
-        write_period(&mut conn, &key, "b-2", &charges, None).unwrap();
+        write_period(&mut conn, &key, "b-2", &charges, None, Channel::Api).unwrap();
         assert_eq!(stored(&conn, &key), first);
     }
 
@@ -733,6 +804,7 @@ mod tests {
                 ..Charge::new(at(1), at(2), "USD")
             }],
             None,
+            Channel::Api,
         )
         .unwrap();
 
@@ -880,7 +952,15 @@ mod tests {
         let mut conn = conn();
         let key = key();
 
-        write_period(&mut conn, &key, "b-1", &[usage("EC2", 1.0, 3)], None).unwrap();
+        write_period(
+            &mut conn,
+            &key,
+            "b-1",
+            &[usage("EC2", 1.0, 3)],
+            None,
+            Channel::Api,
+        )
+        .unwrap();
 
         let start: String = conn
             .query_row(

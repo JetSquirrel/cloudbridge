@@ -1,86 +1,272 @@
 //! Main application module
 
+use chrono::{DateTime, Utc};
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::*;
 
-use crate::ui::{accounts::AccountsView, dashboard::DashboardView, settings::SettingsView};
+use crate::ui::data::SyncStatus;
+use crate::ui::theme;
+use crate::ui::{
+    accounts::AccountsView, alerts::AlertsView, attribution::AttributionView,
+    overview::OverviewView, rules::RulesView, settings::SettingsView,
+};
+
+/// State shared across pages.
+///
+/// Pages can subscribe to the entity; the app shell refreshes it on
+/// creation and on every view switch.
+pub struct AppState {
+    /// Open alerts, shown as the sidebar badge. 0 hides the badge.
+    pub open_alerts: usize,
+    /// The sidebar sync card's data; `None` until the first load lands.
+    pub sync: Option<SyncStatus>,
+    /// A view switch a page asked for; the shell observes this entity,
+    /// applies the request, and clears it.
+    navigate_to: Option<CurrentView>,
+}
+
+impl AppState {
+    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
+        Self {
+            open_alerts: 0,
+            sync: None,
+            navigate_to: None,
+        }
+    }
+
+    /// Ask the app shell to switch to `view`. The shell observes this
+    /// entity and applies the request on notify.
+    pub fn navigate(&mut self, view: CurrentView, cx: &mut Context<Self>) {
+        self.navigate_to = Some(view);
+        cx.notify();
+    }
+}
+
+/// Global handle to the shared [`AppState`] entity, set when the app shell
+/// is created. Pages reach it from any event listener via
+/// `cx.global::<GlobalAppState>()` — see [`navigate_to`].
+pub struct GlobalAppState(pub Entity<AppState>);
+
+impl Global for GlobalAppState {}
+
+/// Ask the app shell to switch views, from any click handler:
+///
+/// ```rust,ignore
+/// .on_click(|_, _, cx| crate::app::navigate_to(CurrentView::Rules, cx))
+/// ```
+pub fn navigate_to(view: CurrentView, cx: &mut App) {
+    let app_state = cx.global::<GlobalAppState>().0.clone();
+    app_state.update(cx, |state, cx| state.navigate(view, cx));
+}
 
 /// Main application view
 pub struct CloudBridgeApp {
     /// Current navigation item
     current_view: CurrentView,
-    /// Dashboard view
-    dashboard_view: Entity<DashboardView>,
+    /// Shared app state (alert badge count, ...)
+    app_state: Entity<AppState>,
+    /// Overview view
+    overview_view: Entity<OverviewView>,
+    /// Alerts view
+    alerts_view: Entity<AlertsView>,
+    /// Attribution view
+    attribution_view: Entity<AttributionView>,
     /// Accounts view
     accounts_view: Entity<AccountsView>,
+    /// Rules view
+    rules_view: Entity<RulesView>,
     /// Settings view
     settings_view: Entity<SettingsView>,
+    /// Keeps the AppState observer alive.
+    _subscriptions: Vec<Subscription>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum CurrentView {
     #[default]
-    Dashboard,
+    Overview,
+    Alerts,
+    Attribution,
     Accounts,
+    Rules,
     Settings,
 }
 
 impl CloudBridgeApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let dashboard_view = cx.new(|cx| DashboardView::new(window, cx));
+        let app_state = cx.new(|cx| AppState::new(window, cx));
+        // Pages reach the shared state through the global rather than being
+        // handed the entity one constructor at a time.
+        cx.set_global(GlobalAppState(app_state.clone()));
+        let overview_view = cx.new(|cx| OverviewView::new(window, cx));
+        let alerts_view = cx.new(|cx| AlertsView::new(window, cx));
+        let attribution_view = cx.new(|cx| AttributionView::new(window, cx));
         let accounts_view = cx.new(|cx| AccountsView::new(window, cx));
+        let rules_view = cx.new(|cx| RulesView::new(window, cx));
         let settings_view = cx.new(|cx| SettingsView::new(window, cx));
 
-        Self {
-            current_view: CurrentView::Dashboard,
-            dashboard_view,
+        // A page's navigation request lands on AppState::navigate_to; apply
+        // it and clear it. The update in refresh_sidebar does not notify, so
+        // this observer cannot loop.
+        let observer = cx.observe(&app_state, |this, app_state, cx| {
+            let target = app_state.update(cx, |state, _| state.navigate_to.take());
+            if let Some(view) = target {
+                if this.current_view != view {
+                    this.current_view = view;
+                    this.reload_view(view, cx);
+                    this.refresh_sidebar(cx);
+                }
+                cx.notify();
+            }
+        });
+
+        let mut this = Self {
+            current_view: CurrentView::Overview,
+            app_state,
+            overview_view,
+            alerts_view,
+            attribution_view,
             accounts_view,
+            rules_view,
             settings_view,
+            _subscriptions: vec![observer],
+        };
+
+        this.refresh_sidebar(cx);
+        this
+    }
+
+    /// Reload the page data of `view`, called whenever the shell switches
+    /// to it. Views are created once and kept alive, so without this a
+    /// revisited page would show what it loaded at startup.
+    fn reload_view(&mut self, view: CurrentView, cx: &mut Context<Self>) {
+        match view {
+            CurrentView::Overview => self.overview_view.update(cx, |v, cx| v.reload(cx)),
+            CurrentView::Alerts => self.alerts_view.update(cx, |v, cx| v.reload(cx)),
+            CurrentView::Attribution => self.attribution_view.update(cx, |v, cx| v.reload(cx)),
+            CurrentView::Accounts => self.accounts_view.update(cx, |v, cx| v.reload(cx)),
+            CurrentView::Rules => self.rules_view.update(cx, |v, cx| v.reload(cx)),
+            CurrentView::Settings => {}
         }
+    }
+
+    /// Reload the sidebar's sync status and open-alert count.
+    ///
+    /// Both loaders are blocking DuckDB reads, so they run in
+    /// `smol::unblock` and the result lands back on `AppState` — the same
+    /// thread + unblock + spawn + notify pattern as `accounts.rs`.
+    fn refresh_sidebar(&mut self, cx: &mut Context<Self>) {
+        let app_state = self.app_state.clone();
+
+        cx.spawn(async move |this, cx| {
+            let (sync, open_alerts) = smol::unblock(|| {
+                let sync = crate::ui::data::load_sync_status().ok();
+                let open_alerts = crate::alerts::open_alerts()
+                    .map(|alerts| alerts.len())
+                    .unwrap_or(0);
+                (sync, open_alerts)
+            })
+            .await;
+
+            cx.update(|cx| {
+                app_state.update(cx, |state, _| {
+                    state.sync = sync;
+                    state.open_alerts = open_alerts;
+                });
+                this.update(cx, |_, cx| cx.notify()).ok();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn render_sidebar(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let current = self.current_view;
+        let open_alerts = self.app_state.read(cx).open_alerts;
+        // No open alerts, no badge.
+        let alerts_badge = (open_alerts > 0).then_some(open_alerts);
 
         div()
-            .w(px(220.0))
+            .w(px(250.0))
             .h_full()
+            .flex_shrink_0()
             .border_r_1()
-            .border_color(cx.theme().sidebar_border)
-            .bg(cx.theme().sidebar)
+            .border_color(theme::card_border(cx))
+            .bg(theme::sidebar_bg(cx))
             .p_4()
             .v_flex()
             .gap_2()
             .child(
                 div()
-                    .text_xl()
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(cx.theme().sidebar_foreground)
-                    .child("CloudBridge")
+                    .v_flex()
+                    .gap_1()
                     .pb_4()
+                    .mb_2()
                     .border_b_1()
-                    .border_color(cx.theme().sidebar_border)
-                    .mb_4(),
+                    .border_color(theme::card_border(cx))
+                    .child(
+                        div()
+                            .text_xl()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme::accent(cx))
+                            .child("CloudBridge"),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::text_muted(cx))
+                            .child("LOCAL LEDGER · V0.3"),
+                    ),
             )
             .child(self.nav_item(
-                "Dashboard",
-                CurrentView::Dashboard,
-                current == CurrentView::Dashboard,
+                "Overview",
+                IconName::LayoutDashboard,
+                CurrentView::Overview,
+                current == CurrentView::Overview,
+                None,
+                cx,
+            ))
+            .child(self.nav_item(
+                "Alerts",
+                IconName::Bell,
+                CurrentView::Alerts,
+                current == CurrentView::Alerts,
+                alerts_badge,
+                cx,
+            ))
+            .child(self.nav_item(
+                "Attribution",
+                IconName::ChartPie,
+                CurrentView::Attribution,
+                current == CurrentView::Attribution,
+                None,
                 cx,
             ))
             .child(self.nav_item(
                 "Accounts",
+                IconName::Building2,
                 CurrentView::Accounts,
                 current == CurrentView::Accounts,
+                None,
                 cx,
             ))
-            .child(
-                div().flex_1(), // Flexible space
-            )
+            .child(self.nav_item(
+                "Rules",
+                IconName::SquareTerminal,
+                CurrentView::Rules,
+                current == CurrentView::Rules,
+                None,
+                cx,
+            ))
+            .child(div().flex_1())
+            .child(self.render_sync_card(cx))
             .child(self.nav_item(
                 "Settings",
+                IconName::Settings,
                 CurrentView::Settings,
                 current == CurrentView::Settings,
+                None,
                 cx,
             ))
     }
@@ -88,38 +274,122 @@ impl CloudBridgeApp {
     fn nav_item(
         &self,
         label: &'static str,
+        icon: IconName,
         view: CurrentView,
         is_active: bool,
+        badge: Option<usize>,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        // Mirrors gpui-component's own SidebarMenuItem: `accent` is a surface
-        // token, so the active label has to use `sidebar_accent_foreground`.
-        let bg = if is_active {
-            cx.theme().sidebar_accent
-        } else {
-            transparent_black()
-        };
-
         let text_color = if is_active {
-            cx.theme().sidebar_accent_foreground
+            theme::on_accent(cx)
         } else {
-            cx.theme().sidebar_foreground
+            theme::text_muted(cx)
         };
 
-        div()
+        let mut item = div()
             .id(SharedString::from(label))
+            .h_flex()
+            .items_center()
+            .gap_2()
             .px_3()
             .py_2()
-            .rounded_md()
+            .rounded_full()
             .cursor_pointer()
-            .bg(bg)
-            .hover(|s| s.bg(cx.theme().sidebar_accent.opacity(0.8)))
             .text_color(text_color)
-            .child(label)
-            .on_click(cx.listener(move |this, _, _, cx| {
+            .when(is_active, |el| el.bg(theme::accent(cx)))
+            .when(!is_active, |el| el.hover(|s| s.bg(theme::card_bg(cx))))
+            .child(Icon::new(icon).size(px(16.0)).text_color(text_color))
+            .child(label);
+
+        if let Some(count) = badge {
+            item = item.child(div().flex_1()).child(
+                div()
+                    .size(px(18.0))
+                    .rounded_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_xs()
+                    .bg(if is_active {
+                        theme::on_accent(cx)
+                    } else {
+                        theme::accent(cx)
+                    })
+                    .text_color(if is_active {
+                        theme::accent(cx)
+                    } else {
+                        theme::on_accent(cx)
+                    })
+                    .child(count.to_string()),
+            );
+        }
+
+        item.on_click(cx.listener(move |this, _, _, cx| {
+            if this.current_view != view {
                 this.current_view = view;
-                cx.notify();
-            }))
+                this.reload_view(view, cx);
+            }
+            this.refresh_sidebar(cx);
+            cx.notify();
+        }))
+    }
+
+    fn render_sync_card(&self, cx: &App) -> impl IntoElement {
+        let sync = self.app_state.read(cx).sync.as_ref();
+
+        // Until the first load lands, show nothing but the honest minimum.
+        let (synced, detail, fresh) = match sync {
+            Some(sync) => (
+                match sync.last_synced_at {
+                    Some(at) => format!("Synced {}", relative_time(at)),
+                    None => "Never synced".to_string(),
+                },
+                sync_detail(sync),
+                sync.last_synced_at.is_some(),
+            ),
+            None => (
+                "Syncing…".to_string(),
+                "Reading the ledger.".to_string(),
+                false,
+            ),
+        };
+
+        theme::card(cx)
+            .w_full()
+            .p_3()
+            .mb_2()
+            .v_flex()
+            .gap_1()
+            .child(
+                div()
+                    .h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(theme::dot(if fresh {
+                        theme::olive(cx)
+                    } else {
+                        theme::grey(cx)
+                    }))
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme::text_primary(cx))
+                            .child(synced),
+                    ),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme::text_muted(cx))
+                    .child(detail),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme::text_muted(cx))
+                    .child("Credentials stay in the OS keyring."),
+            )
     }
 
     fn render_content(
@@ -128,8 +398,11 @@ impl CloudBridgeApp {
         _cx: &mut Context<Self>,
     ) -> impl IntoElement {
         match self.current_view {
-            CurrentView::Dashboard => div().size_full().child(self.dashboard_view.clone()),
+            CurrentView::Overview => div().size_full().child(self.overview_view.clone()),
+            CurrentView::Alerts => div().size_full().child(self.alerts_view.clone()),
+            CurrentView::Attribution => div().size_full().child(self.attribution_view.clone()),
             CurrentView::Accounts => div().size_full().child(self.accounts_view.clone()),
+            CurrentView::Rules => div().size_full().child(self.rules_view.clone()),
             CurrentView::Settings => div().size_full().child(self.settings_view.clone()),
         }
     }
@@ -139,7 +412,8 @@ impl Render for CloudBridgeApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
-            .bg(cx.theme().background)
+            .bg(theme::app_bg(cx))
+            .text_color(theme::text_primary(cx))
             .h_flex()
             .child(self.render_sidebar(window, cx))
             .child(
@@ -149,5 +423,54 @@ impl Render for CloudBridgeApp {
                     .overflow_hidden()
                     .child(self.render_content(window, cx)),
             )
+    }
+}
+
+/// "N min ago" / "N h ago"; anything under a minute reads as just now.
+fn relative_time(at: DateTime<Utc>) -> String {
+    let delta = Utc::now() - at;
+    if delta.num_minutes() < 1 {
+        "just now".to_string()
+    } else if delta.num_hours() < 1 {
+        format!("{} min ago", delta.num_minutes())
+    } else {
+        format!("{} h ago", delta.num_hours())
+    }
+}
+
+/// The muted line under the sync title: source count plus when the next
+/// automatic fetch is due.
+fn sync_detail(sync: &SyncStatus) -> String {
+    if sync.source_count == 0 {
+        return "No sources configured.".to_string();
+    }
+
+    let sources = format!(
+        "{} source{}",
+        sync.source_count,
+        if sync.source_count == 1 { "" } else { "s" }
+    );
+
+    match sync.next_fetch_at {
+        None => format!("{} · waiting for the first sync.", sources),
+        Some(at) => {
+            let remaining = at - Utc::now();
+            if remaining.num_seconds() <= 0 {
+                format!("{} · next auto-fetch due now.", sources)
+            } else if remaining.num_hours() >= 1 {
+                format!(
+                    "{} · next auto-fetch in {}h {}m.",
+                    sources,
+                    remaining.num_hours(),
+                    remaining.num_minutes() % 60
+                )
+            } else {
+                format!(
+                    "{} · next auto-fetch in {} min.",
+                    sources,
+                    remaining.num_minutes().max(1)
+                )
+            }
+        }
     }
 }

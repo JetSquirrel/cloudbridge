@@ -1,0 +1,5 @@
+date,workspace_id,workspace,description,model,amount,currency,input_tokens,output_tokens
+2026-08-09,wrkspc_1,Default,Input tokens,claude-opus-5,30.00,USD,2000000,
+2026-08-09,wrkspc_1,Default,Output tokens,claude-opus-5,45.00,USD,,600000
+2026-08-11,wrkspc_1,Default,Cache read,claude-opus-5,1.20,USD,,
+2026-09-02,wrkspc_2,Batch,Input tokens,claude-sonnet-5,2.00,USD,600000,
