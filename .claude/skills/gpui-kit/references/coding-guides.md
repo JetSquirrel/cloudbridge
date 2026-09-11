@@ -1,13 +1,13 @@
 ---
 title: Coding Guides
-description: Architecture and coding conventions for maintainable GPUI Component applications
+description: Architecture and coding conventions for maintainable GPUI Kit applications
 order: -2.2
 ---
 
 # Coding Guides
 
 This guide describes the application architecture and code patterns that have
-proved durable in GPUI Component. It is written for both engineers and coding
+proved durable in GPUI Kit. It is written for both engineers and coding
 agents. Read [Design Guides](./design-guides.md) first: code structure should
 preserve product intent, not replace it.
 
@@ -103,7 +103,7 @@ Initialize GPUI Component once, before creating component-backed views, and put
 
 ```rust
 app.run(move |cx| {
-    gpui_component::init(cx);
+    gpui_kit::init(cx);
 
     cx.spawn(async move |cx| {
         cx.open_window(WindowOptions::default(), |window, cx| {
@@ -459,11 +459,11 @@ what it does.
 
 Preserve semantic roles in the element choice. Use `Button` for commands even
 when the desired treatment is quiet—select `outline`, `ghost`, or an icon
-presentation instead of replacing it with `Link`. GPUI Component applications
+presentation instead of replacing it with `Link`. GPUI Kit applications
 reserve `Link` for targets opened by a browser or mail client, such as a URL,
 web document, or email address. Use the relevant navigation component for an
 in-app destination and `Button`/`Action` for a command. This is a product
-convention, not a limitation of `gpui_base::Link`, whose `open_with` seam can
+convention, not a limitation of `gpui_kit::base::Link`, whose `open_with` seam can
 route a destination elsewhere.
 
 Only stop propagation when a nested interaction must prevent its parent from
@@ -510,6 +510,22 @@ or identity and reject stale work rather than applying it to new state.
 
 ## Layout, measurement, and scrolling
 
+`h_flex` centres its children on the cross axis; `v_flex` leaves flexbox's
+default, `stretch`. This matches Zed's `h_flex`, and it is what a row of
+controls wants, so a row of icon and label says nothing. It is not what a row
+of full-height columns wants: a column placed in a bare `h_flex` does not fill
+the row's height, so a column taller than the row is centred and its top —
+commonly a header — is clipped off the top of the window, with nothing near the
+column to say why. A row whose children are columns says `items_stretch()`:
+
+```rust
+h_flex()
+    .items_stretch()
+    .size_full()
+    .child(sidebar)
+    .child(content)
+```
+
 Most UI should use GPUI layout rather than measuring itself. Measurement is a
 deep behavior tool for popups, virtualization, editors, resize handles, charts,
 and similar components whose correctness depends on resolved geometry.
@@ -535,10 +551,22 @@ measured correction as a raw `px(...)` nudge. Trace the mismatch to duplicated
 padding, nested insets, border ownership, font metrics, or rounding, then fix
 the structural owner.
 
+`h_flex()` and `v_flex()` are not mirror images: `h_flex()` centers its
+children on the cross axis, `v_flex()` leaves them stretching. A column placed
+in a row therefore takes its content's height, not the row's, and a column
+taller than the row is centered — its header is pushed off the top edge and
+clipped. Give a full-height column `h_full()`, or give the row `items_start()`
+or `items_stretch()`, whenever the child owns a header, a footer, or a scroll
+region that must resolve against the row's height.
+
 Every scrollable region must have one owner. In flex layouts, apply
 `min_w_0()` or `min_h_0()` to the flexible child that is allowed to shrink.
-Avoid accidental nested scrolling; route wheel input to the intended axis and
-preserve platform/wasm differences when an API is not portable.
+A flex item only drops its content-based automatic minimum size when its own
+overflow is not visible, so an ordinary flexible child refuses to shrink around
+long content until you say so. `Scrollable` handles this for its own wrapper,
+but a plain `div` between it and the flex container still needs the minimum
+released. Avoid accidental nested scrolling; route wheel input to the intended
+axis and preserve platform/wasm differences when an API is not portable.
 
 Attach `Scrollable` to the element that owns the full panel, editor, or window
 viewport so its scrollbar resolves against the region edge. Put content inset
@@ -587,10 +615,12 @@ For reusable components:
 
 Private fields are the default for behavioral state that must evolve without
 breaking callers. Public fields are appropriate for deliberately record-like
-configuration, theme tokens, geometry, and serialized schemas when direct
-construction is part of the contract and the compatibility cost is accepted.
-Use `#[non_exhaustive]` when callers may inspect a record but should not depend
-on exhaustive construction or matching.
+configuration, theme tokens, geometry, and serialized schemas. Every public
+struct with public fields must carry `#[non_exhaustive]`. Provide constructors,
+`Default`, or builders so callers can create values without exhaustive struct
+literals. This preserves the ability to add fields without breaking callers.
+Apply this rule to new types and public API changes; unrelated existing types
+can be migrated separately.
 
 Keep public module paths stable while reorganizing internals: use a module seam
 with deliberate re-exports so folders can change without forcing downstream
