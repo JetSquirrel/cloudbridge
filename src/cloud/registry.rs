@@ -533,7 +533,9 @@ static SOURCES: &[SourceDescriptor] = &[
                 ctx.region,
             ))
         }),
-        bill_file: None,
+        // The only window into what DeepSeek spend was for: its API
+        // reports a balance and nothing else.
+        bill_file: Some(&billfile::deepseek::FORMAT),
     },
     // The three below are bill-file only so far. Each names the credential
     // its billing API will want, so the form has a label ready, but none is

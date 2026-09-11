@@ -3,9 +3,9 @@
 
 use std::collections::HashMap;
 
-use gpui::prelude::FluentBuilder;
-use gpui::*;
-use gpui_component::{button::*, StyledExt};
+use gpui_kit::component::{button::*, StyledExt};
+use gpui_kit::prelude::FluentBuilder;
+use gpui_kit::*;
 
 use super::{data, theme};
 
@@ -15,13 +15,10 @@ const NODE_WIDTH: f32 = 10.0;
 const NODE_RADIUS: f32 = 3.0;
 const NODE_GAP: f32 = 6.0;
 const LINK_OPACITY: f32 = 0.35;
-/// Width of the label columns flanking the diagram.
+/// Width of the label columns flanking the diagram. Stays in px rather
+/// than a rem helper: it is canvas-mirroring geometry and must track the
+/// sankey's pixel-exact heights and gaps, not the font scale.
 const LABEL_WIDTH: f32 = 110.0;
-
-/// Lighter olive, so the olive-toned lines stay distinguishable.
-fn olive_light() -> Hsla {
-    rgb(0x9AA876).into()
-}
 
 /// Currency symbol for a reporting-currency code.
 fn currency_symbol(currency: &str) -> &str {
@@ -34,21 +31,39 @@ fn currency_symbol(currency: &str) -> &str {
     }
 }
 
-/// Whole-number formatting with thousands separators, e.g. `$51,080`.
+/// Amount with the currency's symbol, e.g. `$51,080`. Precision adapts to
+/// the size so sub-dollar spend does not round to `$0`: whole units from
+/// 100 up, two decimals from a cent up, and `<$0.01` below a cent.
 fn fmt_amount(currency: &str, amount: f64) -> String {
-    let mut digits = format!("{:.0}", amount);
+    let symbol = currency_symbol(currency);
+    let prefix = if symbol.is_empty() {
+        format!("{currency} ")
+    } else {
+        symbol.to_string()
+    };
+
+    let magnitude = amount.abs();
+    // Below half a cent is netting round-off, not an amount.
+    if magnitude < 0.005 {
+        return format!("{prefix}0");
+    }
+    let sign = if amount < 0.0 { "-" } else { "" };
+    if magnitude < 0.01 {
+        // A sub-cent amount has no honest rounding; say so instead.
+        return format!("{sign}<{prefix}0.01");
+    }
+    if magnitude < 100.0 {
+        return format!("{sign}{prefix}{magnitude:.2}");
+    }
+
+    let mut digits = format!("{magnitude:.0}");
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     while digits.len() > 3 {
         let split = digits.len() - 3;
         out.insert_str(0, &format!(",{}", &digits[split..]));
         digits.truncate(split);
     }
-    let symbol = currency_symbol(currency);
-    if symbol.is_empty() {
-        format!("{} {}{}", currency, digits, out)
-    } else {
-        format!("{}{}{}", symbol, digits, out)
-    }
+    format!("{sign}{prefix}{digits}{out}")
 }
 
 /// Number of Sankey columns in the data (0 source … N-1 business line).
@@ -78,7 +93,7 @@ fn line_colors(cx: &App, data: &data::SankeyData) -> HashMap<String, Hsla> {
     let palette = [
         theme::accent(cx),
         theme::olive(cx),
-        olive_light(),
+        theme::olive_light(cx),
         theme::warning_text(cx),
     ];
     let mut map = HashMap::new();
@@ -185,6 +200,9 @@ pub struct AttributionView {
     error: Option<String>,
     /// Whether a load is in flight.
     loading: bool,
+    /// Bumped on every load; a completion stamped with an older generation
+    /// is discarded so a slow first load cannot clobber a newer result.
+    load_generation: u64,
 }
 
 impl AttributionView {
@@ -193,6 +211,7 @@ impl AttributionView {
             data: None,
             error: None,
             loading: true,
+            load_generation: 0,
         };
         view.load(cx);
         view
@@ -212,9 +231,14 @@ impl AttributionView {
     /// blocking.
     fn load(&mut self, cx: &mut Context<Self>) {
         self.loading = true;
+        self.load_generation += 1;
+        let generation = self.load_generation;
         cx.spawn(async move |this, cx| {
             let outcome = smol::unblock(data::load_attribution).await;
             this.update(cx, |view, cx| {
+                if view.load_generation != generation {
+                    return;
+                }
                 match outcome {
                     Ok(loaded) => {
                         view.data = Some(loaded);
@@ -254,12 +278,6 @@ impl AttributionView {
                     .gap_1()
                     .child(theme::page_title(cx, "Attribution"))
                     .child(theme::caption(cx, caption)),
-            )
-            .child(
-                Button::new("export-csv")
-                    .label("Export CSV")
-                    .outline()
-                    .on_click(cx.listener(|_, _, _, _| {})),
             )
     }
 
@@ -411,20 +429,31 @@ impl AttributionView {
         column: usize,
         right_aligned: bool,
     ) -> Div {
+        // A node thinner than a text line cannot carry its own label —
+        // the text would spill over its neighbors. Such nodes are thin
+        // precisely because they matter least.
+        const MIN_LABEL_HEIGHT: f32 = 14.0;
         let labels = sankey
             .nodes
             .iter()
             .filter(|n| n.column == column)
             .rev()
             .map(|node| {
+                let height = heights.get(&node.id).copied().unwrap_or(2.0);
                 div()
-                    .h(px(heights.get(&node.id).copied().unwrap_or(2.0)))
+                    .h(px(height))
+                    .w_full()
+                    .min_w_0()
                     .flex()
                     .items_center()
                     .when(right_aligned, |el| el.justify_end())
                     .text_xs()
                     .text_color(theme::text_muted(cx))
-                    .child(node.label.clone())
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .when(height >= MIN_LABEL_HEIGHT, |el| {
+                        el.child(node.label.clone())
+                    })
                     .into_any_element()
             });
         let el = div()
@@ -490,6 +519,8 @@ impl AttributionView {
             })
             .collect();
 
+        // min_w_0 so the canvas compresses inside the h_flex on narrow
+        // windows instead of clipping past the label columns.
         let canvas_el = canvas(
             move |bounds, _window, _cx| {
                 Self::layout_sankey(&bounds, &nodes, &links, &heights, scale, &colors)
@@ -506,6 +537,7 @@ impl AttributionView {
             },
         )
         .flex_1()
+        .min_w_0()
         .h(px(SANKEY_HEIGHT));
 
         theme::card(cx).w_full().p_5().child(
@@ -534,11 +566,16 @@ impl AttributionView {
             div()
                 .v_flex()
                 .children(card.largest.iter().map(|item| {
+                    // Provider · service is the row; a description, when
+                    // the row even has one, trails it.
                     let what = item
                         .service
                         .clone()
-                        .or_else(|| item.description.clone())
                         .unwrap_or_else(|| "untagged charge".to_string());
+                    let mut label = format!("{} · {}", item.provider, what);
+                    if let Some(description) = &item.description {
+                        label.push_str(&format!(" · {description}"));
+                    }
                     div()
                         .w_full()
                         .h_flex()
@@ -550,7 +587,7 @@ impl AttributionView {
                             div()
                                 .text_sm()
                                 .text_color(theme::text_primary(cx))
-                                .child(format!("{} · {}", item.provider, what)),
+                                .child(label),
                         )
                         .child(
                             div()
@@ -620,6 +657,20 @@ impl AttributionView {
             .child("Loading attribution…")
     }
 
+    /// Compact banner shown above stale content when a background reload
+    /// fails — the full-page error card is only for when there is nothing
+    /// to show at all.
+    fn render_error_banner(&self, cx: &Context<Self>, error: &str) -> impl IntoElement {
+        div()
+            .w_full()
+            .p_3()
+            .rounded_md()
+            .bg(theme::danger_bg(cx))
+            .text_sm()
+            .text_color(theme::danger(cx))
+            .child(error.to_string())
+    }
+
     fn render_error(&self, cx: &Context<Self>, error: &str) -> impl IntoElement {
         theme::card(cx)
             .w_full()
@@ -647,26 +698,12 @@ impl AttributionView {
 impl Render for AttributionView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body: AnyElement = if let Some(attribution) = &self.data {
-            if attribution.sankey.nodes.is_empty() {
-                div()
-                    .v_flex()
-                    .gap_6()
-                    .child(self.render_header(cx, None))
-                    .child(self.render_empty_state(cx))
-                    .into_any_element()
+            let content: AnyElement = if attribution.sankey.nodes.is_empty() {
+                self.render_empty_state(cx).into_any_element()
             } else {
-                let total: f64 = attribution
-                    .sankey
-                    .nodes
-                    .iter()
-                    .filter(|n| n.column == 0)
-                    .map(|n| n.value)
-                    .sum();
-                let caption_total = Some((total, attribution.currency.as_str()));
                 div()
                     .v_flex()
                     .gap_6()
-                    .child(self.render_header(cx, caption_total))
                     .child(self.render_path_row(cx, &attribution.path))
                     .child(self.render_sankey_card(cx, &attribution.sankey))
                     .child(self.render_unallocated_card(
@@ -675,7 +712,30 @@ impl Render for AttributionView {
                         &attribution.currency,
                     ))
                     .into_any_element()
-            }
+            };
+            let total: f64 = attribution
+                .sankey
+                .nodes
+                .iter()
+                .filter(|n| n.column == 0)
+                .map(|n| n.value)
+                .sum();
+            let caption_total = if attribution.sankey.nodes.is_empty() {
+                None
+            } else {
+                Some((total, attribution.currency.as_str()))
+            };
+            div()
+                .v_flex()
+                .gap_6()
+                .child(self.render_header(cx, caption_total))
+                // A failed background reload keeps the last good data on
+                // screen; the error rides above it as a banner.
+                .when_some(self.error.clone(), |el, error| {
+                    el.child(self.render_error_banner(cx, &error))
+                })
+                .child(content)
+                .into_any_element()
         } else if let Some(error) = &self.error {
             div()
                 .v_flex()
@@ -699,7 +759,7 @@ impl Render for AttributionView {
             .size_full()
             .v_flex()
             .gap_6()
-            .p(px(32.0))
+            .p_8()
             .bg(theme::app_bg(cx))
             .overflow_y_scroll()
             .child(body)

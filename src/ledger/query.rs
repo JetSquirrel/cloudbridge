@@ -282,6 +282,12 @@ pub fn untagged_detail(
     with_connection_ref(|conn| untagged_detail_of(conn, billing_period, tag_key, limit))
 }
 
+/// A caller that wants "every row" passes `usize::MAX`, which wraps to -1
+/// as an i64 — and DuckDB refuses a negative LIMIT outright.
+fn bounded_limit(limit: usize) -> i64 {
+    i64::try_from(limit).unwrap_or(i64::MAX)
+}
+
 fn untagged_detail_of(
     conn: &Connection,
     billing_period: &str,
@@ -299,14 +305,415 @@ fn untagged_detail_of(
     ))?;
 
     let rows = stmt
-        .query_map(params![billing_period, tag_key, limit as i64], |row| {
-            Ok(UntaggedCharge {
-                provider: row.get(0)?,
-                service: row.get(1)?,
-                description: row.get(2)?,
-                amount: row.get(3)?,
-            })
+        .query_map(
+            params![billing_period, tag_key, bounded_limit(limit)],
+            |row| {
+                Ok(UntaggedCharge {
+                    provider: row.get(0)?,
+                    service: row.get(1)?,
+                    description: row.get(2)?,
+                    amount: row.get(3)?,
+                })
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows)
+}
+
+/// Gross usage and credits of one period, in the reporting currency.
+///
+/// Net totals hide credit-covered spend: an account whose usage is fully
+/// offset reads as $0 while it really consumed dollars. The UI keeps the
+/// net total as its headline and shows these two buckets next to it. Tax
+/// and Purchase rows are in neither bucket — they still count toward the
+/// net total.
+pub fn usage_and_credits(billing_period: &str) -> Result<(f64, f64)> {
+    with_connection_ref(|conn| usage_and_credits_of(conn, billing_period))
+}
+
+fn usage_and_credits_of(conn: &Connection, billing_period: &str) -> Result<(f64, f64)> {
+    let (usage, credits): (Option<f64>, Option<f64>) = conn.query_row(
+        &format!(
+            "SELECT sum(billed_cost_base) FILTER (WHERE charge_category = 'Usage'),
+                    sum(billed_cost_base) FILTER (WHERE charge_category IN ('Credit', 'Adjustment'))
+             FROM {NORMALIZED_VIEW}
+             WHERE billing_period = ?"
+        ),
+        params![billing_period],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+
+    Ok((usage.unwrap_or(0.0), credits.unwrap_or(0.0)))
+}
+
+/// [`usage_and_credits`] over a charge-time window `[since, until)`
+/// instead of one billing period — the rolling-range variant, where a
+/// calendar-month key cannot express the bounds.
+pub fn usage_and_credits_between(since: DateTime<Utc>, until: DateTime<Utc>) -> Result<(f64, f64)> {
+    with_connection_ref(|conn| usage_and_credits_between_of(conn, since, until))
+}
+
+fn usage_and_credits_between_of(
+    conn: &Connection,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+) -> Result<(f64, f64)> {
+    let (usage, credits): (Option<f64>, Option<f64>) = conn.query_row(
+        &format!(
+            "SELECT sum(billed_cost_base) FILTER (WHERE charge_category = 'Usage'),
+                    sum(billed_cost_base) FILTER (WHERE charge_category IN ('Credit', 'Adjustment'))
+             FROM {NORMALIZED_VIEW}
+             WHERE charge_period_start >= CAST(? AS TIMESTAMP)
+               AND charge_period_start < CAST(? AS TIMESTAMP)"
+        ),
+        params![
+            since.format(TIMESTAMP_FORMAT).to_string(),
+            until.format(TIMESTAMP_FORMAT).to_string()
+        ],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+
+    Ok((usage.unwrap_or(0.0), credits.unwrap_or(0.0)))
+}
+
+/// Net total charged in a charge-time window `[since, until)`, across
+/// every account and charge category — the rolling-range counterpart of
+/// [`total_for_period`].
+pub fn total_between(since: DateTime<Utc>, until: DateTime<Utc>) -> Result<f64> {
+    with_connection_ref(|conn| total_between_of(conn, since, until))
+}
+
+fn total_between_of(conn: &Connection, since: DateTime<Utc>, until: DateTime<Utc>) -> Result<f64> {
+    let total: Option<f64> = conn.query_row(
+        &format!(
+            "SELECT sum(billed_cost_base) FROM {NORMALIZED_VIEW}
+             WHERE charge_period_start >= CAST(? AS TIMESTAMP)
+               AND charge_period_start < CAST(? AS TIMESTAMP)"
+        ),
+        params![
+            since.format(TIMESTAMP_FORMAT).to_string(),
+            until.format(TIMESTAMP_FORMAT).to_string()
+        ],
+        |row| row.get(0),
+    )?;
+
+    Ok(total.unwrap_or(0.0))
+}
+
+/// Usage totals per billing period since an instant, as `(YYYY-MM,
+/// amount)` ordered by period label — the 12-month Overview chart's
+/// series. Grouped by `billing_period` rather than by charge-time month
+/// so the buckets are the same months the rest of the app reasons about.
+pub fn monthly_usage(since: DateTime<Utc>) -> Result<Vec<(String, f64)>> {
+    with_connection_ref(|conn| monthly_usage_of(conn, since))
+}
+
+fn monthly_usage_of(conn: &Connection, since: DateTime<Utc>) -> Result<Vec<(String, f64)>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT billing_period, sum(billed_cost_base) AS amount
+         FROM {NORMALIZED_VIEW}
+         WHERE charge_period_start >= CAST(? AS TIMESTAMP)
+           AND charge_category = 'Usage'
+         GROUP BY billing_period
+         ORDER BY billing_period"
+    ))?;
+
+    let rows = stmt
+        .query_map(params![since.format(TIMESTAMP_FORMAT).to_string()], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<f64>>(1)?))
         })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(period, amount)| (period, amount.unwrap_or(0.0)))
+        .collect())
+}
+
+/// Daily usage totals across every provider and account since an instant,
+/// oldest first — like [`daily_totals_all`], but Usage rows only, so a
+/// credit landing on one day does not dip the series below what was
+/// actually consumed.
+pub fn daily_usage_all(since: DateTime<Utc>) -> Result<Vec<DailyTotal>> {
+    with_connection_ref(|conn| daily_usage_all_of(conn, since))
+}
+
+fn daily_usage_all_of(conn: &Connection, since: DateTime<Utc>) -> Result<Vec<DailyTotal>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT strftime(charge_period_start, '%Y-%m-%d') AS day, sum(billed_cost_base) AS amount
+         FROM {NORMALIZED_VIEW}
+         WHERE charge_period_start >= CAST(? AS TIMESTAMP)
+           AND charge_category = 'Usage'
+         GROUP BY day
+         ORDER BY day"
+    ))?;
+
+    let rows = stmt
+        .query_map(params![since.format(TIMESTAMP_FORMAT).to_string()], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<f64>>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(day, amount)| (day, amount.unwrap_or(0.0)))
+        .collect())
+}
+
+/// Usage of one period grouped by `(provider, service)`, largest first —
+/// like [`provider_service_totals`], but Usage rows only, so rankings
+/// reflect what was consumed rather than what credits happened to offset.
+pub fn provider_service_usage(billing_period: &str) -> Result<Vec<(String, String, f64)>> {
+    with_connection_ref(|conn| provider_service_usage_of(conn, billing_period))
+}
+
+fn provider_service_usage_of(
+    conn: &Connection,
+    billing_period: &str,
+) -> Result<Vec<(String, String, f64)>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT provider, coalesce(service_name, 'Other') AS service,
+                sum(billed_cost_base) AS amount
+         FROM {NORMALIZED_VIEW}
+         WHERE billing_period = ?
+           AND charge_category = 'Usage'
+         GROUP BY provider, service
+         HAVING amount > 0
+         ORDER BY amount DESC"
+    ))?;
+
+    let rows = stmt
+        .query_map(params![billing_period], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, f64>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows)
+}
+
+/// [`provider_service_usage`] over a charge-time window `[since, until)`
+/// instead of one billing period — the rolling-range variant.
+pub fn provider_service_usage_between(
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+) -> Result<Vec<(String, String, f64)>> {
+    with_connection_ref(|conn| provider_service_usage_between_of(conn, since, until))
+}
+
+fn provider_service_usage_between_of(
+    conn: &Connection,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+) -> Result<Vec<(String, String, f64)>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT provider, coalesce(service_name, 'Other') AS service,
+                sum(billed_cost_base) AS amount
+         FROM {NORMALIZED_VIEW}
+         WHERE charge_period_start >= CAST(? AS TIMESTAMP)
+           AND charge_period_start < CAST(? AS TIMESTAMP)
+           AND charge_category = 'Usage'
+         GROUP BY provider, service
+         HAVING amount > 0
+         ORDER BY amount DESC"
+    ))?;
+
+    let rows = stmt
+        .query_map(
+            params![
+                since.format(TIMESTAMP_FORMAT).to_string(),
+                until.format(TIMESTAMP_FORMAT).to_string()
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, f64>(2)?,
+                ))
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows)
+}
+
+/// Usage of one period grouped by one tag's value, largest first — like
+/// [`tag_breakdown`], same `'Unallocated'` bucketing, but Usage rows
+/// only, so a credit does not shrink the bucket it would have offset.
+pub fn tag_usage_breakdown(billing_period: &str, tag_key: &str) -> Result<Vec<(String, f64)>> {
+    with_connection_ref(|conn| tag_usage_breakdown_of(conn, billing_period, tag_key, None))
+}
+
+/// [`tag_usage_breakdown`] narrowed to one provider and service: which
+/// tag values that usage drives. Same `'Unallocated'` bucket as the
+/// period-wide breakdown.
+pub fn service_tag_usage_breakdown(
+    billing_period: &str,
+    provider: &str,
+    service: &str,
+    tag_key: &str,
+) -> Result<Vec<(String, f64)>> {
+    with_connection_ref(|conn| {
+        tag_usage_breakdown_of(conn, billing_period, tag_key, Some((provider, service)))
+    })
+}
+
+fn tag_usage_breakdown_of(
+    conn: &Connection,
+    billing_period: &str,
+    tag_key: &str,
+    scope: Option<(&str, &str)>,
+) -> Result<Vec<(String, f64)>> {
+    tag_usage_breakdown_query(
+        conn,
+        tag_key,
+        "billing_period = ?",
+        &[billing_period.to_string()],
+        scope,
+    )
+}
+
+/// [`tag_usage_breakdown`] over a charge-time window `[since, until)`
+/// instead of one billing period — the rolling-range variant. Same
+/// `'Unallocated'` bucketing.
+pub fn tag_usage_breakdown_between(
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    tag_key: &str,
+) -> Result<Vec<(String, f64)>> {
+    with_connection_ref(|conn| tag_usage_breakdown_between_of(conn, since, until, tag_key, None))
+}
+
+/// [`tag_usage_breakdown_between`] narrowed to one provider and service:
+/// which tag values that usage drives. Same `'Unallocated'` bucket as the
+/// window-wide breakdown.
+pub fn service_tag_usage_breakdown_between(
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    provider: &str,
+    service: &str,
+    tag_key: &str,
+) -> Result<Vec<(String, f64)>> {
+    with_connection_ref(|conn| {
+        tag_usage_breakdown_between_of(conn, since, until, tag_key, Some((provider, service)))
+    })
+}
+
+fn tag_usage_breakdown_between_of(
+    conn: &Connection,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    tag_key: &str,
+    scope: Option<(&str, &str)>,
+) -> Result<Vec<(String, f64)>> {
+    tag_usage_breakdown_query(
+        conn,
+        tag_key,
+        "charge_period_start >= CAST(? AS TIMESTAMP) AND charge_period_start < CAST(? AS TIMESTAMP)",
+        &[
+            since.format(TIMESTAMP_FORMAT).to_string(),
+            until.format(TIMESTAMP_FORMAT).to_string(),
+        ],
+        scope,
+    )
+}
+
+/// The one tag-breakdown query behind the period-keyed and window-bounded
+/// variants: `window_sql` is the WHERE fragment that bounds the charges,
+/// bound after `tag_key` and before the optional `(provider, service)`
+/// scope.
+fn tag_usage_breakdown_query(
+    conn: &Connection,
+    tag_key: &str,
+    window_sql: &str,
+    window_params: &[String],
+    scope: Option<(&str, &str)>,
+) -> Result<Vec<(String, f64)>> {
+    let (scope_sql, scope_params): (&str, Vec<String>) = match scope {
+        Some((provider, service)) => (
+            "AND provider = ? AND coalesce(service_name, 'Other') = ?",
+            vec![provider.to_string(), service.to_string()],
+        ),
+        None => ("", Vec::new()),
+    };
+
+    let mut stmt = conn.prepare(&format!(
+        "SELECT coalesce(nullif(json_extract_string(tags, ?), ''), 'Unallocated') AS tag_value,
+                sum(billed_cost_base) AS amount
+         FROM {NORMALIZED_VIEW}
+         WHERE {window_sql} {scope_sql}
+           AND charge_category = 'Usage'
+         GROUP BY tag_value
+         HAVING amount > 0
+         ORDER BY amount DESC"
+    ))?;
+
+    let mut bound: Vec<String> = vec![tag_key.to_string()];
+    bound.extend(window_params.iter().cloned());
+    bound.extend(scope_params);
+
+    let rows = stmt
+        .query_map(duckdb::params_from_iter(bound.iter()), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows)
+}
+
+/// Untagged Usage charges of a period rolled up to one `(provider,
+/// service)` row — what the Unallocated explainer card lists.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UntaggedServiceUsage {
+    pub provider: String,
+    pub service: Option<String>,
+    /// In the reporting currency.
+    pub amount: f64,
+}
+
+/// Untagged usage of a period grouped by `(provider, service)`, largest
+/// first — the roll-up behind [`untagged_detail`]'s per-charge list, so
+/// three small charges of one service read as the one row the UI acts on.
+pub fn untagged_usage_by_service(
+    billing_period: &str,
+    tag_key: &str,
+    limit: usize,
+) -> Result<Vec<UntaggedServiceUsage>> {
+    with_connection_ref(|conn| untagged_usage_by_service_of(conn, billing_period, tag_key, limit))
+}
+
+fn untagged_usage_by_service_of(
+    conn: &Connection,
+    billing_period: &str,
+    tag_key: &str,
+    limit: usize,
+) -> Result<Vec<UntaggedServiceUsage>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT provider, service_name, sum(billed_cost_base) AS amount
+         FROM {NORMALIZED_VIEW}
+         WHERE billing_period = ?
+           AND charge_category = 'Usage'
+           AND coalesce(nullif(json_extract_string(tags, ?), ''), '') = ''
+         GROUP BY provider, service_name
+         ORDER BY amount DESC
+         LIMIT ?"
+    ))?;
+
+    let rows = stmt
+        .query_map(
+            params![billing_period, tag_key, bounded_limit(limit)],
+            |row| {
+                Ok(UntaggedServiceUsage {
+                    provider: row.get(0)?,
+                    service: row.get(1)?,
+                    amount: row.get(2)?,
+                })
+            },
+        )?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(rows)
@@ -596,6 +1003,16 @@ mod tests {
             service_name: Some(service.to_string()),
             billed_cost: Some(amount),
             ..Charge::new(at(day), at(day + 1), currency)
+        }
+    }
+
+    /// A charge starting at an arbitrary instant, for windows that span
+    /// months — `charge` only builds August days.
+    fn charge_on(service: &str, amount: f64, currency: &str, start: DateTime<Utc>) -> Charge {
+        Charge {
+            service_name: Some(service.to_string()),
+            billed_cost: Some(amount),
+            ..Charge::new(start, start + chrono::Duration::days(1), currency)
         }
     }
 
@@ -960,6 +1377,275 @@ mod tests {
         let all = untagged_detail_of(&conn, "2026-08", "business_line", 10).unwrap();
         assert_eq!(all.len(), 3);
         assert_eq!(all[1].description.as_deref(), Some("NAT gateway"));
+
+        // "Every row" as usize::MAX must not wrap to a negative LIMIT.
+        let every = untagged_detail_of(&conn, "2026-08", "business_line", usize::MAX).unwrap();
+        assert_eq!(every.len(), 3);
+    }
+
+    #[test]
+    fn usage_and_credits_splits_gross_usage_from_credits() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                charge("EC2", 12.5, "USD", 1),
+                charge("S3", 2.5, "USD", 1),
+                Charge {
+                    charge_category: ChargeCategory::Credit,
+                    billed_cost: Some(-10.0),
+                    ..charge("EC2", -10.0, "USD", 2)
+                },
+                Charge {
+                    charge_category: ChargeCategory::Tax,
+                    billed_cost: Some(1.25),
+                    ..charge("Tax", 1.25, "USD", 2)
+                },
+            ],
+        );
+
+        let (usage, credits) = usage_and_credits_of(&conn, "2026-08").unwrap();
+        assert!((usage - 15.0).abs() < 1e-9, "got {usage}");
+        assert!((credits - -10.0).abs() < 1e-9, "got {credits}");
+
+        // The Tax row is in neither bucket but stays in the net total.
+        let net = total_for_period_of(&conn, "2026-08").unwrap();
+        assert!((net - 6.25).abs() < 1e-9, "got {net}");
+    }
+
+    #[test]
+    fn untagged_usage_by_service_rolls_charges_up_to_one_row_per_service() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                tagged_charge("EC2", 12.5, 1, None),
+                tagged_charge("EC2", 4.0, 2, None),
+                tagged_charge("EC2", 1.0, 3, None),
+                tagged_charge("S3", 20.0, 1, Some(r#"{"business_line":"etl"}"#)),
+                tagged_charge("S3", 2.0, 1, None),
+                Charge {
+                    charge_category: ChargeCategory::Credit,
+                    ..tagged_charge("EC2", -9.0, 1, None)
+                },
+            ],
+        );
+
+        let rows = untagged_usage_by_service_of(&conn, "2026-08", "business_line", 10).unwrap();
+        assert_eq!(rows.len(), 2);
+        // Three EC2 charges read as one row; a credit is not usage.
+        assert_eq!(rows[0].provider, "AWS");
+        assert_eq!(rows[0].service.as_deref(), Some("EC2"));
+        assert!((rows[0].amount - 17.5).abs() < 1e-9);
+        assert_eq!(rows[1].service.as_deref(), Some("S3"));
+        assert!((rows[1].amount - 2.0).abs() < 1e-9);
+
+        // The limit applies to rolled-up rows, not to charges.
+        let top = untagged_usage_by_service_of(&conn, "2026-08", "business_line", 1).unwrap();
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0].service.as_deref(), Some("EC2"));
+    }
+
+    #[test]
+    fn a_tag_usage_breakdown_counts_usage_only() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                tagged_charge("EC2", 10.0, 1, Some(r#"{"business_line":"etl"}"#)),
+                Charge {
+                    charge_category: ChargeCategory::Credit,
+                    ..tagged_charge("EC2", -4.0, 1, Some(r#"{"business_line":"etl"}"#))
+                },
+                tagged_charge("NAT", 2.0, 1, None),
+            ],
+        );
+
+        let breakdown = tag_usage_breakdown_of(&conn, "2026-08", "business_line", None).unwrap();
+        assert_eq!(
+            breakdown,
+            vec![("etl".to_string(), 10.0), ("Unallocated".to_string(), 2.0),]
+        );
+    }
+
+    #[test]
+    fn a_windowed_usage_and_credits_is_half_open_on_charge_time() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                charge("EC2", 1.0, "USD", 9),  // before the window
+                charge("EC2", 2.0, "USD", 10), // in
+                charge("S3", 4.0, "USD", 15),  // in
+                charge("EC2", 8.0, "USD", 20), // at `until`: out
+                Charge {
+                    charge_category: ChargeCategory::Credit,
+                    billed_cost: Some(-1.5),
+                    ..charge("EC2", -1.5, "USD", 12)
+                },
+                Charge {
+                    charge_category: ChargeCategory::Tax,
+                    billed_cost: Some(0.5),
+                    ..charge("Tax", 0.5, "USD", 12)
+                },
+            ],
+        );
+
+        let (usage, credits) = usage_and_credits_between_of(&conn, at(10), at(20)).unwrap();
+        assert!((usage - 6.0).abs() < 1e-9, "got {usage}");
+        assert!((credits - -1.5).abs() < 1e-9, "got {credits}");
+
+        // An empty window reads as zeros, not an error.
+        assert_eq!(
+            usage_and_credits_between_of(&conn, at(25), at(26)).unwrap(),
+            (0.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn a_windowed_total_is_net_of_every_category_in_the_window() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                charge("EC2", 2.0, "USD", 10),
+                charge("EC2", 8.0, "USD", 20), // at `until`: out
+                Charge {
+                    charge_category: ChargeCategory::Credit,
+                    billed_cost: Some(-1.5),
+                    ..charge("EC2", -1.5, "USD", 12)
+                },
+                Charge {
+                    charge_category: ChargeCategory::Tax,
+                    billed_cost: Some(0.5),
+                    ..charge("Tax", 0.5, "USD", 12)
+                },
+            ],
+        );
+
+        // 2.0 usage − 1.5 credit + 0.5 tax; the day-20 charge is out.
+        let total = total_between_of(&conn, at(10), at(20)).unwrap();
+        assert!((total - 1.0).abs() < 1e-9, "got {total}");
+    }
+
+    #[test]
+    fn a_windowed_tag_usage_breakdown_buckets_like_the_period_one() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                tagged_charge("EC2", 10.0, 10, Some(r#"{"business_line":"etl"}"#)),
+                tagged_charge("EC2", 4.0, 11, None),
+                tagged_charge("S3", 3.0, 12, Some(r#"{"business_line":"search"}"#)),
+                tagged_charge("EC2", 99.0, 25, Some(r#"{"business_line":"etl"}"#)), // out
+                Charge {
+                    charge_category: ChargeCategory::Credit,
+                    ..tagged_charge("EC2", -7.0, 13, Some(r#"{"business_line":"etl"}"#))
+                },
+            ],
+        );
+
+        let breakdown =
+            tag_usage_breakdown_between_of(&conn, at(10), at(20), "business_line", None).unwrap();
+        assert_eq!(
+            breakdown,
+            vec![
+                ("etl".to_string(), 10.0),
+                ("Unallocated".to_string(), 4.0),
+                ("search".to_string(), 3.0),
+            ]
+        );
+
+        // The scoped variant sees only that service's window usage.
+        let scoped = tag_usage_breakdown_between_of(
+            &conn,
+            at(10),
+            at(20),
+            "business_line",
+            Some(("AWS", "EC2")),
+        )
+        .unwrap();
+        assert_eq!(
+            scoped,
+            vec![("etl".to_string(), 10.0), ("Unallocated".to_string(), 4.0),]
+        );
+    }
+
+    #[test]
+    fn a_windowed_provider_service_usage_groups_orders_and_bounds() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                charge("EC2", 12.5, "USD", 10),
+                charge("S3", 0.75, "USD", 11),
+                charge("EC2", 50.0, "USD", 25), // out
+            ],
+        );
+        write(&mut conn, &aliyun(), &[charge("ECS", 710.0, "CNY", 12)]);
+
+        let rows = provider_service_usage_between_of(&conn, at(10), at(20)).unwrap();
+        assert_eq!(rows.len(), 3);
+        // Largest first, across providers, in the reporting currency.
+        assert_eq!(rows[0].0, "Aliyun");
+        assert_eq!(rows[0].1, "ECS");
+        assert!((rows[0].2 - 99.968).abs() < 1e-6, "got {:?}", rows[0]);
+        assert_eq!(rows[1], ("AWS".to_string(), "EC2".to_string(), 12.5));
+        assert_eq!(rows[2], ("AWS".to_string(), "S3".to_string(), 0.75));
+    }
+
+    #[test]
+    fn monthly_usage_groups_by_billing_period_oldest_first() {
+        let mut conn = conn("USD");
+        let jul = |d: u32| Utc.with_ymd_and_hms(2026, 7, d, 0, 0, 0).unwrap();
+        let sep = |d: u32| Utc.with_ymd_and_hms(2026, 9, d, 0, 0, 0).unwrap();
+
+        write(
+            &mut conn,
+            &PeriodKey::new("AWS", "acct-1", "2026-07"),
+            &[charge_on("EC2", 10.0, "USD", jul(15))],
+        );
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                charge("EC2", 5.0, "USD", 1),
+                Charge {
+                    charge_category: ChargeCategory::Credit,
+                    billed_cost: Some(-2.0),
+                    ..charge("EC2", -2.0, "USD", 2)
+                },
+            ],
+        );
+        write(
+            &mut conn,
+            &PeriodKey::new("AWS", "acct-1", "2026-09"),
+            &[charge_on("EC2", 7.0, "USD", sep(2))],
+        );
+
+        // Ordered by period label; the credit is not usage.
+        let monthly = monthly_usage_of(&conn, jul(1)).unwrap();
+        assert_eq!(
+            monthly,
+            vec![
+                ("2026-07".to_string(), 10.0),
+                ("2026-08".to_string(), 5.0),
+                ("2026-09".to_string(), 7.0),
+            ]
+        );
+
+        // `since` bounds by charge time: mid-August drops the earlier months.
+        assert_eq!(
+            monthly_usage_of(&conn, at(15)).unwrap(),
+            vec![("2026-09".to_string(), 7.0)]
+        );
     }
 
     #[test]

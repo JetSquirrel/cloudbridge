@@ -1,40 +1,15 @@
 //! Overview View
 
-use gpui::prelude::FluentBuilder;
-use gpui::*;
-use gpui_component::{button::*, scroll::ScrollableElement, *};
+use std::cell::RefCell;
+use std::rc::Rc;
 
+use gpui_kit::component::{button::*, scroll::ScrollableElement, *};
+use gpui_kit::prelude::FluentBuilder;
+use gpui_kit::*;
+
+use super::data::Range;
 use super::{chart, data, theme};
-
-/// Range selection of the header segmented control. Only MTD is backed by
-/// real data; 30d and 12m stay selectable but the page always renders the
-/// month to date.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Range {
-    Mtd,
-    Days30,
-    Months12,
-}
-
-impl Range {
-    const ALL: [Range; 3] = [Range::Mtd, Range::Days30, Range::Months12];
-
-    fn label(self) -> &'static str {
-        match self {
-            Range::Mtd => "MTD",
-            Range::Days30 => "30d",
-            Range::Months12 => "12m",
-        }
-    }
-
-    fn id(self) -> &'static str {
-        match self {
-            Range::Mtd => "range-mtd",
-            Range::Days30 => "range-30d",
-            Range::Months12 => "range-12m",
-        }
-    }
-}
+use crate::ui::theme::CardOutline as _;
 
 /// Overview View
 pub struct OverviewView {
@@ -48,6 +23,20 @@ pub struct OverviewView {
     refreshing: bool,
     /// Last load/refresh failure, shown under the header.
     error: Option<String>,
+    /// When the view was created; backs the pre-load header caption so
+    /// render output is deterministic given state.
+    opened_at: chrono::DateTime<chrono::Utc>,
+    /// Bumped by every load/refresh; only the latest flight may write its
+    /// result, so an older load cannot clobber a newer refresh.
+    generation: u64,
+    /// Chart point under the mouse, if any; drives the hover guide, dot,
+    /// and tooltip.
+    chart_hover: Option<usize>,
+    /// The actual series' point coordinates in window space, written by
+    /// the chart canvas every frame.
+    chart_points: Rc<RefCell<Vec<(f32, f32)>>>,
+    /// The chart canvas bounds in window space, written every frame.
+    chart_bounds: Rc<RefCell<Option<Bounds<Pixels>>>>,
 }
 
 impl OverviewView {
@@ -58,6 +47,11 @@ impl OverviewView {
             loading: false,
             refreshing: false,
             error: None,
+            opened_at: chrono::Utc::now(),
+            generation: 0,
+            chart_hover: None,
+            chart_points: Rc::new(RefCell::new(Vec::new())),
+            chart_bounds: Rc::new(RefCell::new(None)),
         };
         view.load(cx);
         view
@@ -77,18 +71,28 @@ impl OverviewView {
     fn load(&mut self, cx: &mut Context<Self>) {
         self.loading = true;
         self.error = None;
+        self.generation += 1;
+        let generation = self.generation;
+        // New data may shift the points; a stale hover would tag the
+        // wrong month.
+        self.chart_hover = None;
         cx.notify();
+        let range = self.range;
         cx.spawn(async move |this, cx| {
-            let result = smol::unblock(data::load_overview).await;
+            let result = smol::unblock(move || data::load_overview(range)).await;
             this.update(cx, |this, cx| {
                 this.loading = false;
-                match result {
-                    Ok(loaded) => {
-                        this.data = Some(loaded);
-                        this.error = None;
-                    }
-                    Err(e) => {
-                        this.error = Some(format!("Could not load the overview: {e}"));
+                // A range switch or refresh during the flight started a
+                // newer load; its data wins over this stale result.
+                if this.generation == generation {
+                    match result {
+                        Ok(loaded) => {
+                            this.data = Some(loaded);
+                            this.error = None;
+                        }
+                        Err(e) => {
+                            this.error = Some(format!("Could not load the overview: {e}"));
+                        }
                     }
                 }
                 cx.notify();
@@ -109,8 +113,11 @@ impl OverviewView {
         }
         self.refreshing = true;
         self.error = None;
+        self.generation += 1;
+        let generation = self.generation;
         cx.notify();
 
+        let range = self.range;
         cx.spawn(async move |this, cx| {
             let result = smol::unblock(move || -> Result<_, String> {
                 let accounts = crate::db::get_all_accounts().map_err(|e| e.to_string())?;
@@ -120,24 +127,29 @@ impl OverviewView {
                         failures.push(format!("{}: {}", account.name, e));
                     }
                 }
-                let overview = data::load_overview().map_err(|e| e.to_string())?;
+                let overview = data::load_overview(range).map_err(|e| e.to_string())?;
                 Ok((overview, failures))
             })
             .await;
 
             this.update(cx, |this, cx| {
                 this.refreshing = false;
-                match result {
-                    Ok((loaded, failures)) => {
-                        this.data = Some(loaded);
-                        this.error = if failures.is_empty() {
-                            None
-                        } else {
-                            Some(format!("Some sources failed: {}", failures.join("; ")))
-                        };
-                    }
-                    Err(e) => {
-                        this.error = Some(format!("Refresh failed: {e}"));
+                // A range switch or newer refresh during the flight
+                // started a newer load; its data wins over this stale
+                // result.
+                if this.generation == generation {
+                    match result {
+                        Ok((loaded, failures)) => {
+                            this.data = Some(loaded);
+                            this.error = if failures.is_empty() {
+                                None
+                            } else {
+                                Some(format!("Some sources failed: {}", failures.join("; ")))
+                            };
+                        }
+                        Err(e) => {
+                            this.error = Some(format!("Refresh failed: {e}"));
+                        }
                     }
                 }
                 cx.notify();
@@ -150,16 +162,14 @@ impl OverviewView {
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = self.range;
         let refreshing = self.refreshing;
-        let currency = self
-            .data
-            .as_ref()
-            .map(|d| d.currency.as_str())
-            .unwrap_or(crate::config::DEFAULT_REPORTING_CURRENCY);
-        let caption = format!(
-            "{}, month to date · reported in {}",
-            chrono::Utc::now().format("%B %Y"),
-            currency
-        );
+        let caption = match &self.data {
+            Some(d) => format!("{} · reported in {}", d.window_caption, d.currency),
+            None => format!(
+                "{} · reported in {}",
+                self.range.header_caption(self.opened_at),
+                crate::config::DEFAULT_REPORTING_CURRENCY
+            ),
+        };
 
         div()
             .w_full()
@@ -189,29 +199,23 @@ impl OverviewView {
                             .border_color(theme::card_border(cx))
                             .children(Range::ALL.iter().map(|range| {
                                 let active = *range == selected;
-                                let mut pill = div()
-                                    .id(range.id())
-                                    .px_3()
-                                    .py_1()
+                                let button = Button::new(range.id())
+                                    .label(range.label())
+                                    .small()
                                     .rounded_full()
-                                    .text_sm()
-                                    .cursor_pointer();
+                                    .custom(range_pill(cx, active))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if this.range != *range {
+                                            this.range = *range;
+                                            this.load(cx);
+                                        }
+                                    }));
                                 if active {
-                                    pill = pill
-                                        .bg(theme::card_bg(cx))
-                                        .border_1()
-                                        .border_color(theme::card_border(cx))
-                                        .text_color(theme::text_primary(cx))
-                                        .font_weight(FontWeight::MEDIUM);
+                                    // The raised chip carries the card border.
+                                    button.card_outline(cx).font_weight(FontWeight::MEDIUM)
                                 } else {
-                                    pill = pill.text_color(theme::text_muted(cx));
+                                    button
                                 }
-                                pill.child(range.label()).on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        this.range = *range;
-                                        cx.notify();
-                                    },
-                                ))
                             })),
                     )
                     .child(
@@ -222,7 +226,8 @@ impl OverviewView {
                                 "Refresh"
                             })
                             .small()
-                            .custom(outline_button(cx))
+                            .custom(theme::outline_variant(cx))
+                            .card_outline(cx)
                             .disabled(refreshing)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.refresh(false, cx);
@@ -245,7 +250,12 @@ impl OverviewView {
             )
     }
 
-    fn render_middle(&self, d: &data::OverviewData, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_middle(
+        &self,
+        d: &data::OverviewData,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let lines = &d.business_lines;
         let max_amount = lines
             .iter()
@@ -257,11 +267,16 @@ impl OverviewView {
         div()
             .w_full()
             .h_flex()
+            .items_stretch()
             .gap_4()
-            // Daily spend chart
+            // Spend chart
             .child(
                 theme::card(cx)
                     .flex_1()
+                    // min_w_0: a flex child may not shrink below its
+                    // content by default; the chart canvas must compress
+                    // inside the h_flex on narrow windows.
+                    .min_w_0()
                     .p_5()
                     .v_flex()
                     .gap_4()
@@ -270,31 +285,55 @@ impl OverviewView {
                             .h_flex()
                             .items_center()
                             .justify_between()
-                            .child(section_title(cx, "Daily spend, all sources"))
+                            .child(section_title(cx, d.chart_title))
                             .child(
                                 div()
                                     .h_flex()
                                     .items_center()
                                     .gap_4()
                                     .child(legend_solid(cx, theme::accent(cx), "Actual"))
-                                    .child(legend_dashed(cx, theme::olive(cx), "7-day baseline")),
+                                    // The 12-month range has no baseline
+                                    // series, so it gets no legend entry.
+                                    .when(!d.chart.baseline.is_empty(), |el| {
+                                        el.child(legend_dashed(
+                                            cx,
+                                            theme::olive(cx),
+                                            "7-day baseline",
+                                        ))
+                                    }),
                             ),
                     )
-                    .child(chart::spend_area_chart(
-                        cx,
-                        &d.daily.actual,
-                        &d.daily.baseline,
-                        260.0,
-                    ))
-                    .child(theme::caption(
-                        cx,
-                        "Actual against the 7-day trailing mean.",
-                    )),
+                    .child(self.render_chart(d, window, cx))
+                    // The rolling ranges get x-axis endpoints; MTD's
+                    // calendar-month context is already in the header.
+                    .when(d.range != Range::Mtd, |el| {
+                        let first = d
+                            .chart
+                            .actual
+                            .first()
+                            .map(|p| p.label.clone())
+                            .unwrap_or_default();
+                        let last = d
+                            .chart
+                            .actual
+                            .last()
+                            .map(|p| p.label.clone())
+                            .unwrap_or_default();
+                        el.child(
+                            div()
+                                .h_flex()
+                                .justify_between()
+                                .child(theme::caption(cx, first))
+                                .child(theme::caption(cx, last)),
+                        )
+                    })
+                    .child(theme::caption(cx, d.chart_caption)),
             )
             // Where it went
             .child(
                 theme::card(cx)
-                    .w(px(340.0))
+                    // 340px ≈ the 20rem step.
+                    .w_80()
                     .flex_shrink_0()
                     .p_5()
                     .v_flex()
@@ -349,12 +388,158 @@ impl OverviewView {
                             .label("Open attribution")
                             .small()
                             .w_full()
-                            .custom(outline_button(cx))
+                            .custom(theme::outline_variant(cx))
+                            .card_outline(cx)
                             .on_click(|_, _, cx| {
                                 crate::app::navigate_to(crate::app::CurrentView::Attribution, cx)
                             }),
                     ),
             )
+    }
+
+    /// The spend chart with hover interactivity: the canvas publishes its
+    /// bounds and point coordinates every frame; the wrapper maps the
+    /// mouse position to the nearest point and the overlay draws the
+    /// guide, dot, and tooltip on top.
+    fn render_chart(
+        &self,
+        d: &data::OverviewData,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id("spend-chart")
+            .w_full()
+            .relative()
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                let x: f32 = event.position.x.into();
+                let nearest = {
+                    let points = this.chart_points.borrow();
+                    points
+                        .iter()
+                        .enumerate()
+                        .min_by(|(_, (ax, _)), (_, (bx, _))| {
+                            (ax - x).abs().total_cmp(&(bx - x).abs())
+                        })
+                        .map(|(i, _)| i)
+                };
+                if nearest.is_some() && nearest != this.chart_hover {
+                    this.chart_hover = nearest;
+                    cx.notify();
+                }
+            }))
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if !*hovered && this.chart_hover.is_some() {
+                    this.chart_hover = None;
+                    cx.notify();
+                }
+            }))
+            .child(chart::spend_area_chart(
+                cx,
+                &d.chart.actual,
+                &d.chart.baseline,
+                // 260px at the default 16px rem.
+                rems(16.25),
+                self.chart_points.clone(),
+                self.chart_bounds.clone(),
+            ))
+            .when_some(self.hover_overlay(d, window, cx), |el, overlay| {
+                el.children(overlay)
+            })
+    }
+
+    /// Guide line, dot, and tooltip for the chart point under the mouse.
+    /// Positions come from the cells the canvas wrote on the previous
+    /// frame — a one-frame lag that is imperceptible in practice. The raw
+    /// `px(...)` values here are measured runtime geometry (the guide's
+    /// exception per the coding guide); every size and offset is derived
+    /// from the rem scale so the overlay zooms with the base font.
+    fn hover_overlay(
+        &self,
+        d: &data::OverviewData,
+        window: &Window,
+        cx: &App,
+    ) -> Option<Vec<AnyElement>> {
+        let index = self.chart_hover?;
+        let bounds = (*self.chart_bounds.borrow())?;
+        let (x, y) = *self.chart_points.borrow().get(index)?;
+        let point = d.chart.actual.get(index)?;
+
+        let rem = window.rem_size();
+        // Sizes derive from the rem scale so the overlay zooms with the
+        // base font; the f32 math below is measured runtime geometry.
+        // 10px dot at the default 16px rem.
+        let dot: f32 = rems(0.625).to_pixels(rem).into();
+        // 150px tooltip at the default rem.
+        let tip_w: f32 = rems(9.375).to_pixels(rem).into();
+
+        let origin_x: f32 = bounds.origin.x.into();
+        let origin_y: f32 = bounds.origin.y.into();
+        let width: f32 = bounds.size.width.into();
+        let rel_x = x - origin_x;
+        let rel_y = y - origin_y;
+
+        // Clamped so the tooltip never leaves the chart.
+        let tip_left = (rel_x - tip_w / 2.0).clamp(0.0, (width - tip_w).max(0.0));
+        // Above the point unless there is no headroom; 56px / 14px at the
+        // default rem.
+        let headroom: f32 = rems(3.5).to_pixels(rem).into();
+        let below: f32 = rems(0.875).to_pixels(rem).into();
+        let tip_top = if rel_y > headroom + 4.0 {
+            rel_y - headroom
+        } else {
+            rel_y + below
+        };
+
+        Some(vec![
+            div()
+                .absolute()
+                .left(px(rel_x))
+                .top_0()
+                .bottom_0()
+                // 1px hairline: a physical-pixel boundary, like the
+                // chart's gridlines.
+                .w(px(1.0))
+                .bg(theme::text_muted(cx).opacity(0.4))
+                .into_any_element(),
+            div()
+                .absolute()
+                .left(px(rel_x - dot / 2.0))
+                .top(px(rel_y - dot / 2.0))
+                .size(px(dot))
+                .rounded_full()
+                .bg(theme::accent(cx))
+                .border_2()
+                .border_color(theme::card_bg(cx))
+                .into_any_element(),
+            div()
+                .absolute()
+                .left(px(tip_left))
+                .top(px(tip_top))
+                .w(px(tip_w))
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .bg(theme::card_bg(cx))
+                .border_1()
+                .border_color(theme::card_border(cx))
+                .shadow_md()
+                .v_flex()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_muted(cx))
+                        .child(point.label.clone()),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme::text_primary(cx))
+                        .child(fmt_amount(point.amount, &d.currency)),
+                )
+                .into_any_element(),
+        ])
     }
 
     /// Shown on an empty ledger instead of fake-looking zeros.
@@ -365,7 +550,7 @@ impl OverviewView {
             .v_flex()
             .items_center()
             .gap_2()
-            .py(px(48.0))
+            .py_12()
             .child(
                 div()
                     .text_base()
@@ -381,7 +566,7 @@ impl OverviewView {
 }
 
 impl Render for OverviewView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body: AnyElement = match &self.data {
             _ if self.loading && self.data.is_none() => div()
                 .w_full()
@@ -394,9 +579,9 @@ impl Render for OverviewView {
             Some(d) => div()
                 .v_flex()
                 .gap_6()
-                .child(render_stats(cx, &d.stats, &d.currency))
-                .child(self.render_middle(d, cx))
-                .child(render_movers(cx, &d.movers, &d.currency))
+                .child(render_stats(cx, d))
+                .child(self.render_middle(d, window, cx))
+                .child(render_movers(cx, d))
                 .into_any_element(),
         };
 
@@ -404,7 +589,10 @@ impl Render for OverviewView {
             div()
                 .v_flex()
                 .gap_6()
-                .p(px(32.0))
+                // Full height so the scroll region fills the window and
+                // the scrollbar can actually engage.
+                .h_full()
+                .p_8()
                 .overflow_y_scrollbar()
                 .child(self.render_header(cx))
                 .when_some(self.error.clone(), |el, error| {
@@ -424,33 +612,55 @@ impl Render for OverviewView {
     }
 }
 
-/// The empty-state condition: nothing spent and nothing recorded this month.
+/// The empty-state condition: nothing spent and nothing recorded in the
+/// window.
 fn is_empty(d: &data::OverviewData) -> bool {
-    d.stats.mtd_spend == 0.0 && d.daily.actual.is_empty() && d.business_lines.is_empty()
+    d.stats.spend == 0.0 && d.chart.actual.is_empty() && d.business_lines.is_empty()
 }
 
 /// Row of the four headline stat cards.
-fn render_stats(cx: &App, stats: &data::OverviewStats, currency: &str) -> impl IntoElement {
+fn render_stats(cx: &App, d: &data::OverviewData) -> impl IntoElement {
+    let stats = &d.stats;
+    let currency = d.currency.as_str();
     div()
         .w_full()
         .h_flex()
+        .items_stretch()
         .gap_4()
         .child(stat_card(
             cx,
-            "MONTH TO DATE",
-            fmt_amount(stats.mtd_spend, currency),
-            div().text_color(theme::accent(cx)).child(format!(
-                "{:+.1}% vs same day last month",
-                stats.mtd_change_pct
-            )),
+            d.spend_label,
+            fmt_amount(stats.spend, currency),
+            div()
+                .h_flex()
+                .gap_1()
+                // The card shrinks below this row on narrow windows; let
+                // the change span wrap under the usage/credits split
+                // instead of being sliced by the next card.
+                .min_w_0()
+                .flex_wrap()
+                // Net stays the big number; the split shows why it differs
+                // from the real burn.
+                .child(div().text_color(theme::text_muted(cx)).child(format!(
+                    "usage {} · credits {}",
+                    fmt_amount(stats.usage, currency),
+                    fmt_amount(stats.credits, currency)
+                )))
+                .when_some(stats.change_pct, |el, pct| {
+                    el.child(
+                        div()
+                            .text_color(theme::accent(cx))
+                            .child(format!("· {pct:+.1}% {}", d.change_caption)),
+                    )
+                }),
         ))
         .child(stat_card(
             cx,
-            "MONTH-END FORECAST",
-            fmt_amount(stats.forecast_month_end, currency),
+            d.card2_label,
+            fmt_amount(d.card2_value, currency),
             div()
                 .text_color(theme::text_muted(cx))
-                .child("MTD plus the mean of the last 7 days of burn"),
+                .child(d.card2_caption),
         ))
         .child(stat_card(
             cx,
@@ -466,29 +676,32 @@ fn render_stats(cx: &App, stats: &data::OverviewStats, currency: &str) -> impl I
                 cx,
                 "OPEN ALERTS",
                 stats.open_alerts.to_string(),
-                div()
-                    .text_color(theme::accent(cx))
-                    .underline()
-                    .child(format!(
+                Button::new("open-alerts")
+                    .label(format!(
                         "{} critical, {} warning →",
                         stats.critical_alerts, stats.warning_alerts
-                    )),
+                    ))
+                    .link()
+                    .small()
+                    .text_color(theme::accent(cx))
+                    .on_click(|_, _, cx| {
+                        crate::app::navigate_to(crate::app::CurrentView::Alerts, cx)
+                    }),
             )
-            .id("open-alerts-card")
-            .cursor_pointer()
-            .on_click(|_, _, cx| crate::app::navigate_to(crate::app::CurrentView::Alerts, cx))
             .bg(theme::alert_tint(cx)),
         )
 }
 
-/// "Biggest movers this month" table card.
-fn render_movers(cx: &App, movers: &[data::MoverRow], currency: &str) -> impl IntoElement {
+/// "Biggest movers" table card.
+fn render_movers(cx: &App, d: &data::OverviewData) -> impl IntoElement {
+    let movers = &d.movers;
+    let currency = d.currency.as_str();
     theme::card(cx)
         .w_full()
         .p_5()
         .v_flex()
         .gap_4()
-        .child(section_title(cx, "Biggest movers this month"))
+        .child(section_title(cx, d.movers_title))
         .child(
             div()
                 .v_flex()
@@ -497,17 +710,19 @@ fn render_movers(cx: &App, movers: &[data::MoverRow], currency: &str) -> impl In
                         .h_flex()
                         .items_center()
                         .pb_2()
-                        .child(header_cell(cx, "SOURCE").w(px(120.0)))
-                        .child(header_cell(cx, "MODEL OR SERVICE").flex_1())
-                        .child(header_cell(cx, "MTD").w(px(110.0)).text_right())
-                        .child(header_cell(cx, "Δ VS LAST MONTH").w(px(150.0)).text_right())
-                        .child(header_cell(cx, "DRIVES").w(px(140.0))),
+                        .child(header_cell(cx, "SOURCE").w_32())
+                        .child(header_cell(cx, "MODEL OR SERVICE").flex_1().min_w_0())
+                        .child(header_cell(cx, d.movers_amount_header).w_24().text_right())
+                        .child(header_cell(cx, d.movers_delta_header).w_40().text_right())
+                        .child(header_cell(cx, "DRIVES").w_32()),
                 )
                 .children(movers.iter().map(|mover| {
-                    let delta_color = if mover.change_pct < 0.0 {
-                        theme::text_muted(cx)
-                    } else {
-                        theme::accent(cx)
+                    let (delta_text, delta_color) = match mover.change_pct {
+                        Some(pct) if pct < 0.0 => (format!("{pct:+.0}%"), theme::text_muted(cx)),
+                        Some(pct) => (format!("{pct:+.0}%"), theme::accent(cx)),
+                        // No meaningful previous-period base to compare
+                        // against.
+                        None => ("—".to_string(), theme::text_muted(cx)),
                     };
                     let drives: AnyElement = if mover.drives == "Untagged" {
                         div()
@@ -532,7 +747,7 @@ fn render_movers(cx: &App, movers: &[data::MoverRow], currency: &str) -> impl In
                         .border_color(theme::card_border(cx))
                         .child(
                             div()
-                                .w(px(120.0))
+                                .w_32()
                                 .text_sm()
                                 .text_color(theme::text_muted(cx))
                                 .child(mover.provider.clone()),
@@ -540,13 +755,17 @@ fn render_movers(cx: &App, movers: &[data::MoverRow], currency: &str) -> impl In
                         .child(
                             div()
                                 .flex_1()
+                                // min_w_0 so a long service name truncates
+                                // instead of pushing the amount columns
+                                // out of the card.
+                                .min_w_0()
                                 .text_sm()
                                 .text_color(theme::text_primary(cx))
                                 .child(mover.service.clone()),
                         )
                         .child(
                             div()
-                                .w(px(110.0))
+                                .w_24()
                                 .text_right()
                                 .text_sm()
                                 .font_weight(FontWeight::SEMIBOLD)
@@ -555,20 +774,23 @@ fn render_movers(cx: &App, movers: &[data::MoverRow], currency: &str) -> impl In
                         )
                         .child(
                             div()
-                                .w(px(150.0))
+                                .w_40()
                                 .text_right()
                                 .text_sm()
                                 .text_color(delta_color)
-                                .child(format!("{:+.0}%", mover.change_pct)),
+                                .child(delta_text),
                         )
-                        .child(div().w(px(140.0)).child(drives))
+                        .child(div().w_32().child(drives))
                 })),
         )
 }
 
-fn stat_card(cx: &App, label: &'static str, value: String, sub: Div) -> Div {
+fn stat_card(cx: &App, label: &'static str, value: String, sub: impl IntoElement) -> Div {
     theme::card(cx)
         .flex_1()
+        // min_w_0: four equal cards must shrink below their content
+        // width instead of overflowing the row on narrow windows.
+        .min_w_0()
         .p_5()
         .v_flex()
         .gap_1()
@@ -580,7 +802,9 @@ fn stat_card(cx: &App, label: &'static str, value: String, sub: Div) -> Div {
         )
         .child(
             div()
-                .text_2xl()
+                // 13px base: text_3xl ≈ 24px — the KPI tier, clearly above
+                // the text_2xl (≈20px) page title.
+                .text_3xl()
                 .font_weight(FontWeight::BOLD)
                 .text_color(theme::text_primary(cx))
                 .child(value),
@@ -608,7 +832,9 @@ fn legend_solid(cx: &App, color: Hsla, label: &'static str) -> Div {
         .h_flex()
         .items_center()
         .gap_2()
-        .child(div().w(px(16.0)).h(px(2.0)).rounded_full().bg(color))
+        // Decorative 16×2 swatch at the default rem; rem-based so it
+        // zooms with the base font.
+        .child(div().w_4().h_0p5().rounded_full().bg(color))
         .child(
             div()
                 .text_xs()
@@ -627,7 +853,9 @@ fn legend_dashed(cx: &App, color: Hsla, label: &'static str) -> Div {
                 .h_flex()
                 .items_center()
                 .gap_0p5()
-                .children((0..3).map(|_| div().w(px(4.0)).h(px(2.0)).rounded_full().bg(color))),
+                // Decorative 4×2 dashes at the default rem; rem-based so
+                // they zoom with the base font.
+                .children((0..3).map(|_| div().w_1().h_0p5().rounded_full().bg(color))),
         )
         .child(
             div()
@@ -650,14 +878,19 @@ fn line_color(cx: &App, name: &str, index: usize) -> Hsla {
     }
 }
 
-/// Outline-style button in the warm palette.
-fn outline_button(cx: &App) -> ButtonCustomVariant {
-    ButtonCustomVariant::new(cx)
-        .color(theme::card_bg(cx))
-        .foreground(theme::text_primary(cx))
-        .border(theme::card_border(cx))
+/// Segmented-control pill: the active range reads as a raised chip, the
+/// others as plain text on the track.
+fn range_pill(cx: &App, active: bool) -> ButtonCustomVariant {
+    let pill = ButtonCustomVariant::new(cx)
+        .foreground(theme::text_muted(cx))
         .hover(theme::sidebar_bg(cx))
-        .active(theme::sidebar_bg(cx))
+        .active(theme::sidebar_bg(cx));
+    if active {
+        pill.color(theme::card_bg(cx))
+            .foreground(theme::text_primary(cx))
+    } else {
+        pill
+    }
 }
 
 /// Currency symbol for a reporting-currency code.
@@ -671,7 +904,9 @@ fn currency_symbol(currency: &str) -> &str {
     }
 }
 
-/// Whole-unit amount with thousands separators, e.g. `$51,080`.
+/// Amount with the currency's symbol, e.g. `$51,080`. Precision adapts to
+/// the size so sub-dollar spend does not round to `$0`: whole units from
+/// 100 up, two decimals from a cent up, and `<$0.01` below a cent.
 fn fmt_amount(amount: f64, currency: &str) -> String {
     let symbol = currency_symbol(currency);
     let prefix = if symbol.is_empty() {
@@ -679,6 +914,20 @@ fn fmt_amount(amount: f64, currency: &str) -> String {
     } else {
         symbol.to_string()
     };
+
+    let magnitude = amount.abs();
+    // Below half a cent is netting round-off, not an amount.
+    if magnitude < 0.005 {
+        return format!("{prefix}0");
+    }
+    let sign = if amount < 0.0 { "-" } else { "" };
+    if magnitude < 0.01 {
+        // A sub-cent amount has no honest rounding; say so instead.
+        return format!("{sign}<{prefix}0.01");
+    }
+    if magnitude < 100.0 {
+        return format!("{sign}{prefix}{magnitude:.2}");
+    }
 
     let rounded = amount.round() as i64;
     let sign = if rounded < 0 { "-" } else { "" };

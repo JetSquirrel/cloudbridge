@@ -1,13 +1,15 @@
 //! Cloud Account Management View
 
 use chrono::{DateTime, Utc};
-use gpui::prelude::FluentBuilder;
-use gpui::*;
-use gpui_component::{
+use gpui_kit::component::{
     button::*,
     input::{Input, InputState},
+    scroll::ScrollableElement,
     *,
 };
+use gpui_kit::prelude::FluentBuilder;
+use gpui_kit::*;
+use std::collections::HashSet;
 use uuid::Uuid;
 
 use crate::cloud::registry::{self, SourceDescriptor};
@@ -24,6 +26,13 @@ pub struct AccountsView {
     accounts_data: Option<data::AccountsData>,
     /// A table/card data load is in flight; reloads do not pile on.
     loading_data: bool,
+    /// A save is in flight; the dialog's Save button is disabled.
+    saving: bool,
+    /// Per-account actions in flight, by account id: the row's button is
+    /// disabled and a second click is a no-op.
+    validating_ids: HashSet<String>,
+    importing_ids: HashSet<String>,
+    deleting_ids: HashSet<String>,
     /// Whether to show add dialog
     show_add_dialog: bool,
     /// Error message
@@ -66,6 +75,10 @@ impl AccountsView {
             accounts: Vec::new(),
             accounts_data: None,
             loading_data: false,
+            saving: false,
+            validating_ids: HashSet::new(),
+            importing_ids: HashSet::new(),
+            deleting_ids: HashSet::new(),
             show_add_dialog: false,
             fill_status: None,
             error: None,
@@ -77,21 +90,36 @@ impl AccountsView {
             selected_source: default_source,
         };
 
-        view.load_accounts();
+        view.load_accounts(cx);
         view.load_data(cx);
         view
     }
 
-    fn load_accounts(&mut self) {
-        match db::get_all_accounts() {
-            Ok(accounts) => {
-                self.accounts = accounts;
-                self.error = None;
-            }
-            Err(e) => {
-                self.error = Some(format!("Failed to load accounts: {}", e));
-            }
-        }
+    /// Load the configured-accounts list off the UI thread, like load_data
+    /// does: the read opens the ledger database, which blocks.
+    fn load_accounts(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let outcome = smol::unblock(db::get_all_accounts)
+                .await
+                .map_err(|e| e.to_string());
+
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    match outcome {
+                        Ok(accounts) => {
+                            this.accounts = accounts;
+                            this.error = None;
+                        }
+                        Err(e) => {
+                            this.error = Some(format!("Failed to load accounts: {}", e));
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            });
+        })
+        .detach();
     }
 
     /// Reload both the table/card data and the configured-accounts list.
@@ -99,7 +127,7 @@ impl AccountsView {
     /// the table data while a load is already in flight. Existing data
     /// stays on screen while the reload runs — no loading flash.
     pub fn reload(&mut self, cx: &mut Context<Self>) {
-        self.load_accounts();
+        self.load_accounts(cx);
         if !self.loading_data {
             self.load_data(cx);
         }
@@ -128,8 +156,7 @@ impl AccountsView {
                     cx.notify();
                 })
                 .ok();
-            })
-            .ok();
+            });
         })
         .detach();
     }
@@ -168,8 +195,7 @@ impl AccountsView {
                     cx.notify();
                 })
                 .ok();
-            })
-            .ok();
+            });
         })
         .detach();
     }
@@ -256,7 +282,7 @@ impl AccountsView {
                     .text_color(theme::text_muted(cx))
                     .child(format!("Filled from {}", origin)),
                 FillStatus::NotFound(places) => el
-                    .text_color(gpui::red())
+                    .text_color(theme::danger(cx))
                     .child(format!("No credentials found in {}", places)),
             })
     }
@@ -267,6 +293,10 @@ impl AccountsView {
     }
 
     fn save_account(&mut self, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
+
         // Get values from input fields
         let name = self.name_input.read(cx).value().to_string();
         let ak = self.ak_input.read(cx).value().to_string();
@@ -312,33 +342,73 @@ impl AccountsView {
             access_key_hint: None,
         };
 
-        match db::save_account(&account, &ak, &sk) {
-            Ok(_) => {
-                self.success = Some("Account added successfully".to_string());
-                self.error = None;
-                self.show_add_dialog = false;
-                self.load_accounts();
-                self.load_data(cx);
-            }
-            Err(e) => {
-                self.error = Some(format!("Save failed: {}", e));
-            }
-        }
+        // The save writes the secret to the OS keyring, which blocks, so
+        // it runs off the UI thread with the Save button disabled.
+        self.saving = true;
         cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let outcome = smol::unblock(move || db::save_account(&account, &ak, &sk))
+                .await
+                .map_err(|e| e.to_string());
+
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.saving = false;
+                    match outcome {
+                        Ok(_) => {
+                            this.success = Some("Account added successfully".to_string());
+                            this.error = None;
+                            this.show_add_dialog = false;
+                            this.load_accounts(cx);
+                            this.load_data(cx);
+                        }
+                        Err(e) => {
+                            this.error = Some(format!("Save failed: {}", e));
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            });
+        })
+        .detach();
     }
 
     fn delete_account(&mut self, account_id: &str, cx: &mut Context<Self>) {
-        match db::delete_account(account_id) {
-            Ok(_) => {
-                self.success = Some("Account deleted".to_string());
-                self.load_accounts();
-                self.load_data(cx);
-            }
-            Err(e) => {
-                self.error = Some(format!("Delete failed: {}", e));
-            }
+        // One delete per account at a time: the row's button is disabled
+        // while this is in flight.
+        let account_id = account_id.to_string();
+        if !self.deleting_ids.insert(account_id.clone()) {
+            return;
         }
         cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let id = account_id.clone();
+            let outcome = smol::unblock(move || db::delete_account(&id))
+                .await
+                .map_err(|e| e.to_string());
+
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.deleting_ids.remove(&account_id);
+                    match outcome {
+                        Ok(_) => {
+                            this.success = Some("Account deleted".to_string());
+                            this.load_accounts(cx);
+                            this.load_data(cx);
+                        }
+                        Err(e) => {
+                            this.error = Some(format!("Delete failed: {}", e));
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            });
+        })
+        .detach();
     }
 
     fn validate_account(&mut self, account: &CloudAccount, cx: &mut Context<Self>) {
@@ -364,6 +434,13 @@ impl AccountsView {
                 return;
             }
         };
+
+        // One validation per account at a time: the row's button is
+        // disabled while this is in flight.
+        let account_id = account.id.clone();
+        if !self.validating_ids.insert(account_id.clone()) {
+            return;
+        }
 
         // Show validating status
         self.success = Some(format!("Validating account {}...", account_name));
@@ -392,27 +469,33 @@ impl AccountsView {
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
-                    match validation_result {
-                        Ok(true) => {
-                            this.success =
-                                Some(format!("Account {} validated successfully!", account_name));
-                            this.error = None;
-                        }
-                        Ok(false) => {
-                            this.error =
-                                Some(format!("Account {} credentials invalid", account_name));
-                            this.success = None;
-                        }
-                        Err(e) => {
-                            this.error = Some(format!("Validation failed: {}", e));
-                            this.success = None;
+                    this.validating_ids.remove(&account_id);
+                    // The account may have been deleted while the request
+                    // was out; its result has no row to report against.
+                    if this.accounts.iter().any(|a| a.id == account_id) {
+                        match validation_result {
+                            Ok(true) => {
+                                this.success = Some(format!(
+                                    "Account {} validated successfully!",
+                                    account_name
+                                ));
+                                this.error = None;
+                            }
+                            Ok(false) => {
+                                this.error =
+                                    Some(format!("Account {} credentials invalid", account_name));
+                                this.success = None;
+                            }
+                            Err(e) => {
+                                this.error = Some(format!("Validation failed: {}", e));
+                                this.success = None;
+                            }
                         }
                     }
                     cx.notify();
                 })
                 .ok();
-            })
-            .ok();
+            });
         })
         .detach();
     }
@@ -444,6 +527,13 @@ impl AccountsView {
             return;
         };
 
+        // One import per account at a time: the row's button is disabled
+        // while the picker and the import are in flight.
+        let account_id = account.id.clone();
+        if !self.importing_ids.insert(account_id.clone()) {
+            return;
+        }
+
         let chosen = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -461,42 +551,33 @@ impl AccountsView {
 
         let account = account.clone();
         cx.spawn(async move |this, cx| {
-            let path = match chosen.await {
-                Ok(Ok(Some(paths))) => paths.into_iter().next(),
-                // Cancelled: leave the account list exactly as it was.
-                Ok(Ok(None)) | Err(_) => None,
-                Ok(Err(e)) => {
-                    report(
-                        &this,
-                        cx,
-                        Err(format!("Could not open the file picker: {}", e)),
+            let outcome: Result<String, String> = async {
+                let path = match chosen.await {
+                    Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                    // Cancelled: leave the account list exactly as it was.
+                    Ok(Ok(None)) | Err(_) => return Ok(String::new()),
+                    Ok(Err(e)) => {
+                        return Err(format!("Could not open the file picker: {}", e));
+                    }
+                };
+                let Some(path) = path else {
+                    return Ok(String::new());
+                };
+
+                let name = account.name.clone();
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::spawn(move || {
+                    let _ = tx.send(
+                        crate::ingest::import_bill_file(&account, &path).map_err(|e| e.to_string()),
                     );
-                    return;
-                }
-            };
-            let Some(path) = path else {
-                report(&this, cx, Ok(String::new()));
-                return;
-            };
+                });
 
-            let name = account.name.clone();
-            let (tx, rx) = std::sync::mpsc::channel();
-            std::thread::spawn(move || {
-                let _ = tx.send(
-                    crate::ingest::import_bill_file(&account, &path).map_err(|e| e.to_string()),
-                );
-            });
-
-            let outcome = smol::unblock(move || {
-                rx.recv_timeout(std::time::Duration::from_secs(300))
-                    .unwrap_or_else(|_| Err("The import timed out".to_string()))
-            })
-            .await;
-
-            report(
-                &this,
-                cx,
-                outcome.map(|outcome| {
+                smol::unblock(move || {
+                    rx.recv_timeout(std::time::Duration::from_secs(300))
+                        .unwrap_or_else(|_| Err("The import timed out".to_string()))
+                })
+                .await
+                .map(|outcome| {
                     // Say which months were replaced, not merely that
                     // something was imported: the export supersedes those
                     // months rather than adding to them.
@@ -507,39 +588,64 @@ impl AccountsView {
                         outcome.format,
                         outcome.period_labels()
                     )
-                }),
-            );
+                })
+            }
+            .await;
+
+            let still_exists = cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.importing_ids.remove(&account_id);
+                    cx.notify();
+                    // The account may have been deleted while the
+                    // picker or the import was out; its result has no
+                    // row to report against.
+                    this.accounts.iter().any(|a| a.id == account_id)
+                })
+                .unwrap_or(false)
+            });
+
+            if still_exists {
+                report(&this, cx, outcome);
+            }
         })
         .detach();
     }
 
+    /// The billing-source picker: real buttons, so the choice is keyboard
+    /// reachable and focus visible, with the selected source still
+    /// controlled by the view.
     fn render_source_selector(&self, cx: &Context<Self>) -> impl IntoElement {
         div()
             .h_flex()
             .gap_2()
+            .flex_wrap()
             .children(registry::all().iter().map(|source| {
                 let is_selected = source.id == self.selected_source.id;
 
-                div()
-                    .id(SharedString::from(source.id))
-                    .px_4()
-                    .py_2()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .when(is_selected, |el| {
-                        el.bg(theme::accent(cx)).text_color(theme::on_accent(cx))
+                Button::new(SharedString::from(format!("source-{}", source.id)))
+                    .label(source.short_name)
+                    .small()
+                    .when(is_selected, |button| {
+                        button.custom(
+                            ButtonCustomVariant::new(cx)
+                                .color(theme::accent(cx))
+                                .foreground(theme::on_accent(cx))
+                                .hover(theme::accent_hover(cx))
+                                .active(theme::accent_hover(cx)),
+                        )
                     })
-                    .when(!is_selected, |el| {
-                        el.bg(theme::card_border(cx))
-                            .text_color(theme::text_primary(cx))
+                    .when(!is_selected, |button| {
+                        button.custom(
+                            ButtonCustomVariant::new(cx)
+                                .color(theme::card_border(cx))
+                                .foreground(theme::text_primary(cx))
+                                .hover(theme::card_border(cx))
+                                .active(theme::card_border(cx)),
+                        )
                     })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, _, window, cx| {
-                            this.set_source(source, window, cx);
-                        }),
-                    )
-                    .child(source.short_name)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.set_source(source, window, cx);
+                    }))
             }))
     }
 
@@ -584,6 +690,9 @@ impl AccountsView {
     /// Validate / Import bill / Delete live on the row, so this table is the
     /// single place an account appears.
     fn render_accounts_table(&self, cx: &Context<Self>) -> impl IntoElement {
+        // Column widths are rem-scale steps; the row cells in
+        // render_table_row set the same width with the same helper, and
+        // the two must be changed together.
         let card = theme::card(cx).w_full().p_5().v_flex().child(
             div()
                 .w_full()
@@ -591,13 +700,13 @@ impl AccountsView {
                 .items_center()
                 .gap_4()
                 .pb_2()
-                .child(table_header_cell(cx, "ACCOUNT", COL_ACCOUNT))
-                .child(table_header_cell(cx, "SOURCE", COL_SOURCE))
-                .child(table_header_cell(cx, "REPORTS", COL_REPORTS))
-                .child(table_header_cell(cx, "MTD", COL_MTD))
-                .child(table_header_cell(cx, "LAST FETCH", COL_FETCH))
-                .child(table_header_cell(cx, "STATE", COL_STATE))
-                .child(table_header_cell(cx, "ACTIONS", COL_ACTIONS)),
+                .child(table_header_cell(cx, "ACCOUNT").w_40())
+                .child(table_header_cell(cx, "SOURCE").w_40())
+                .child(table_header_cell(cx, "REPORTS").w_32())
+                .child(table_header_cell(cx, "MTD").w_20())
+                .child(table_header_cell(cx, "LAST FETCH").w_24())
+                .child(table_header_cell(cx, "STATE").w_32())
+                .child(table_header_cell(cx, "ACTIONS").w_40()),
         );
 
         match &self.accounts_data {
@@ -678,7 +787,7 @@ impl AccountsView {
             .border_color(theme::card_border(cx))
             .child(
                 div()
-                    .w(px(COL_ACCOUNT))
+                    .w_40()
                     .v_flex()
                     .child(
                         div()
@@ -706,34 +815,33 @@ impl AccountsView {
             )
             .child(
                 div()
-                    .w(px(COL_SOURCE))
+                    // Wide enough for "Amazon Web Services" on one line;
+                    // nowrap + ellipsis instead of a 3-line wrap.
+                    .w_40()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
                     .text_color(theme::text_primary(cx))
                     .child(row.provider.clone()),
             )
             .child(
                 div()
-                    .w(px(COL_REPORTS))
+                    .w_32()
                     .text_sm()
                     .text_color(theme::text_muted(cx))
                     .child(row.source_kind.clone()),
             )
+            .child(div().w_20().text_color(theme::text_primary(cx)).child(mtd))
             .child(
                 div()
-                    .w(px(COL_MTD))
-                    .text_color(theme::text_primary(cx))
-                    .child(mtd),
-            )
-            .child(
-                div()
-                    .w(px(COL_FETCH))
+                    .w_24()
                     .text_sm()
                     .text_color(theme::text_muted(cx))
                     .child(last_sync),
             )
-            .child(div().w(px(COL_STATE)).child(render_state(row.state, cx)))
+            .child(div().w_32().child(render_state(row.state, cx)))
             .child(
                 div()
-                    .w(px(COL_ACTIONS))
+                    .w_40()
                     .h_flex()
                     .gap_1()
                     .flex_wrap()
@@ -743,6 +851,7 @@ impl AccountsView {
                                 .label("Validate")
                                 .ghost()
                                 .small()
+                                .disabled(self.validating_ids.contains(&row.id))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.validate_account(&account, cx);
                                 })),
@@ -754,6 +863,7 @@ impl AccountsView {
                                 .label("Import bill")
                                 .ghost()
                                 .small()
+                                .disabled(self.importing_ids.contains(&row.id))
                                 .tooltip(
                                     "Read a bill export downloaded from this \
                                      provider's console. It replaces every month \
@@ -770,6 +880,7 @@ impl AccountsView {
                             .danger()
                             .ghost()
                             .small()
+                            .disabled(self.deleting_ids.contains(&row.id))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.delete_account(&delete_id, cx);
                             })),
@@ -809,11 +920,18 @@ impl AccountsView {
 
         div()
             .w_full()
-            .h_flex()
+            // Plain flex, not h_flex: h_flex centres the cards on the
+            // cross axis, while the default stretch keeps both cards the
+            // same height.
+            .flex()
+            .flex_row()
             .gap_4()
             .child(
                 theme::card(cx)
                     .flex_1()
+                    // min_w_0: the card must shrink below its content
+                    // instead of pushing the row past the viewport.
+                    .min_w_0()
                     .p_5()
                     .v_flex()
                     .gap_3()
@@ -849,6 +967,10 @@ impl AccountsView {
             .child(
                 theme::card(cx)
                     .flex_1()
+                    // min_w_0: the raw-store path below is long and has
+                    // unbreakable segments; without this the card forces
+                    // the row wider than the viewport and is clipped.
+                    .min_w_0()
                     .p_5()
                     .v_flex()
                     .gap_3()
@@ -858,7 +980,9 @@ impl AccountsView {
                             .text_color(theme::text_primary(cx))
                             .child("Raw payloads on disk"),
                     )
-                    .child(theme::caption(cx, raw_body))
+                    // Middle ellipsis keeps the tail of the path visible no
+                    // matter how deep the data directory is.
+                    .child(theme::caption(cx, raw_body).text_ellipsis_middle())
                     .child(
                         div().child(
                             Button::new("replay-normalization")
@@ -867,7 +991,6 @@ impl AccountsView {
                                 .custom(
                                     ButtonCustomVariant::new(cx)
                                         .color(theme::accent(cx))
-                                        .border(theme::accent(cx))
                                         .hover(theme::alert_tint(cx))
                                         .active(theme::alert_tint(cx)),
                                 )
@@ -894,12 +1017,12 @@ impl AccountsView {
             .flex()
             .items_center()
             .justify_center()
-            .bg(gpui::black().opacity(0.5))
+            .bg(theme::scrim(cx))
             .child(
                 // Dialog content
                 div()
-                    .w(px(480.0))
-                    .max_h(px(600.0))
+                    .w_128()
+                    .max_h(rems(37.5))
                     .p_6()
                     .rounded_xl()
                     .bg(theme::card_bg(cx))
@@ -909,9 +1032,9 @@ impl AccountsView {
                     .shadow_lg()
                     .v_flex()
                     .gap_4()
-                    .overflow_y_hidden()
                     .child(
                         div()
+                            .flex_shrink_0()
                             .h_flex()
                             .justify_between()
                             .items_center()
@@ -930,11 +1053,16 @@ impl AccountsView {
                                     })),
                             ),
                     )
-                    // Form
+                    // The body scrolls so Save and Cancel below stay
+                    // reachable however short the window is.
                     .child(
                         div()
+                            .id("add-account-body")
+                            .flex_1()
+                            .min_h_0()
                             .v_flex()
                             .gap_4()
+                            .overflow_y_scroll()
                             .child(
                                 div()
                                     .v_flex()
@@ -1035,11 +1163,18 @@ impl AccountsView {
                     )
                     // Error message
                     .when_some(self.error.clone(), |el, error| {
-                        el.child(div().text_sm().text_color(gpui::red()).child(error))
+                        el.child(
+                            div()
+                                .flex_shrink_0()
+                                .text_sm()
+                                .text_color(theme::danger(cx))
+                                .child(error),
+                        )
                     })
                     // Buttons
                     .child(
                         div()
+                            .flex_shrink_0()
                             .h_flex()
                             .gap_2()
                             .justify_end()
@@ -1048,11 +1183,15 @@ impl AccountsView {
                                     this.hide_add_dialog(cx);
                                 }),
                             ))
-                            .child(Button::new("save").label("Save").primary().on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.save_account(cx);
-                                }),
-                            )),
+                            .child(
+                                Button::new("save")
+                                    .label("Save")
+                                    .primary()
+                                    .disabled(self.saving)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.save_account(cx);
+                                    })),
+                            ),
                     ),
             )
     }
@@ -1065,8 +1204,8 @@ impl AccountsView {
                         .w_full()
                         .p_3()
                         .rounded_md()
-                        .bg(theme::alert_tint(cx))
-                        .text_color(theme::accent(cx))
+                        .bg(theme::danger_bg(cx))
+                        .text_color(theme::danger(cx))
                         .child(error),
                 )
             })
@@ -1076,8 +1215,8 @@ impl AccountsView {
                         .w_full()
                         .p_3()
                         .rounded_md()
-                        .bg(theme::warning_bg(cx))
-                        .text_color(theme::warning_text(cx))
+                        .bg(theme::success_bg(cx))
+                        .text_color(theme::success(cx))
                         .child(success),
                 )
             })
@@ -1100,7 +1239,7 @@ fn report(view: &WeakEntity<AccountsView>, cx: &mut AsyncApp, outcome: Result<St
                     view.success = Some(message);
                     view.error = None;
                     // The ledger moved, and the row shows a sync time.
-                    view.load_accounts();
+                    view.load_accounts(cx);
                     view.load_data(cx);
                 }
                 Err(e) => {
@@ -1111,18 +1250,8 @@ fn report(view: &WeakEntity<AccountsView>, cx: &mut AsyncApp, outcome: Result<St
             cx.notify();
         })
         .ok();
-    })
-    .ok();
+    });
 }
-
-/// Column widths of the accounts table, shared by the header and the rows.
-const COL_ACCOUNT: f32 = 170.0;
-const COL_SOURCE: f32 = 100.0;
-const COL_REPORTS: f32 = 120.0;
-const COL_MTD: f32 = 80.0;
-const COL_FETCH: f32 = 90.0;
-const COL_STATE: f32 = 110.0;
-const COL_ACTIONS: f32 = 170.0;
 
 /// Symbol prefix for the currencies the sources bill in.
 fn currency_symbol(currency: &str) -> &str {
@@ -1150,9 +1279,36 @@ fn thousands(n: i64) -> String {
     }
 }
 
-/// Whole-unit amount with the currency's symbol, e.g. `$18,420`.
+/// Amount with the currency's symbol, e.g. `$18,420`. Precision adapts to
+/// the size so sub-dollar spend does not round to `$0`: whole units from
+/// 100 up, two decimals from a cent up, and `<$0.01` below a cent.
 fn format_money(amount: f64, currency: &str) -> String {
     let symbol = currency_symbol(currency);
+    let magnitude = amount.abs();
+    // Below half a cent is netting round-off, not an amount.
+    if magnitude < 0.005 {
+        return if symbol.is_empty() {
+            format!("0 {currency}")
+        } else {
+            format!("{symbol}0")
+        };
+    }
+    let sign = if amount < 0.0 { "-" } else { "" };
+    if magnitude < 0.01 {
+        // A sub-cent amount has no honest rounding; say so instead.
+        return if symbol.is_empty() {
+            format!("{sign}<0.01 {currency}")
+        } else {
+            format!("{sign}<{symbol}0.01")
+        };
+    }
+    if magnitude < 100.0 {
+        return if symbol.is_empty() {
+            format!("{sign}{magnitude:.2} {currency}")
+        } else {
+            format!("{sign}{symbol}{magnitude:.2}")
+        };
+    }
     if symbol.is_empty() {
         format!("{} {}", thousands(amount.round() as i64), currency)
     } else {
@@ -1201,9 +1357,10 @@ fn format_bytes(bytes: u64) -> String {
 }
 
 /// One header cell of the accounts table: small, muted, semibold caps.
-fn table_header_cell(cx: &App, text: &'static str, width: f32) -> Div {
+/// The width is set at the call site with the same rem helper the row
+/// cell uses.
+fn table_header_cell(cx: &App, text: &'static str) -> Div {
     div()
-        .w(px(width))
         .text_xs()
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(theme::text_muted(cx))
@@ -1214,11 +1371,9 @@ fn table_header_cell(cx: &App, text: &'static str, width: f32) -> Div {
 /// untagged spend, plain text otherwise.
 fn render_state(state: data::AccountState, cx: &App) -> Div {
     match state {
-        data::AccountState::Healthy => theme::pill(
-            state.label(),
-            theme::warning_bg(cx),
-            theme::warning_text(cx),
-        ),
+        data::AccountState::Healthy => {
+            theme::pill(state.label(), theme::success_bg(cx), theme::success(cx))
+        }
         data::AccountState::UntaggedSpend => div()
             .px_2()
             .py_0p5()
@@ -1239,14 +1394,22 @@ impl Render for AccountsView {
         div()
             .size_full()
             .relative()
-            .p_8()
-            .v_flex()
-            .gap_6()
             .bg(theme::app_bg(cx))
-            .child(self.render_header(cx))
-            .child(self.render_messages(cx))
-            .child(self.render_accounts_table(cx))
-            .child(self.render_bottom_cards(cx))
+            // The table grows one row per account, so the page owns a
+            // scroll region. The dialog overlays the page and therefore
+            // stays outside it.
+            .child(
+                div()
+                    .size_full()
+                    .v_flex()
+                    .gap_6()
+                    .p_8()
+                    .overflow_y_scrollbar()
+                    .child(self.render_header(cx))
+                    .child(self.render_messages(cx))
+                    .child(self.render_accounts_table(cx))
+                    .child(self.render_bottom_cards(cx)),
+            )
             .child(self.render_add_dialog(cx))
     }
 }

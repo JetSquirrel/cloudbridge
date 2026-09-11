@@ -1,8 +1,8 @@
 //! Settings View
 
-use gpui::prelude::FluentBuilder;
-use gpui::*;
-use gpui_component::{button::*, select::*, *};
+use gpui_kit::component::{button::*, scroll::ScrollableElement, select::*, *};
+use gpui_kit::prelude::FluentBuilder;
+use gpui_kit::*;
 
 use crate::config::{
     load_config, save_config, AppConfig, REFRESH_INTERVAL_CHOICES_HOURS,
@@ -32,12 +32,29 @@ impl SelectItem for ThemeItem {
     }
 }
 
+/// Outcome of the last settings action, shown in the banner at the bottom
+/// of the page. Success and failure render in different colors, so a failed
+/// save can't be mistaken for a saved one.
+#[derive(Clone)]
+enum StatusMessage {
+    Success(String),
+    Error(String),
+}
+
 /// Settings View
 pub struct SettingsView {
     /// Configuration
     config: AppConfig,
     /// Save status
-    save_status: Option<String>,
+    save_status: Option<StatusMessage>,
+    /// A ledger rebuild / config write is running off the UI thread; the
+    /// controls that would race it stay disabled until it lands.
+    saving: bool,
+    /// An edit landed while `saving` was set; written once that flight
+    /// finishes so no change is silently dropped.
+    save_pending: bool,
+    /// A demo-data load or clear is running off the UI thread.
+    demo_running: bool,
     /// Theme picker state
     theme_select: Entity<SelectState<SearchableVec<ThemeItem>>>,
     _subscriptions: Vec<Subscription>,
@@ -87,6 +104,9 @@ impl SettingsView {
         Self {
             config,
             save_status: None,
+            saving: false,
+            save_pending: false,
+            demo_running: false,
             theme_select,
             _subscriptions: vec![subscription],
         }
@@ -98,6 +118,9 @@ impl SettingsView {
     /// that only know the flag. An unknown name (theme file vanished between
     /// listing and picking) is not persisted.
     fn set_theme(&mut self, name: &SharedString, cx: &mut Context<Self>) {
+        // A new edit supersedes the last outcome; clear it so a stale
+        // "Settings saved" doesn't drift beside unsaved changes.
+        self.save_status = None;
         super::theme::apply_theme_by_name(name, cx);
 
         if let Some(theme) = ThemeRegistry::global(cx).themes().get(name.as_str()) {
@@ -110,18 +133,59 @@ impl SettingsView {
     /// Change the currency every amount is shown in.
     ///
     /// Only the reading view is rebuilt — charges stay in the currency
-    /// they were billed in, so this costs nothing and loses nothing.
+    /// they were billed in, so this costs nothing and loses nothing. The
+    /// rebuild and the config write are blocking, so they run off the UI
+    /// thread; a second switch while one is in flight is ignored rather
+    /// than raced.
     fn set_reporting_currency(&mut self, currency: &str, cx: &mut Context<Self>) {
-        self.config.reporting_currency = currency.to_string();
-
-        if let Err(e) = crate::ledger::set_reporting_currency(currency) {
-            tracing::error!("Failed to switch reporting currency: {}", e);
-            self.save_status = Some(format!("Could not switch currency: {}", e));
-            cx.notify();
+        if self.saving {
             return;
         }
+        self.save_status = None;
+        let previous = std::mem::replace(&mut self.config.reporting_currency, currency.to_string());
+        self.saving = true;
+        cx.notify();
 
-        self.save_config(cx);
+        let config = self.config.clone();
+        let currency = currency.to_string();
+        cx.spawn(async move |this, cx| {
+            // The two steps fail differently: if the rebuild fails the
+            // ledger still shows the old currency, so the selection is put
+            // back to match; if only the write fails the switch did apply.
+            enum Failure {
+                Switch(String),
+                Save(String),
+            }
+            let result = smol::unblock(move || -> Result<(), Failure> {
+                crate::ledger::set_reporting_currency(&currency)
+                    .map_err(|e| Failure::Switch(format!("Could not switch currency: {e}")))?;
+                save_config(&config).map_err(|e| Failure::Save(format!("Save failed: {e}")))?;
+                Ok(())
+            })
+            .await;
+            this.update(cx, |this, cx| {
+                this.saving = false;
+                this.save_status = Some(match result {
+                    Ok(()) => StatusMessage::Success("Settings saved".to_string()),
+                    Err(Failure::Switch(e)) => {
+                        tracing::error!("Failed to switch reporting currency: {}", e);
+                        this.config.reporting_currency = previous;
+                        StatusMessage::Error(e)
+                    }
+                    Err(Failure::Save(e)) => {
+                        tracing::error!("Failed to save settings: {}", e);
+                        StatusMessage::Error(e)
+                    }
+                });
+                if this.save_pending {
+                    this.save_pending = false;
+                    this.save_config(cx);
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Change how long a billing period stays fresh before a refresh will
@@ -131,20 +195,87 @@ impl SettingsView {
     /// longer interval is the cheaper one — Cost Explorer bills per
     /// request — which is why the default is a day.
     fn set_refresh_interval(&mut self, hours: u32, cx: &mut Context<Self>) {
+        self.save_status = None;
         self.config.refresh_interval_hours = hours;
         self.save_config(cx);
     }
 
+    /// Persist the config off the UI thread. If a write is already in
+    /// flight, remember that and re-run with the latest config when it
+    /// lands, so edits made during a slow currency switch still stick.
     fn save_config(&mut self, cx: &mut Context<Self>) {
-        match save_config(&self.config) {
-            Ok(_) => {
-                self.save_status = Some("Settings saved".to_string());
-            }
-            Err(e) => {
-                self.save_status = Some(format!("Save failed: {}", e));
-            }
+        if self.saving {
+            self.save_pending = true;
+            return;
         }
+        self.saving = true;
         cx.notify();
+
+        let config = self.config.clone();
+        cx.spawn(async move |this, cx| {
+            let result = smol::unblock(move || save_config(&config)).await;
+            this.update(cx, |this, cx| {
+                this.saving = false;
+                match result {
+                    Ok(_) => {
+                        this.save_status =
+                            Some(StatusMessage::Success("Settings saved".to_string()));
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to save settings: {}", e);
+                        this.save_status = Some(StatusMessage::Error(format!("Save failed: {e}")));
+                    }
+                }
+                if this.save_pending {
+                    this.save_pending = false;
+                    this.save_config(cx);
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Load or clear the demo ledger off the UI thread, then re-evaluate
+    /// the alert rules so the demo's spike and low balance show up, and
+    /// ask the shell to reload whatever page is showing.
+    fn set_demo_data(&mut self, load: bool, cx: &mut Context<Self>) {
+        if self.demo_running {
+            return;
+        }
+        self.demo_running = true;
+        self.save_status = None;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let result = smol::unblock(move || {
+                let summary = if load {
+                    crate::ledger::demo::seed_demo()
+                } else {
+                    crate::ledger::demo::clear_demo()
+                }?;
+                crate::alerts::evaluate()?;
+                Ok::<_, anyhow::Error>(summary)
+            })
+            .await;
+            this.update(cx, |this, cx| {
+                this.demo_running = false;
+                this.save_status = Some(match result {
+                    Ok(summary) => {
+                        crate::app::request_reload(cx);
+                        StatusMessage::Success(summary)
+                    }
+                    Err(e) => {
+                        tracing::error!("Demo data operation failed: {}", e);
+                        StatusMessage::Error(format!("Demo data failed: {e}"))
+                    }
+                });
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn render_section(
@@ -177,6 +308,7 @@ impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let reporting_currency = self.config.reporting_currency.clone();
         let refresh_interval_hours = self.config.refresh_interval_hours;
+        let saving = self.saving;
 
         div()
             .size_full()
@@ -184,6 +316,7 @@ impl Render for SettingsView {
             .v_flex()
             .gap_6()
             .bg(cx.theme().background)
+            .overflow_y_scrollbar()
             .child(
                 div()
                     .text_2xl()
@@ -200,14 +333,14 @@ impl Render for SettingsView {
                         .justify_between()
                         .items_center()
                         .child(
-                            div().v_flex().child(div().child("Theme")).child(
+                            div().min_w_0().v_flex().child(div().child("Theme")).child(
                                 div()
                                     .text_sm()
                                     .text_color(cx.theme().muted_foreground)
                                     .child("Applies immediately and is remembered across launches"),
                             ),
                         )
-                        .child(Select::new(&self.theme_select).w(px(280.0))),
+                        .child(Select::new(&self.theme_select).w_72()),
                     cx,
                 ),
             )
@@ -220,15 +353,19 @@ impl Render for SettingsView {
                         .justify_between()
                         .items_center()
                         .child(
-                            div().v_flex().child(div().child("Currency")).child(
-                                div()
-                                    .text_sm()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(
-                                        "Totals are converted to this currency. \
+                            div()
+                                .min_w_0()
+                                .v_flex()
+                                .child(div().child("Currency"))
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(
+                                            "Totals are converted to this currency. \
                                          Charges keep the currency they were billed in.",
-                                    ),
-                            ),
+                                        ),
+                                ),
                         )
                         .child(div().h_flex().gap_2().children(
                             SUPPORTED_REPORTING_CURRENCIES.iter().map(|currency| {
@@ -237,6 +374,8 @@ impl Render for SettingsView {
                                     .when(*currency == reporting_currency, |button| {
                                         button.primary()
                                     })
+                                    .loading(saving && *currency == reporting_currency)
+                                    .disabled(saving)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.set_reporting_currency(currency, cx);
                                     }))
@@ -254,18 +393,22 @@ impl Render for SettingsView {
                         .justify_between()
                         .items_center()
                         .child(
-                            div().v_flex().child(div().child("Refresh interval")).child(
-                                div()
-                                    .text_sm()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(
-                                        "A billing period is fetched again only once \
+                            div()
+                                .min_w_0()
+                                .v_flex()
+                                .child(div().child("Refresh interval"))
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(
+                                            "A billing period is fetched again only once \
                                              this has passed. Longer is cheaper: AWS Cost \
                                              Explorer bills per request. Force Refresh \
                                              ignores it; an imported bill file is never \
                                              re-fetched.",
-                                    ),
-                            ),
+                                        ),
+                                ),
                         )
                         .child(div().h_flex().gap_2().children(
                             REFRESH_INTERVAL_CHOICES_HOURS.iter().map(|hours| {
@@ -274,11 +417,63 @@ impl Render for SettingsView {
                                     .when(*hours == refresh_interval_hours, |button| {
                                         button.primary()
                                     })
+                                    .disabled(saving)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.set_refresh_interval(*hours, cx);
                                     }))
                             }),
                         )),
+                    cx,
+                ),
+            )
+            // Demo data
+            .child(
+                self.render_section(
+                    "Demo data",
+                    div()
+                        .h_flex()
+                        .justify_between()
+                        .items_center()
+                        .child(
+                            div()
+                                .min_w_0()
+                                .v_flex()
+                                .child(div().child("Demo ledger"))
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(
+                                            "Twelve months of fake but realistic spend across \
+                                             three demo accounts, for design review. Demo rows \
+                                             never touch a real API.",
+                                        ),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .h_flex()
+                                .gap_2()
+                                .flex_shrink_0()
+                                .child(
+                                    Button::new("load-demo-data")
+                                        .label("Load demo data")
+                                        .primary()
+                                        .loading(self.demo_running)
+                                        .disabled(self.demo_running)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.set_demo_data(true, cx);
+                                        })),
+                                )
+                                .child(
+                                    Button::new("clear-demo-data")
+                                        .label("Clear")
+                                        .disabled(self.demo_running)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.set_demo_data(false, cx);
+                                        })),
+                                ),
+                        ),
                     cx,
                 ),
             )
@@ -316,14 +511,26 @@ impl Render for SettingsView {
             )
             // Save status
             .when_some(self.save_status.clone(), |el, status| {
+                let (message, bg, fg) = match status {
+                    StatusMessage::Success(message) => (
+                        message,
+                        super::theme::success_bg(cx),
+                        super::theme::success(cx),
+                    ),
+                    StatusMessage::Error(message) => (
+                        message,
+                        super::theme::danger_bg(cx),
+                        super::theme::danger(cx),
+                    ),
+                };
                 el.child(
                     div()
                         .w_full()
                         .p_3()
                         .rounded_md()
-                        .bg(gpui::green().opacity(0.1))
-                        .text_color(gpui::green())
-                        .child(status),
+                        .bg(bg)
+                        .text_color(fg)
+                        .child(message),
                 )
             })
     }

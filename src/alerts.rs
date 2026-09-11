@@ -28,6 +28,11 @@ pub const RULE_BALANCE_FLOOR: &str = "balance-floor";
 /// Rule id of the untagged-ratio rule.
 pub const RULE_UNTAGGED_RATIO: &str = "untagged-ratio";
 
+/// The untagged share the seeded `untagged-ratio` rule fires over, as a
+/// fraction (0.15 = 15%). The account-row "Untagged spend" badge reads the
+/// same line, from here — the two must not drift apart.
+pub const DEFAULT_UNTAGGED_THRESHOLD: f64 = 0.15;
+
 /// How far back the anomaly baseline reads. A 7-day trailing mean for each
 /// of the last two checked days needs the seven days before them, and a
 /// little slack for a late-arriving day.
@@ -126,6 +131,9 @@ pub struct AlertEvent {
     pub status: AlertStatus,
     pub snoozed_until: Option<DateTime<Utc>>,
     pub dedupe_key: String,
+    /// When the event reached a final state (resolved or dismissed), if it
+    /// has. "Resolved this month" keys on this, not on `created_at`.
+    pub resolved_at: Option<DateTime<Utc>>,
 }
 
 /// The filter chips the Alerts page groups by.
@@ -184,6 +192,8 @@ pub struct AlertView {
     /// Action buttons, in order.
     pub actions: Vec<String>,
     pub created_at: DateTime<Utc>,
+    /// When the event was resolved or dismissed, if it has been.
+    pub resolved_at: Option<DateTime<Utc>>,
     /// The context half of `fields_json`; `{}` for an event without one.
     pub context: serde_json::Value,
 }
@@ -236,7 +246,7 @@ fn default_rules() -> Vec<AlertRule> {
             name: "Untagged spend ratio".to_string(),
             scope: "All sources".to_string(),
             enabled: true,
-            config: json!({ "threshold": 0.15 }),
+            config: json!({ "threshold": DEFAULT_UNTAGGED_THRESHOLD }),
             last_fired_at: None,
         },
     ]
@@ -483,6 +493,7 @@ fn evaluate_cost_anomalies(
             status: AlertStatus::Open,
             snoozed_until: None,
             dedupe_key,
+            resolved_at: None,
         };
 
         fire(app, rule, event, now)?;
@@ -575,6 +586,7 @@ fn evaluate_balance_floors(
             status: AlertStatus::Open,
             snoozed_until: None,
             dedupe_key,
+            resolved_at: None,
         };
 
         fire(app, rule, event, now)?;
@@ -607,7 +619,7 @@ fn evaluate_untagged_ratio(
     rule: &AlertRule,
     now: DateTime<Utc>,
 ) -> Result<usize> {
-    let threshold = config_f64(rule, "threshold", 0.15);
+    let threshold = config_f64(rule, "threshold", DEFAULT_UNTAGGED_THRESHOLD);
 
     let current = crate::cloud::BillingPeriod::containing(now);
     let current_share = untagged_share(&query::tag_breakdown_of(
@@ -666,6 +678,7 @@ fn evaluate_untagged_ratio(
         status: AlertStatus::Open,
         snoozed_until: None,
         dedupe_key,
+        resolved_at: None,
     };
 
     fire(app, rule, event, now)?;
@@ -711,7 +724,7 @@ pub(crate) fn resolve_stale_with(
                 }
             }
             RULE_UNTAGGED_RATIO => {
-                let threshold = config_f64(rule, "threshold", 0.15);
+                let threshold = config_f64(rule, "threshold", DEFAULT_UNTAGGED_THRESHOLD);
                 let current = crate::cloud::BillingPeriod::containing(now);
                 let share = untagged_share(&query::tag_breakdown_of(
                     ledger,
@@ -966,6 +979,7 @@ fn view_of(event: &AlertEvent, rules: &[AlertRule]) -> AlertView {
         stat,
         actions,
         created_at: event.created_at,
+        resolved_at: event.resolved_at,
         context: event.context().unwrap_or_else(|| json!({})),
     }
 }
@@ -1017,7 +1031,7 @@ fn rule_view_of(rule: &AlertRule) -> RuleView {
             vec![
                 format!(
                     "unallocated_share > {:.0}%",
-                    config_f64(rule, "threshold", 0.15) * 100.0
+                    config_f64(rule, "threshold", DEFAULT_UNTAGGED_THRESHOLD) * 100.0
                 ),
                 "Daily".to_string(),
             ],
@@ -1218,8 +1232,8 @@ mod tests {
             .unwrap()
             .date_naive();
         let one_day: BTreeMap<NaiveDate, f64> = daily
-            .iter()
-            .map(|(day, _)| (*day, if *day == last { 40.0 } else { 10.0 }))
+            .keys()
+            .map(|day| (*day, if *day == last { 40.0 } else { 10.0 }))
             .collect();
         assert!(detect_breach(&one_day, 2.5, 2).is_none());
     }

@@ -19,6 +19,7 @@ use chrono::{DateTime, Duration, Utc};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
+use crate::cloud::billfile::BillFileFormat;
 use crate::cloud::raw::{self, RawBatch, RawPart};
 use crate::cloud::registry::SourceDescriptor;
 use crate::cloud::{BillingPeriod, CloudAccount, Normalized, SourceContext};
@@ -83,6 +84,12 @@ pub struct RefreshOutcome {
 /// bill does not move faster than that in any way worth paying for (Cost
 /// Explorer bills per request).
 pub fn refresh_account(account: &CloudAccount, force: bool) -> Result<RefreshOutcome> {
+    // Demo accounts carry fake data and no credentials; fetching them
+    // would only produce a keyring error.
+    if account.id.starts_with(crate::ledger::demo::DEMO_PREFIX) {
+        tracing::debug!("Skipping demo account {}", account.id);
+        return Ok(RefreshOutcome::default());
+    }
     let descriptor = account.descriptor().ok_or_else(|| {
         anyhow!(
             "No billing source registered under '{}'",
@@ -350,7 +357,7 @@ pub fn import_bill_file(account: &CloudAccount, path: &Path) -> Result<ImportOut
         )
     })?;
 
-    let text = read_text(path)?;
+    let text = read_text(path, format)?;
     let periods = (format.periods)(&text)?;
     if periods.is_empty() {
         return Err(anyhow!(
@@ -412,10 +419,23 @@ pub fn import_bill_file(account: &CloudAccount, path: &Path) -> Result<ImportOut
 /// an encoding would silently mangle every product name in the bill.
 /// Re-saving the file as UTF-8 is something the user can do; spotting a
 /// quietly mis-decoded bill is not.
-fn read_text(path: &Path) -> Result<String> {
+///
+/// A zip is opened rather than refused: some consoles (DeepSeek) hand out
+/// the export as an archive, and asking the user to unzip it first is a
+/// step that exists only because this code did not. Which member is read
+/// is the format's call — see [`BillFileFormat::zip_member`].
+fn read_text(path: &Path, format: &BillFileFormat) -> Result<String> {
     let bytes =
         std::fs::read(path).map_err(|e| anyhow!("Cannot read {}: {}", path.display(), e))?;
 
+    if bytes.starts_with(b"PK\x03\x04") {
+        return read_zip_member(path, &bytes, format);
+    }
+
+    utf8(path, bytes)
+}
+
+fn utf8(path: &Path, bytes: Vec<u8>) -> Result<String> {
     String::from_utf8(bytes).map_err(|_| {
         anyhow!(
             "{} is not UTF-8 text. Re-export it as UTF-8, or open it and \
@@ -424,6 +444,64 @@ fn read_text(path: &Path) -> Result<String> {
             path.display()
         )
     })
+}
+
+/// The text of the one member of a zip the format reads.
+fn read_zip_member(path: &Path, bytes: &[u8], format: &BillFileFormat) -> Result<String> {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| {
+        anyhow!(
+            "{} looks like a zip but does not open as one: {}",
+            path.display(),
+            e
+        )
+    })?;
+
+    let names: Vec<String> = archive.file_names().map(str::to_string).collect();
+    let wanted: Vec<&str> = names
+        .iter()
+        .map(String::as_str)
+        .filter(|name| match format.zip_member {
+            Some(member) => name.contains(member),
+            None => format
+                .extensions
+                .iter()
+                .filter(|extension| **extension != "zip")
+                .any(|extension| name.to_lowercase().ends_with(&format!(".{extension}"))),
+        })
+        .collect();
+
+    let member = match wanted.as_slice() {
+        [only] => (*only).to_string(),
+        [] => {
+            return Err(anyhow!(
+                "{} holds none of the {} this import reads. It holds: {}",
+                path.display(),
+                format
+                    .zip_member
+                    .map(|member| format!("{member}*"))
+                    .unwrap_or_else(|| format.extension_hint()),
+                names.join(", ")
+            ))
+        }
+        several => {
+            return Err(anyhow!(
+                "{} holds more than one file this import could read ({}). \
+                 Unzip it and pick the {} instead.",
+                path.display(),
+                several.join(", "),
+                format.zip_member.unwrap_or(format.display_name)
+            ))
+        }
+    };
+
+    let mut entry = archive
+        .by_name(&member)
+        .map_err(|e| anyhow!("Cannot read {member} in {}: {}", path.display(), e))?;
+    let mut text = Vec::new();
+    std::io::Read::read_to_end(&mut entry, &mut text)
+        .map_err(|e| anyhow!("Cannot read {member} in {}: {}", path.display(), e))?;
+
+    utf8(path, text)
 }
 
 /// Write the payloads under `raw/`, checking first that nothing in the path
@@ -517,7 +595,10 @@ mod tests {
     #[test]
     fn a_utf8_export_is_read_with_its_names_intact() {
         let file = TempFile::holding("账期,产品名称\n2026-08,百炼\n".as_bytes());
-        assert_eq!(read_text(&file.0).unwrap(), "账期,产品名称\n2026-08,百炼\n");
+        assert_eq!(
+            read_text(&file.0, &TEST_FORMAT).unwrap(),
+            "账期,产品名称\n2026-08,百炼\n"
+        );
     }
 
     /// Both Chinese consoles can produce a GBK export. Guessing would
@@ -528,17 +609,68 @@ mod tests {
         // 产品 in GBK, which is not valid UTF-8.
         let file = TempFile::holding(b"\xB2\xFA\xC6\xB7,1.00\n");
 
-        let error = read_text(&file.0).unwrap_err().to_string();
+        let error = read_text(&file.0, &TEST_FORMAT).unwrap_err().to_string();
         assert!(error.contains("not UTF-8"), "{}", error);
         assert!(error.contains("UTF-8"), "{}", error);
     }
 
     #[test]
     fn a_missing_file_is_reported_against_its_path() {
-        let error = read_text(Path::new("/nonexistent/bill.csv"))
+        let error = read_text(Path::new("/nonexistent/bill.csv"), &TEST_FORMAT)
             .unwrap_err()
             .to_string();
         assert!(error.contains("/nonexistent/bill.csv"), "{}", error);
+    }
+
+    /// The format these tests read with.
+    static TEST_FORMAT: BillFileFormat = BillFileFormat {
+        display_name: "Test export",
+        origin_hint: "",
+        extensions: &["csv"],
+        zip_member: Some("cost-"),
+        part: "test",
+        periods: |_| unreachable!(),
+        normalize: |_| unreachable!(),
+    };
+
+    /// A zip of `members` as `(name, text)`, written to a temp file.
+    fn zipped(members: &[(&str, &str)]) -> TempFile {
+        use std::io::Write;
+
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut cursor);
+            for (name, text) in members {
+                writer
+                    .start_file(*name, zip::write::SimpleFileOptions::default())
+                    .unwrap();
+                writer.write_all(text.as_bytes()).unwrap();
+            }
+            writer.finish().unwrap();
+        }
+        TempFile::holding(&cursor.into_inner())
+    }
+
+    #[test]
+    fn a_zip_yields_the_member_the_format_reads() {
+        let file = zipped(&[
+            ("amount-2026-08.csv", "date,amount\n2026-08-01,10787\n"),
+            ("cost-2026-08.csv", "date,cost\n2026-08-01,1.50\n"),
+        ]);
+
+        assert_eq!(
+            read_text(&file.0, &TEST_FORMAT).unwrap(),
+            "date,cost\n2026-08-01,1.50\n"
+        );
+    }
+
+    #[test]
+    fn a_zip_without_the_member_names_what_it_does_hold() {
+        let file = zipped(&[("amount-2026-08.csv", "date,amount\n")]);
+
+        let error = read_text(&file.0, &TEST_FORMAT).unwrap_err().to_string();
+        assert!(error.contains("cost-*"), "{}", error);
+        assert!(error.contains("amount-2026-08.csv"), "{}", error);
     }
 
     #[test]

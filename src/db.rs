@@ -49,7 +49,11 @@ lazy_static::lazy_static! {
 /// v5 adds `alert_rule` and `alert_event`, the state of the alerting
 /// engine (see [`crate::alerts`]). New tables only; `create_tables` runs
 /// on every start, so an existing database gains them without a rebuild.
-const APP_SCHEMA_VERSION: i32 = 5;
+///
+/// v6 adds `resolved_at` to `alert_event`: when the event reached its
+/// final state. "Resolved this month" keys on it — an alert resolved in
+/// month N but created earlier still belongs to month N's list.
+const APP_SCHEMA_VERSION: i32 = 6;
 
 /// Initialize database
 pub fn init_database() -> Result<()> {
@@ -94,6 +98,9 @@ pub(crate) fn prepare_schema(conn: &Connection) -> Result<()> {
     }
     if version < 4 {
         migrate_to_v4(conn)?;
+    }
+    if version < 6 {
+        migrate_to_v6(conn)?;
     }
 
     conn.execute(
@@ -177,9 +184,13 @@ const TABLES: &[(&str, &str, &str)] = &[
             created_at    VARCHAR NOT NULL,
             status        VARCHAR NOT NULL,   -- open | snoozed | resolved | dismissed
             snoozed_until VARCHAR,
-            dedupe_key    VARCHAR NOT NULL
+            dedupe_key    VARCHAR NOT NULL,
+            -- Last, because v6 adds it with ALTER TABLE to a database that
+            -- already exists, and a fresh install should have the same
+            -- column order as an upgraded one.
+            resolved_at   VARCHAR
         )"#,
-        "id, rule_id, severity, title, body, fields_json, stat_json, created_at, status, snoozed_until, dedupe_key",
+        "id, rule_id, severity, title, body, fields_json, stat_json, created_at, status, snoozed_until, dedupe_key, resolved_at",
     ),
 ];
 
@@ -262,6 +273,25 @@ fn migrate_to_v4(conn: &Connection) -> Result<()> {
 
     tracing::info!("Adding access_key_hint to cloud_accounts");
     conn.execute_batch("ALTER TABLE cloud_accounts ADD COLUMN access_key_hint VARCHAR")?;
+
+    Ok(())
+}
+
+/// Add the column that records when an alert event reached its final
+/// state, so "Resolved this month" can key on resolution time rather than
+/// creation time.
+///
+/// Left NULL for events already resolved: nothing recorded when they
+/// closed, so they drop out of the current month's list rather than being
+/// filed under a month that would be a guess.
+fn migrate_to_v6(conn: &Connection) -> Result<()> {
+    let columns = column_names(conn, "alert_event")?;
+    if columns.is_empty() || columns.iter().any(|c| c == "resolved_at") {
+        return Ok(());
+    }
+
+    tracing::info!("Adding resolved_at to alert_event");
+    conn.execute_batch("ALTER TABLE alert_event ADD COLUMN resolved_at VARCHAR")?;
 
     Ok(())
 }
@@ -614,14 +644,6 @@ pub fn delete_account(account_id: &str) -> Result<()> {
         params![account_id],
     )?;
     conn.execute(
-        "DELETE FROM cost_summary_cache WHERE account_id = ?",
-        params![account_id],
-    )?;
-    conn.execute(
-        "DELETE FROM cost_trend_cache WHERE account_id = ?",
-        params![account_id],
-    )?;
-    conn.execute(
         "DELETE FROM cloud_accounts WHERE id = ?",
         params![account_id],
     )?;
@@ -944,8 +966,8 @@ pub(crate) fn insert_alert_event_to(conn: &Connection, event: &AlertEvent) -> Re
         r#"
         INSERT OR REPLACE INTO alert_event
         (id, rule_id, severity, title, body, fields_json, stat_json, created_at,
-         status, snoozed_until, dedupe_key)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         status, snoozed_until, dedupe_key, resolved_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
         params![
             event.id,
@@ -959,6 +981,7 @@ pub(crate) fn insert_alert_event_to(conn: &Connection, event: &AlertEvent) -> Re
             event.status.as_str(),
             event.snoozed_until.map(|at| at.to_rfc3339()),
             event.dedupe_key,
+            event.resolved_at.map(|at| at.to_rfc3339()),
         ],
     )?;
 
@@ -981,7 +1004,7 @@ pub(crate) fn get_alert_events_of(
     let placeholders = statuses.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let mut stmt = conn.prepare(&format!(
         "SELECT id, rule_id, severity, title, body, fields_json, stat_json, created_at,
-                status, snoozed_until, dedupe_key
+                status, snoozed_until, dedupe_key, resolved_at
          FROM alert_event
          WHERE status IN ({placeholders})
          ORDER BY created_at DESC"
@@ -1005,7 +1028,7 @@ pub(crate) fn find_live_alert_event_of(
 ) -> Result<Option<AlertEvent>> {
     let mut stmt = conn.prepare(
         "SELECT id, rule_id, severity, title, body, fields_json, stat_json, created_at,
-                status, snoozed_until, dedupe_key
+                status, snoozed_until, dedupe_key, resolved_at
          FROM alert_event
          WHERE dedupe_key = ? AND status IN ('open', 'snoozed')
          ORDER BY created_at DESC
@@ -1017,7 +1040,8 @@ pub(crate) fn find_live_alert_event_of(
 }
 
 /// Move an event to a new state. `snoozed_until` matters only for
-/// [`AlertStatus::Snoozed`].
+/// [`AlertStatus::Snoozed`]. Reaching a final state stamps `resolved_at`;
+/// leaving one (reopened, or snoozed again) clears it.
 pub fn set_alert_event_status(
     id: &str,
     status: AlertStatus,
@@ -1032,9 +1056,19 @@ pub(crate) fn set_alert_event_status_to(
     status: AlertStatus,
     snoozed_until: Option<DateTime<Utc>>,
 ) -> Result<()> {
+    let resolved_at = match status {
+        AlertStatus::Resolved | AlertStatus::Dismissed => Some(Utc::now().to_rfc3339()),
+        _ => None,
+    };
+
     conn.execute(
-        "UPDATE alert_event SET status = ?, snoozed_until = ? WHERE id = ?",
-        params![status.as_str(), snoozed_until.map(|at| at.to_rfc3339()), id],
+        "UPDATE alert_event SET status = ?, snoozed_until = ?, resolved_at = ? WHERE id = ?",
+        params![
+            status.as_str(),
+            snoozed_until.map(|at| at.to_rfc3339()),
+            resolved_at,
+            id
+        ],
     )?;
 
     Ok(())
@@ -1045,6 +1079,7 @@ fn event_from_row(row: &duckdb::Row<'_>) -> duckdb::Result<AlertEvent> {
     let created_at: String = row.get(7)?;
     let status: String = row.get(8)?;
     let snoozed_until: Option<String> = row.get(9)?;
+    let resolved_at: Option<String> = row.get(11)?;
 
     Ok(AlertEvent {
         id: row.get(0)?,
@@ -1062,6 +1097,9 @@ fn event_from_row(row: &duckdb::Row<'_>) -> duckdb::Result<AlertEvent> {
             .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
             .map(|dt| dt.with_timezone(&Utc)),
         dedupe_key: row.get(10)?,
+        resolved_at: resolved_at
+            .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+            .map(|dt| dt.with_timezone(&Utc)),
     })
 }
 
@@ -1356,6 +1394,54 @@ mod tests {
         assert!(has_primary_key(&conn, "alert_event").unwrap());
     }
 
+    /// The resolution stamp arrives on an existing database without
+    /// disturbing its events, and a fresh install ends up with the same
+    /// column order as an upgraded one.
+    #[test]
+    fn the_resolved_at_column_is_added_to_an_existing_database() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at VARCHAR NOT NULL);
+             INSERT INTO schema_version VALUES (5, '2026-09-08T00:00:00+00:00');
+             CREATE TABLE alert_event (
+                 id            VARCHAR PRIMARY KEY,
+                 rule_id       VARCHAR NOT NULL,
+                 severity      VARCHAR NOT NULL,
+                 title         VARCHAR NOT NULL,
+                 body          VARCHAR NOT NULL,
+                 fields_json   VARCHAR NOT NULL,
+                 stat_json     VARCHAR,
+                 created_at    VARCHAR NOT NULL,
+                 status        VARCHAR NOT NULL,
+                 snoozed_until VARCHAR,
+                 dedupe_key    VARCHAR NOT NULL
+             );
+             INSERT INTO alert_event VALUES
+                 ('ev-1', 'balance-floor', 'warning', 't', 'b', '{}', NULL,
+                  '2026-08-01T00:00:00+00:00', 'resolved', NULL, 'balance|DeepSeek|acct-3|2026-08-01');",
+        )
+        .unwrap();
+
+        prepare_schema(&conn).unwrap();
+
+        let columns = column_names(&conn, "alert_event").unwrap();
+        assert_eq!(columns.last().unwrap(), "resolved_at");
+        // Nothing recorded when the old event closed: the stamp stays NULL
+        // rather than being backfilled with a guess.
+        let resolved_at: Option<String> = conn
+            .query_row(
+                "SELECT resolved_at FROM alert_event WHERE id = 'ev-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(resolved_at, None);
+
+        let fresh = Connection::open_in_memory().unwrap();
+        prepare_schema(&fresh).unwrap();
+        assert_eq!(column_names(&fresh, "alert_event").unwrap(), columns);
+    }
+
     /// The round trip the alerting engine takes: store a rule, fire an
     /// event under it, snooze the event, find it again by its dedupe key.
     #[test]
@@ -1391,6 +1477,7 @@ mod tests {
             status: AlertStatus::Open,
             snoozed_until: None,
             dedupe_key: "balance|DeepSeek|acct-3|2026-09-06".to_string(),
+            resolved_at: None,
         };
         insert_alert_event_to(&conn, &event).unwrap();
 
@@ -1412,6 +1499,15 @@ mod tests {
         let resolved =
             get_alert_events_of(&conn, &[AlertStatus::Resolved, AlertStatus::Dismissed]).unwrap();
         assert_eq!(resolved.len(), 1);
+        // Closing the event stamped when it closed.
+        assert!(resolved[0].resolved_at.is_some());
+
+        // Reopening clears the stamp again.
+        set_alert_event_status_to(&conn, "ev-1", AlertStatus::Open, None).unwrap();
+        let reopened = find_live_alert_event_of(&conn, &event.dedupe_key)
+            .unwrap()
+            .expect("the reopened event is live");
+        assert_eq!(reopened.resolved_at, None);
     }
 
     #[test]

@@ -25,6 +25,7 @@
 
 pub mod aliyun;
 pub mod anthropic;
+pub mod deepseek;
 pub mod detail_export;
 pub mod openai;
 pub mod usage_export;
@@ -50,6 +51,13 @@ pub struct BillFileFormat {
     /// Filename extensions the import accepts, lowercase and without the
     /// dot. Advisory: the file is parsed on its contents, not its name.
     pub extensions: &'static [&'static str],
+    /// Which member of a zip this format reads, as a substring of the
+    /// member's filename, when the console's download is an archive.
+    /// DeepSeek's bundles a cost and an amount CSV, so the member cannot
+    /// be picked by extension alone. `None` for a format whose download is
+    /// a bare file: a zip then yields its only member with one of
+    /// `extensions`, or an error naming what the archive holds.
+    pub zip_member: Option<&'static str>,
     /// Part name the file's text is stored under in a raw batch.
     pub part: &'static str,
     /// The billing periods a file covers.

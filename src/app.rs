@@ -1,9 +1,9 @@
 //! Main application module
 
 use chrono::{DateTime, Utc};
-use gpui::prelude::FluentBuilder;
-use gpui::*;
-use gpui_component::*;
+use gpui_kit::component::*;
+use gpui_kit::prelude::FluentBuilder;
+use gpui_kit::*;
 
 use crate::ui::data::SyncStatus;
 use crate::ui::theme;
@@ -24,6 +24,9 @@ pub struct AppState {
     /// A view switch a page asked for; the shell observes this entity,
     /// applies the request, and clears it.
     navigate_to: Option<CurrentView>,
+    /// A page changed data the current view shows (demo data load/clear);
+    /// the shell reloads the current page and sidebar when set.
+    reload_requested: bool,
 }
 
 impl AppState {
@@ -32,6 +35,7 @@ impl AppState {
             open_alerts: 0,
             sync: None,
             navigate_to: None,
+            reload_requested: false,
         }
     }
 
@@ -39,6 +43,13 @@ impl AppState {
     /// entity and applies the request on notify.
     pub fn navigate(&mut self, view: CurrentView, cx: &mut Context<Self>) {
         self.navigate_to = Some(view);
+        cx.notify();
+    }
+
+    /// Ask the app shell to reload the current page and the status bar,
+    /// after a change they read has landed behind their backs.
+    pub fn request_reload(&mut self, cx: &mut Context<Self>) {
+        self.reload_requested = true;
         cx.notify();
     }
 }
@@ -58,6 +69,13 @@ impl Global for GlobalAppState {}
 pub fn navigate_to(view: CurrentView, cx: &mut App) {
     let app_state = cx.global::<GlobalAppState>().0.clone();
     app_state.update(cx, |state, cx| state.navigate(view, cx));
+}
+
+/// Ask the app shell to reload the current page and the status bar, e.g.
+/// after loading or clearing demo data from Settings.
+pub fn request_reload(cx: &mut App) {
+    let app_state = cx.global::<GlobalAppState>().0.clone();
+    app_state.update(cx, |state, cx| state.request_reload(cx));
 }
 
 /// Main application view
@@ -110,13 +128,23 @@ impl CloudBridgeApp {
         // it and clear it. The update in refresh_sidebar does not notify, so
         // this observer cannot loop.
         let observer = cx.observe(&app_state, |this, app_state, cx| {
-            let target = app_state.update(cx, |state, _| state.navigate_to.take());
+            let (target, reload) = app_state.update(cx, |state, _| {
+                (
+                    state.navigate_to.take(),
+                    std::mem::take(&mut state.reload_requested),
+                )
+            });
             if let Some(view) = target {
                 if this.current_view != view {
                     this.current_view = view;
                     this.reload_view(view, cx);
                     this.refresh_sidebar(cx);
                 }
+                cx.notify();
+            }
+            if reload {
+                this.reload_view(this.current_view, cx);
+                this.refresh_sidebar(cx);
                 cx.notify();
             }
         });
@@ -175,8 +203,7 @@ impl CloudBridgeApp {
                     state.open_alerts = open_alerts;
                 });
                 this.update(cx, |_, cx| cx.notify()).ok();
-            })
-            .ok();
+            });
         })
         .detach();
     }
@@ -188,7 +215,9 @@ impl CloudBridgeApp {
         let alerts_badge = (open_alerts > 0).then_some(open_alerts);
 
         div()
-            .w(px(250.0))
+            // 14rem (182px at the 13px base), rem-based so the sidebar
+            // zooms with the base font.
+            .w_56()
             .h_full()
             .flex_shrink_0()
             .border_r_1()
@@ -260,7 +289,6 @@ impl CloudBridgeApp {
                 cx,
             ))
             .child(div().flex_1())
-            .child(self.render_sync_card(cx))
             .child(self.nav_item(
                 "Settings",
                 IconName::Settings,
@@ -292,19 +320,20 @@ impl CloudBridgeApp {
             .items_center()
             .gap_2()
             .px_3()
-            .py_2()
-            .rounded_full()
+            .py_1p5()
+            // Theme radius, not a pill: dense data-tool chrome.
+            .rounded(cx.theme().radius)
             .cursor_pointer()
             .text_color(text_color)
             .when(is_active, |el| el.bg(theme::accent(cx)))
             .when(!is_active, |el| el.hover(|s| s.bg(theme::card_bg(cx))))
-            .child(Icon::new(icon).size(px(16.0)).text_color(text_color))
+            .child(Icon::new(icon).size_4().text_color(text_color))
             .child(label);
 
         if let Some(count) = badge {
             item = item.child(div().flex_1()).child(
                 div()
-                    .size(px(18.0))
+                    .size(rems(1.125))
                     .rounded_full()
                     .flex()
                     .items_center()
@@ -334,61 +363,45 @@ impl CloudBridgeApp {
         }))
     }
 
-    fn render_sync_card(&self, cx: &App) -> impl IntoElement {
+    /// The window's bottom status bar: sync state as one muted line, in
+    /// the desktop convention, instead of a card competing with the nav.
+    fn render_status_bar(&self, cx: &App) -> impl IntoElement {
         let sync = self.app_state.read(cx).sync.as_ref();
 
-        // Until the first load lands, show nothing but the honest minimum.
-        let (synced, detail, fresh) = match sync {
-            Some(sync) => (
-                match sync.last_synced_at {
+        let (text, fresh) = match sync {
+            Some(sync) => {
+                let synced = match sync.last_synced_at {
                     Some(at) => format!("Synced {}", relative_time(at)),
                     None => "Never synced".to_string(),
-                },
-                sync_detail(sync),
-                sync.last_synced_at.is_some(),
-            ),
-            None => (
-                "Syncing…".to_string(),
-                "Reading the ledger.".to_string(),
-                false,
-            ),
+                };
+                // sync_detail carries "N sources · next auto-fetch …".
+                (
+                    format!("{synced} · {}", sync_detail(sync)),
+                    sync.last_synced_at.is_some(),
+                )
+            }
+            None => ("Syncing… · reading the ledger.".to_string(), false),
         };
 
-        theme::card(cx)
+        div()
             .w_full()
-            .p_3()
-            .mb_2()
-            .v_flex()
-            .gap_1()
-            .child(
-                div()
-                    .h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(theme::dot(if fresh {
-                        theme::olive(cx)
-                    } else {
-                        theme::grey(cx)
-                    }))
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme::text_primary(cx))
-                            .child(synced),
-                    ),
-            )
+            .h_flex()
+            .items_center()
+            .gap_2()
+            .px_4()
+            .py_1()
+            .border_t_1()
+            .border_color(theme::card_border(cx))
+            .child(theme::dot(if fresh {
+                theme::olive(cx)
+            } else {
+                theme::grey(cx)
+            }))
             .child(
                 div()
                     .text_xs()
                     .text_color(theme::text_muted(cx))
-                    .child(detail),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme::text_muted(cx))
-                    .child("Credentials stay in the OS keyring."),
+                    .child(text),
             )
     }
 
@@ -420,8 +433,15 @@ impl Render for CloudBridgeApp {
                 div()
                     .flex_1()
                     .h_full()
+                    .v_flex()
                     .overflow_hidden()
-                    .child(self.render_content(window, cx)),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .child(self.render_content(window, cx)),
+                    )
+                    .child(self.render_status_bar(cx)),
             )
     }
 }

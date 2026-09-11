@@ -9,8 +9,8 @@ mod ledger;
 mod secret_store;
 mod ui;
 
-use gpui::*;
-use gpui_component::*;
+use gpui_kit::component::*;
+use gpui_kit::*;
 use std::path::PathBuf;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -61,11 +61,11 @@ fn main() {
 
     tracing::info!("Starting CloudBridge...");
 
-    let app = Application::new().with_assets(gpui_component_assets::Assets);
+    let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
 
     app.run(move |cx| {
         // Initialize GPUI Component
-        gpui_component::init(cx);
+        gpui_kit::init(cx);
 
         let reporting_currency = config::load_config()
             .map(|settings| settings.reporting_currency)
@@ -110,7 +110,7 @@ fn main() {
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(Bounds {
                         origin: Point::default(),
-                        size: gpui::Size {
+                        size: gpui_kit::Size {
                             width: px(1280.0),
                             height: px(800.0),
                         },

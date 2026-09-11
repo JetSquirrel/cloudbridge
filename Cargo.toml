@@ -12,10 +12,11 @@ categories = ["gui", "finance"]
 rust-version = "1.75"
 
 [dependencies]
-# GPUI framework
-gpui = "0.2"
-gpui-component = "0.5.1"
-gpui-component-assets = "0.5.1"
+# GPUI Kit: the single dependency for GPUI, gpui-base, the styled
+# components and the default assets. Default features are `component` and
+# `assets`; the tree-sitter grammars stay off, so no syntax-highlighting
+# stack is compiled into a cost dashboard.
+gpui-kit = "0.6"
 
 # Sync HTTP client (avoids aws-lc-sys compilation issues)
 ureq = { version = "3", features = ["json"] }
@@ -63,6 +64,7 @@ uuid = { version = "1", features = ["v4"] }
 
 # Lazy initialization
 lazy_static = "1"
+zip = { version = "4.2.0", default-features = false, features = ["deflate"] }
 
 [profile.release]
 opt-level = "z"          # Optimize for size

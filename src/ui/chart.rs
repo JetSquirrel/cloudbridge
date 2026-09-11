@@ -1,24 +1,43 @@
 //! The Overview page's spend chart.
 
-use gpui::*;
+use std::cell::RefCell;
+use std::rc::Rc;
 
-use super::data::DailyPoint;
+use gpui_kit::*;
+
+use super::data::ChartPoint;
 use super::theme;
 
-/// The Overview "Daily spend, all sources" chart: a smooth area chart of
-/// actual spend in the accent color over a dashed olive 7-day baseline, with
-/// faint horizontal gridlines and no axis labels.
+/// Gridlines sit behind the data series, faint enough to read as context
+/// rather than as part of it.
+const GRIDLINE_OPACITY: f32 = 0.6;
+/// The area fill is a whisper of the accent so the line keeps visual
+/// priority.
+const AREA_FILL_OPACITY: f32 = 0.12;
+
+/// The Overview spend chart: a smooth area chart of actual usage in the
+/// accent color over a dashed olive 7-day baseline, with faint horizontal
+/// gridlines and no axis labels. An empty `baseline` (the 12-month range)
+/// simply draws no dashed series. `height` is rem-based so the chart
+/// scales with the user's font size.
+///
+/// Hover interactivity lives in the caller: each frame the prepaint writes
+/// the canvas bounds and the actual series' point coordinates (window
+/// space) into the shared cells, which the caller uses to map the mouse
+/// position to a point and to position the guide line, dot, and tooltip.
 pub fn spend_area_chart(
     cx: &App,
-    actual: &[DailyPoint],
-    baseline: &[DailyPoint],
-    height: f32,
+    actual: &[ChartPoint],
+    baseline: &[ChartPoint],
+    height: Rems,
+    points_cell: Rc<RefCell<Vec<(f32, f32)>>>,
+    bounds_cell: Rc<RefCell<Option<Bounds<Pixels>>>>,
 ) -> impl IntoElement {
     let actual: Vec<f64> = actual.iter().map(|p| p.amount).collect();
     let baseline: Vec<f64> = baseline.iter().map(|p| p.amount).collect();
 
-    let grid_color = theme::card_border(cx).opacity(0.6);
-    let fill_color = theme::accent(cx).opacity(0.12);
+    let grid_color = theme::card_border(cx).opacity(GRIDLINE_OPACITY);
+    let fill_color = theme::accent(cx).opacity(AREA_FILL_OPACITY);
     let baseline_color = theme::olive(cx);
     let line_color = theme::accent(cx);
 
@@ -28,6 +47,7 @@ pub fn spend_area_chart(
             let origin_y: f32 = bounds.origin.y.into();
             let w: f32 = bounds.size.width.into();
             let h: f32 = bounds.size.height.into();
+            *bounds_cell.borrow_mut() = Some(bounds);
 
             let mut min = f64::INFINITY;
             let mut max = f64::NEG_INFINITY;
@@ -56,8 +76,11 @@ pub fn spend_area_chart(
                     .collect()
             };
 
+            let actual_points = to_points(&actual);
+            *points_cell.borrow_mut() = actual_points.clone();
+
             (
-                to_points(&actual),
+                actual_points,
                 to_points(&baseline),
                 [origin_x, origin_y, origin_x + w, origin_y + h],
             )
@@ -108,7 +131,7 @@ pub fn spend_area_chart(
         },
     )
     .w_full()
-    .h(px(height))
+    .h(height)
 }
 
 /// Append a Catmull-Rom-smoothed polyline through `points` to the path.

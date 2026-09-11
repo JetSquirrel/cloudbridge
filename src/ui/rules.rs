@@ -1,19 +1,24 @@
 //! Rules View — alerting rules that run on the local ledger after each ingest.
 
 use chrono::{DateTime, Utc};
-use gpui::prelude::FluentBuilder;
-use gpui::*;
-use gpui_component::{
+use gpui_kit::component::{
     button::*,
     input::{Input, InputState},
     switch::*,
-    ActiveTheme as _, Disableable as _, Sizable as _, StyledExt,
+    Disableable as _, Sizable as _, StyledExt,
 };
+use gpui_kit::prelude::FluentBuilder;
+use gpui_kit::*;
 use serde_json::json;
 
 use crate::alerts::{self, RuleView};
 
 use super::{data, theme};
+
+actions!(rules, [CloseRulesDialog]);
+
+/// Key context both dialogs share, so Escape closes whichever is open.
+const RULES_DIALOG_CONTEXT: &str = "RulesDialog";
 
 /// One selectable rule kind in the "New rule" dialog.
 struct RuleKindSpec {
@@ -37,22 +42,26 @@ const RULE_KINDS: [RuleKindSpec; 3] = [
     },
 ];
 
-/// Background for the condition / delivery chips.
+/// Background for the condition / delivery chips: the visible tint used
+/// for tracks elsewhere — `theme().secondary` is nearly the card color in
+/// the CloudBridge themes, so chips painted with it read as stray text.
 fn chip_bg(cx: &App) -> Hsla {
-    cx.theme().secondary
+    theme::sidebar_bg(cx)
 }
 
 /// A rounded condition or delivery chip.
 fn chip(cx: &App, text: &str, mono: bool) -> Div {
     let el = div()
         .px_2()
-        .py_1()
+        .py_0p5()
         .rounded_md()
         .bg(chip_bg(cx))
-        .text_sm()
+        .text_xs()
         .text_color(theme::text_primary(cx))
         .child(text.to_string());
     if mono {
+        // "monospace" is a platform font alias resolved by the OS font
+        // stack, not a bundled family.
         el.font_family("monospace")
     } else {
         el
@@ -82,8 +91,13 @@ pub struct RulesView {
     data: Option<data::RulesData>,
     /// A load is in flight.
     loading: bool,
+    /// Bumped on every load so an overlapping older load discards its
+    /// result instead of clobbering fresher state.
+    load_generation: u64,
     /// The last load, toggle or delete failure, if any.
     error: Option<String>,
+    /// Focus anchor both dialogs track, so Escape reaches them.
+    dialog_focus: FocusHandle,
     /// Whether the "New rule" dialog is open.
     show_new_dialog: bool,
     /// Validation or creation failure inside the dialog.
@@ -111,10 +125,25 @@ impl RulesView {
         let floor_input = cx.new(|cx| InputState::new(window, cx).placeholder("200"));
         let threshold_input = cx.new(|cx| InputState::new(window, cx).placeholder("15"));
 
+        // Escape-to-close for the dialogs. gpui-component's own Cancel
+        // action is crate-private, so the dialogs get their own action and
+        // context. Registered once: bind_keys appends, and the view may be
+        // rebuilt on every navigation.
+        static BIND_KEYS: std::sync::Once = std::sync::Once::new();
+        BIND_KEYS.call_once(|| {
+            cx.bind_keys([KeyBinding::new(
+                "escape",
+                CloseRulesDialog,
+                Some(RULES_DIALOG_CONTEXT),
+            )]);
+        });
+
         let mut view = Self {
             data: None,
             loading: false,
+            load_generation: 0,
             error: None,
+            dialog_focus: cx.focus_handle(),
             show_new_dialog: false,
             dialog_error: None,
             creating: false,
@@ -142,9 +171,13 @@ impl RulesView {
     }
 
     /// Load the rules from the ledger. The query is blocking SQLite, so it
-    /// runs on a worker thread like the Accounts page's loads do.
+    /// runs on a worker thread like the Accounts page's loads do. Loads can
+    /// overlap — a toggle or delete triggers one mid-flight — so only the
+    /// newest generation may write state; an older result is discarded.
     fn load(&mut self, cx: &mut Context<Self>) {
         self.loading = true;
+        self.load_generation += 1;
+        let generation = self.load_generation;
         cx.notify();
 
         cx.spawn(async move |this, cx| {
@@ -152,10 +185,16 @@ impl RulesView {
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
+                    if generation != this.load_generation {
+                        return;
+                    }
                     this.loading = false;
                     match result {
                         Ok(rules) => {
                             this.data = Some(rules);
+                            // A banner from an earlier failure would mask
+                            // the fresh list forever.
+                            this.error = None;
                         }
                         Err(e) => {
                             this.error = Some(format!("Could not load rules: {e}"));
@@ -164,8 +203,7 @@ impl RulesView {
                     cx.notify();
                 })
                 .ok();
-            })
-            .ok();
+            });
         })
         .detach();
     }
@@ -200,8 +238,7 @@ impl RulesView {
                     this.load(cx);
                 })
                 .ok();
-            })
-            .ok();
+            });
         })
         .detach();
     }
@@ -212,6 +249,7 @@ impl RulesView {
         self.show_new_dialog = true;
         self.dialog_error = None;
         self.error = None;
+        self.dialog_focus.focus(window, cx);
         self.set_kind(RULE_KINDS[0].kind, window, cx);
     }
 
@@ -331,16 +369,16 @@ impl RulesView {
                     }
                 })
                 .ok();
-            })
-            .ok();
+            });
         })
         .detach();
     }
 
     // ==================== Delete ====================
 
-    fn ask_delete(&mut self, id: String, cx: &mut Context<Self>) {
+    fn ask_delete(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         self.pending_delete = Some(id);
+        self.dialog_focus.focus(window, cx);
         cx.notify();
     }
 
@@ -370,8 +408,7 @@ impl RulesView {
                     this.load(cx);
                 })
                 .ok();
-            })
-            .ok();
+            });
         })
         .detach();
     }
@@ -381,7 +418,10 @@ impl RulesView {
     fn render_rule(&self, rule: &RuleView, cx: &Context<Self>) -> impl IntoElement {
         let name_row = div()
             .h_flex()
-            .items_center()
+            // Baseline (not center) so the scope pill's text sits on the
+            // same line as the rule name instead of floating against the
+            // name's taller line box.
+            .items_baseline()
             .gap_3()
             .flex_wrap()
             .child(
@@ -412,6 +452,7 @@ impl RulesView {
         let chips_row = div()
             .w_full()
             .h_flex()
+            .items_center()
             .gap_2()
             .flex_wrap()
             .children(
@@ -470,8 +511,8 @@ impl RulesView {
                                 .label("Delete")
                                 .ghost()
                                 .small()
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.ask_delete(rule_id.clone(), cx);
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.ask_delete(rule_id.clone(), window, cx);
                                 })),
                         )
                     }),
@@ -494,9 +535,9 @@ impl RulesView {
             }))
     }
 
-    fn render_new_dialog(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_new_dialog(&self, cx: &Context<Self>) -> AnyElement {
         if !self.show_new_dialog {
-            return div().size_0();
+            return div().size_0().into_any_element();
         }
 
         let parameters = match self.selected_kind {
@@ -538,6 +579,7 @@ impl RulesView {
         };
 
         div()
+            .id("new-rule-scrim")
             .absolute()
             .top_0()
             .left_0()
@@ -546,11 +588,36 @@ impl RulesView {
             .flex()
             .items_center()
             .justify_center()
-            .bg(gpui::black().opacity(0.5))
+            .bg(theme::scrim(cx))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.hide_new_dialog(cx);
+                }),
+            )
             .child(
                 div()
-                    .w(px(520.0))
-                    .max_h(px(600.0))
+                    .id("new-rule-dialog")
+                    // occlude: clicks on the panel must not reach the
+                    // dismiss-on-click scrim behind it.
+                    .occlude()
+                    .key_context(RULES_DIALOG_CONTEXT)
+                    .track_focus(&self.dialog_focus)
+                    .on_action(cx.listener(|this, _: &CloseRulesDialog, _, cx| {
+                        this.hide_new_dialog(cx);
+                        cx.stop_propagation();
+                    }))
+                    // When an input inside is focused, its own Escape
+                    // binding wins the keystroke but re-propagates, so the
+                    // raw key is caught here on the bubble.
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                        if event.keystroke.key == "escape" {
+                            this.hide_new_dialog(cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .w_128()
+                    .max_h(rems(37.5))
                     .p_6()
                     .rounded_xl()
                     .bg(theme::card_bg(cx))
@@ -560,9 +627,9 @@ impl RulesView {
                     .shadow_lg()
                     .v_flex()
                     .gap_4()
-                    .overflow_y_hidden()
                     .child(
                         div()
+                            .flex_shrink_0()
                             .h_flex()
                             .justify_between()
                             .items_center()
@@ -578,10 +645,16 @@ impl RulesView {
                                 }),
                             )),
                     )
+                    // The body scrolls so the footer buttons below stay
+                    // reachable no matter how tall the parameters grow.
                     .child(
                         div()
+                            .id("new-rule-body")
+                            .flex_1()
+                            .min_h_0()
                             .v_flex()
                             .gap_4()
+                            .overflow_y_scroll()
                             .child(
                                 div()
                                     .v_flex()
@@ -596,17 +669,18 @@ impl RulesView {
                                     .child(div().text_sm().child("Name"))
                                     .child(Input::new(&self.name_input)),
                             )
-                            .child(parameters),
+                            .child(parameters)
+                            .child(div().text_xs().text_color(theme::text_muted(cx)).child(
+                                "The rule is enabled on creation and runs on the next \
+                                 evaluation, right after it is saved.",
+                            ))
+                            .when_some(self.dialog_error.clone(), |el, error| {
+                                el.child(div().text_sm().text_color(theme::danger(cx)).child(error))
+                            }),
                     )
-                    .child(div().text_xs().text_color(theme::text_muted(cx)).child(
-                        "The rule is enabled on creation and runs on the next \
-                                    evaluation, right after it is saved.",
-                    ))
-                    .when_some(self.dialog_error.clone(), |el, error| {
-                        el.child(div().text_sm().text_color(gpui::red()).child(error))
-                    })
                     .child(
                         div()
+                            .flex_shrink_0()
                             .h_flex()
                             .gap_2()
                             .justify_end()
@@ -629,11 +703,12 @@ impl RulesView {
                             ),
                     ),
             )
+            .into_any_element()
     }
 
-    fn render_delete_confirm(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_delete_confirm(&self, cx: &Context<Self>) -> AnyElement {
         let Some(id) = &self.pending_delete else {
-            return div().size_0();
+            return div().size_0().into_any_element();
         };
 
         let name = self
@@ -644,6 +719,7 @@ impl RulesView {
             .unwrap_or_else(|| "this rule".to_string());
 
         div()
+            .id("delete-rule-scrim")
             .absolute()
             .top_0()
             .left_0()
@@ -652,10 +728,32 @@ impl RulesView {
             .flex()
             .items_center()
             .justify_center()
-            .bg(gpui::black().opacity(0.5))
+            .bg(theme::scrim(cx))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.cancel_delete(cx);
+                }),
+            )
             .child(
                 div()
-                    .w(px(420.0))
+                    .id("delete-rule-dialog")
+                    // occlude: clicks on the panel must not reach the
+                    // dismiss-on-click scrim behind it.
+                    .occlude()
+                    .key_context(RULES_DIALOG_CONTEXT)
+                    .track_focus(&self.dialog_focus)
+                    .on_action(cx.listener(|this, _: &CloseRulesDialog, _, cx| {
+                        this.cancel_delete(cx);
+                        cx.stop_propagation();
+                    }))
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                        if event.keystroke.key == "escape" {
+                            this.cancel_delete(cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .w_112()
                     .p_6()
                     .rounded_xl()
                     .bg(theme::card_bg(cx))
@@ -703,6 +801,7 @@ impl RulesView {
                             ),
                     ),
             )
+            .into_any_element()
     }
 }
 
@@ -739,9 +838,9 @@ impl Render for RulesView {
                 .w_full()
                 .p_3()
                 .rounded_md()
-                .bg(theme::alert_tint(cx))
+                .bg(theme::danger_bg(cx))
                 .text_sm()
-                .text_color(theme::accent(cx))
+                .text_color(theme::danger(cx))
                 .child(error.clone())
                 .into_any_element()
         } else {
@@ -757,6 +856,7 @@ impl Render for RulesView {
                     .id("rules-list")
                     .flex_1()
                     .min_w_0()
+                    .min_h_0()
                     .v_flex()
                     .gap_4()
                     .overflow_y_scroll()
@@ -770,7 +870,7 @@ impl Render for RulesView {
             .relative()
             .v_flex()
             .gap_6()
-            .p(px(32.0))
+            .p_8()
             .bg(theme::app_bg(cx))
             .child(header)
             .child(body)

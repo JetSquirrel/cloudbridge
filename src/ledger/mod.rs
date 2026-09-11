@@ -17,6 +17,7 @@
 // the budget UI, which the page phase wires up.
 #![allow(dead_code)]
 
+pub mod demo;
 pub mod query;
 pub mod schema;
 

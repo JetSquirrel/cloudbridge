@@ -7,8 +7,8 @@
       "name": "CloudBridge Light",
       "mode": "light",
       "is_default": true,
-      "radius": 12,
-      "radius.lg": 14,
+      "radius": 6,
+      "radius.lg": 8,
       "colors": {
         "background": "#F4EDDE",
         "foreground": "#221A10",

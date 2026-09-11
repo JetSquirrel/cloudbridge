@@ -29,6 +29,7 @@ pub static FORMAT: BillFileFormat = BillFileFormat {
     display_name: "Cost or usage export (CSV)",
     origin_hint: "OpenAI platform → Usage → Export, or the organization Costs endpoint",
     extensions: &["csv"],
+    zip_member: None,
     part: PART,
     periods,
     normalize,

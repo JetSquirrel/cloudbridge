@@ -29,6 +29,7 @@ pub static FORMAT: BillFileFormat = BillFileFormat {
     display_name: "Bill detail export (账单明细)",
     origin_hint: "Alibaba Cloud console → Expenses and Costs → Bill Details → Export",
     extensions: &["csv", "txt"],
+    zip_member: None,
     part: PART,
     periods,
     normalize,

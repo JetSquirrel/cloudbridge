@@ -8,8 +8,9 @@
 // Consumed by the page agents as each redesigned page lands.
 #![allow(dead_code)]
 
-use gpui::{div, px, App, Div, FontWeight, Hsla, ParentElement, SharedString, Styled};
-use gpui_component::{ActiveTheme, Theme, ThemeRegistry};
+use gpui_kit::component::button::{Button, ButtonCustomVariant};
+use gpui_kit::component::{ActiveTheme, Theme, ThemeRegistry};
+use gpui_kit::{div, App, Div, FontWeight, Hsla, ParentElement, SharedString, Styled};
 
 /// Name of the light theme in `themes/cloudbridge.json`.
 pub const LIGHT_THEME_NAME: &str = "CloudBridge Light";
@@ -24,6 +25,7 @@ pub fn apply_theme_by_name(name: &str, cx: &mut App) {
     match ThemeRegistry::global(cx).themes().get(name).cloned() {
         Some(theme) => {
             Theme::global_mut(cx).apply_config(&theme);
+            apply_density(cx);
             cx.refresh_windows();
         }
         None => {
@@ -33,6 +35,22 @@ pub fn apply_theme_by_name(name: &str, cx: &mut App) {
             );
         }
     }
+}
+
+/// Density is an application-level decision, not a theme one: this is a
+/// dense desktop data tool, so every theme gets the same compact scale
+/// (13px base font ≈ Longbridge-style tooling) and the same 6px card
+/// radius, whatever the theme file ships (gpui-component defaults are
+/// 16px / 12px, which read as web-sized in a desktop window).
+fn apply_density(cx: &mut App) {
+    let theme = Theme::global_mut(cx);
+    theme.font_size = gpui_kit::px(13.0);
+    theme.mono_font_size = gpui_kit::px(12.0);
+    theme.radius = gpui_kit::px(6.0);
+    theme.radius_lg = gpui_kit::px(8.0);
+    // Direct Theme mutation must be projected so Base-owned scrollbars
+    // and resize handles pick it up (per the GPUI Kit coding guide).
+    Theme::sync_base(cx);
 }
 
 /// Apply one of the CloudBridge themes, chosen by the persisted dark-mode
@@ -108,18 +126,49 @@ pub fn grey(cx: &App) -> Hsla {
     cx.theme().chart_3
 }
 
-/// Warning badge background (green tint).
+/// Warning badge background (yellow tint).
 pub fn warning_bg(cx: &App) -> Hsla {
-    cx.theme().green_light
+    cx.theme().yellow_light
 }
 
 /// Warning badge text.
 pub fn warning_text(cx: &App) -> Hsla {
+    cx.theme().yellow
+}
+
+/// Error text (failures, destructive confirmations).
+pub fn danger(cx: &App) -> Hsla {
+    cx.theme().red
+}
+
+/// Error banner tint.
+pub fn danger_bg(cx: &App) -> Hsla {
+    cx.theme().red_light
+}
+
+/// Success banner text.
+pub fn success(cx: &App) -> Hsla {
     cx.theme().green
 }
 
-/// Base card: card background, 1px border, theme radius (12px in the
-/// CloudBridge themes). Padding and layout are left to the caller.
+/// Success banner tint.
+pub fn success_bg(cx: &App) -> Hsla {
+    cx.theme().green_light
+}
+
+/// Modal overlay scrim: dark, half-opaque.
+pub fn scrim(cx: &App) -> Hsla {
+    cx.theme().overlay
+}
+
+/// Lighter olive: extra sankey-cycle color so the olive-toned lines stay
+/// distinguishable (chart.4 in the CloudBridge themes).
+pub fn olive_light(cx: &App) -> Hsla {
+    cx.theme().chart_4
+}
+
+/// Base card: card background, 1px border, theme radius (6px — see
+/// `apply_density`). Padding and layout are left to the caller.
 pub fn card(cx: &App) -> Div {
     div()
         .bg(card_bg(cx))
@@ -127,6 +176,31 @@ pub fn card(cx: &App) -> Div {
         .border_color(card_border(cx))
         .rounded(cx.theme().radius)
 }
+
+/// The warm-palette outline button: card surface, ink label.
+///
+/// Owned here rather than per page, so the Overview and Alerts buttons
+/// cannot drift apart.
+pub fn outline_variant(cx: &App) -> ButtonCustomVariant {
+    ButtonCustomVariant::new(cx)
+        .color(card_bg(cx))
+        .foreground(text_primary(cx))
+        .hover(sidebar_bg(cx))
+        .active(sidebar_bg(cx))
+}
+
+/// The card border on a button that carries a custom variant.
+///
+/// `ButtonCustomVariant` derives its border from its background colour, so
+/// a visible outline has to be set on the instance; the component refines
+/// the per-instance style over the variant's, so this wins.
+pub trait CardOutline: Styled + Sized {
+    fn card_outline(self, cx: &App) -> Self {
+        self.border_1().border_color(card_border(cx))
+    }
+}
+
+impl CardOutline for Button {}
 
 /// Fully rounded badge/pill with the given colors.
 pub fn pill(text: impl Into<SharedString>, bg: Hsla, fg: Hsla) -> Div {
@@ -142,7 +216,7 @@ pub fn pill(text: impl Into<SharedString>, bg: Hsla, fg: Hsla) -> Div {
 
 /// Small colored dot (sync status, series legends).
 pub fn dot(color: Hsla) -> Div {
-    div().size(px(8.0)).rounded_full().bg(color)
+    div().size_2().rounded_full().bg(color)
 }
 
 /// Page heading used at the top of every content view.
