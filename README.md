@@ -35,7 +35,7 @@
   - Volcengine (火山引擎) — bill import, for Ark (火山方舟)
   - OpenAI — bill import (cost or usage export)
   - Anthropic (Claude) — bill import (cost or usage export)
-  - DeepSeek — balance tracking
+  - DeepSeek — balance tracking, plus bill import for per-model spend
   - Azure & GCP — coming soon
 
 - **🧾 Import the Bill You Downloaded**
@@ -180,9 +180,15 @@ The compiled binary will be at:
 Volcengine, OpenAI and Anthropic are read from the bill export their
 console produces rather than from a billing API, so they need no
 credentials at all: add the account, then use **Import bill** on its row.
-Alibaba Cloud accepts both, and its export is the finer of the two — the
-billing API reports Model Studio (百炼) as one figure a month, while the
-export reports it per model.
+Alibaba Cloud and DeepSeek accept both, and the export is the finer of
+the two: the Alibaba Cloud billing API reports Model Studio (百炼) as one
+figure a month where the export reports it per model, and the DeepSeek API
+reports a balance and nothing about what the spend was for.
+
+DeepSeek's console hands out a zip of two CSVs. Import the zip as it
+downloaded — CloudBridge reads the `cost-*.csv` inside it and leaves
+`amount-*.csv` alone, because that file's `amount` column is a token count,
+not money.
 
 | Source | Where the export comes from | What it adds |
 |--------|-----------------------------|--------------|
@@ -190,6 +196,7 @@ export reports it per model.
 | Volcengine | Billing → Bill Details → Export | Ark (火山方舟) per endpoint and token type |
 | OpenAI | Usage → Export | Cost or token usage, per project and model |
 | Anthropic (Claude) | Usage or Cost → Export | Cost or token usage, per workspace and model |
+| DeepSeek | Usage → Download | Per-day, per-model spend — its API reports only a balance |
 
 Two things to know before importing:
 
@@ -284,7 +291,7 @@ plan and its rationale.
 
 ### P1
 - [x] Bill file import from the console's own export (Alibaba Cloud,
-      Volcengine, OpenAI, Anthropic)
+      Volcengine, OpenAI, Anthropic, DeepSeek)
 - [ ] Bill file export channel (S3 / OSS + Parquet)
 - [ ] Tag-based allocation with an explicit "unallocated" node
 - [ ] Sankey cost flow

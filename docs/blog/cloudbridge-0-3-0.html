@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="A bill you downloaded from a console now imports into the same ledger the APIs feed, the Overview stops mistaking a covered cost for a cheap one, and the interface is rebuilt at desktop density.">
+    <meta name="theme-color" content="#0E1420">
+    <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/blog/cloudbridge-0-3-0.html">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌉</text></svg>">
+    <title>0.3.0: bring your own bill - CloudBridge Blog</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'IBM Plex Sans', sans-serif;
+            color: #47536B;
+            background: #FAFBFC;
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        :root {
+            --ink: #0E1420;
+            --panel: #151E30;
+            --paper: #FAFBFC;
+            --hairline: #E3E8EF;
+            --hairline-dark: #263349;
+            --fg-strong: #101828;
+            --fg-body: #47536B;
+            --fg-faint: #7A8699;
+            --signal: #2F6FED;
+            --local: #2FA97C;
+            --radius: 6px;
+            --nav-height: 4.5rem;
+            --font-display: 'Space Grotesk', sans-serif;
+            --font-mono: 'IBM Plex Mono', monospace;
+        }
+
+        h1, h2 {
+            font-family: var(--font-display);
+            color: var(--fg-strong);
+            letter-spacing: -0.02em;
+            line-height: 1.15;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem;
+        }
+
+        .skip-link {
+            position: absolute;
+            left: -9999px;
+            top: 0;
+            background: var(--ink);
+            color: #fff;
+            padding: 0.75rem 1.25rem;
+            z-index: 200;
+            text-decoration: none;
+            font-family: var(--font-mono);
+            font-size: 0.875rem;
+        }
+
+        .skip-link:focus {
+            left: 0;
+        }
+
+        /* Navigation (shared) */
+        nav {
+            background: var(--paper);
+            border-bottom: 1px solid var(--hairline);
+            height: var(--nav-height);
+            display: flex;
+            align-items: center;
+            padding: 0 1rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        nav .container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 2rem;
+            width: 100%;
+        }
+
+        .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.6rem;
+            font-family: var(--font-display);
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--fg-strong);
+            text-decoration: none;
+            letter-spacing: -0.02em;
+            white-space: nowrap;
+        }
+
+        .logo::before {
+            content: '';
+            width: 0.6rem;
+            height: 0.6rem;
+            background: var(--local);
+            flex-shrink: 0;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            list-style: none;
+            overflow-x: auto;
+            white-space: nowrap;
+            min-width: 0;
+            scrollbar-width: none;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .nav-links::-webkit-scrollbar {
+            display: none;
+        }
+
+        .nav-links a {
+            font-family: var(--font-mono);
+            color: var(--fg-body);
+            text-decoration: none;
+            font-size: 0.875rem;
+            transition: color 0.15s;
+        }
+
+        .nav-links a:hover,
+        .nav-links a[aria-current="page"] {
+            color: var(--signal);
+        }
+
+        /* Article */
+        .post {
+            max-width: 44rem;
+            margin: 0 auto;
+            padding: 4rem 0 6rem;
+        }
+
+        .post .eyebrow {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            font-weight: 500;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--local);
+            display: block;
+            margin-bottom: 1.25rem;
+        }
+
+        .post h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+        }
+
+        .post .lede {
+            font-size: 1.25rem;
+            color: var(--fg-strong);
+            margin-bottom: 2.5rem;
+            padding-bottom: 2.5rem;
+            border-bottom: 1px solid var(--hairline);
+        }
+
+        .post h2 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin: 3rem 0 1rem;
+        }
+
+        .post p {
+            margin-bottom: 1.25rem;
+            line-height: 1.8;
+        }
+
+        .post a {
+            color: var(--signal);
+        }
+
+        .post code {
+            font-family: var(--font-mono);
+            font-size: 0.8125rem;
+            background: #fff;
+            border: 1px solid var(--hairline);
+            padding: 0.05rem 0.4rem;
+            border-radius: 4px;
+        }
+
+        .post pre {
+            background: var(--ink);
+            border-radius: var(--radius);
+            padding: 1.25rem 1.5rem;
+            overflow-x: auto;
+            margin-bottom: 1.25rem;
+        }
+
+        .post pre code {
+            background: none;
+            border: none;
+            padding: 0;
+            color: #C4CEDE;
+            font-size: 0.8125rem;
+            line-height: 1.7;
+        }
+
+        .post ul, .post ol {
+            margin: 0 0 1.25rem 1.25rem;
+        }
+
+        .post li {
+            margin-bottom: 0.4rem;
+            line-height: 1.7;
+        }
+
+        .post-nav {
+            margin-top: 4rem;
+            padding-top: 2rem;
+            border-top: 1px solid var(--hairline);
+            font-family: var(--font-mono);
+            font-size: 0.875rem;
+        }
+
+        .post-nav a {
+            color: var(--signal);
+            text-decoration: none;
+        }
+
+        .post-nav a:hover {
+            text-decoration: underline;
+        }
+
+        /* Footer (shared, compact) */
+        footer {
+            background: var(--ink);
+            color: #8FA0BC;
+            padding: 2rem 0;
+            border-top: 1px solid var(--hairline-dark);
+        }
+
+        footer .container {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            flex-wrap: wrap;
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--fg-faint);
+        }
+
+        footer a {
+            color: #8FA0BC;
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            color: #fff;
+        }
+
+        @media (max-width: 768px) {
+            .post {
+                padding: 2.5rem 0 4rem;
+            }
+
+            .post h1 {
+                font-size: 1.875rem;
+            }
+
+            .nav-links {
+                gap: 1.25rem;
+            }
+        }
+
+        a:focus-visible {
+            outline: 2px solid var(--signal);
+            outline-offset: 2px;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            html {
+                scroll-behavior: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <a class="skip-link" href="#main" data-i18n="a11y.skip">Skip to content</a>
+
+    <nav aria-label="Main navigation">
+        <div class="container">
+            <a href="/" class="logo">CloudBridge</a>
+            <ul class="nav-links">
+                <li><a href="/docs.html" data-i18n="nav.docs">Docs</a></li>
+                <li><a href="/blog.html" aria-current="page" data-i18n="nav.blog">Blog</a></li>
+                <li><a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- GENERATED FROM cloudbridge-0-3-0.md - edit the Markdown, then re-run scripts/render-blog.py -->
+    <main id="main">
+        <article class="post">
+            <span class="eyebrow">Release · 2026-09-11</span>
+            <h1>0.3.0: bring your own bill</h1>
+            <p class="lede">A bill you downloaded from a console now imports into the same ledger the APIs feed, the Overview stops mistaking a covered cost for a cheap one, and the interface is rebuilt at desktop density.</p>
+
+            <p>0.2.0 gave CloudBridge one fact table and one currency. It left one thing out: a billing API is not always the best reading of a bill, and sometimes it is not a reading at all. Alibaba Cloud's <code>QueryBillOverview</code> reports Model Studio (百炼) as one figure a month. DeepSeek's API reports a balance and nothing about what the money went on. Volcengine, OpenAI and Anthropic have an admin API you may not have a key for.</p>
+<p>But every one of those consoles has a Download button. 0.3.0 makes what comes out of it a first-class way into the ledger.</p>
+<h2>A second channel, not a second schema</h2>
+<p>An imported export becomes the same <code>fct_charge</code> rows a fetch produces. Downstream — the dashboard, the alerts, the Sankey — an imported month is indistinguishable from a fetched one. What differs is recorded rather than hidden: <code>ingest_batch.channel</code> says whether a period arrived by fetch or by import, and an imported month is never overwritten by an automatic fetch, <strong>including under Force Refresh</strong>. The export is the finer reading; "force" means "don't trust the freshness window", not "throw away what I imported". To update an imported month, import a corrected export of it.</p>
+<p>An import <strong>replaces</strong> every month the file covers. It has to: the export is the provider's own bill, so adding it to an API reading of the same month would count the month twice.</p>
+<p>Five sources import today: Alibaba Cloud and Volcengine bill detail (账单明细), OpenAI and Anthropic cost or usage exports, and DeepSeek.</p>
+<h2>Token counts are not money</h2>
+<p>A usage export carries token counts and no amounts. Those rows are stored with <code>billed_cost</code> NULL and <code>cost_basis = absent</code> — pricing them at list would put a number in <code>billed_cost</code> that nobody was ever charged.</p>
+<p>DeepSeek's console makes the same point in a sharper way. Its download is a zip of two CSVs: <code>cost-*.csv</code>, whose money column is named <code>cost</code>, and <code>amount-*.csv</code>, whose column named <code>amount</code> is a <em>token count</em>. Read the second as money and a day of 10,787 cached input tokens books as ¥10,787. So CloudBridge opens the zip, reads the cost half, and refuses the other half by name. You import the zip exactly as it downloaded.</p>
+<p>Column names, meanwhile, are matched through alias lists covering the Chinese console, the English console, and each provider's API field names — none of these exports is a documented file format. A column that matches nothing is an error that names the columns your file actually has. A non-UTF-8 file is refused with the instruction that fixes it, rather than decoded on a guess that would mangle every product name in the bill.</p>
+<h2>What a credit hides</h2>
+<p>A total net of credits is the right headline: it is what you paid. It is the wrong basis for a trend. An account whose usage is fully covered by credits nets to about $0, and a month-over-month percentage computed on that is noise — one real account produced −318.9%.</p>
+<p>So the Overview now splits the two. The headline stays net, with the gross usage and the credits that took it down shown next to it. Everything trended or ranked — the chart, the change percent, "Where it went", the biggest movers — runs on gross usage. What you consumed and what you were billed are different questions, and the page now answers both instead of averaging them.</p>
+<p>The header also carries a range control: month to date, the rolling last 30 days, or the last 12 calendar months. Every number on the page is computed for the window you picked.</p>
+<h2>Desktop density</h2>
+<p>The interface moves to <a href="https://crates.io/crates/gpui-kit">GPUI Kit</a> 0.6 — one dependency in place of three, with the tree-sitter grammars switched off, because a cost dashboard has no business compiling a syntax-highlighting stack.</p>
+<p>With that came a decision the framework leaves open: this is a dense data tool, not a web page. A 13px base font and a 6px card radius are applied at the application level over whatever a theme file ships. The sidebar's sync card became a status bar along the bottom of the window, the way a desktop app reports state. Sizes derive from the rem scale, so the whole interface still zooms with the base font.</p>
+<p>And amounts stopped rounding sub-dollar spend to <code>$0</code>: whole units from 100 up, two decimals from a cent up, and <code>&lt;$0.01</code> below a cent — a small number is now legible as a small number rather than as nothing.</p>
+<h2>Also in 0.3.0</h2>
+<ul>
+<li><strong>Demo data</strong>, in Settings: three accounts and twelve months of realistically-shaped fake ledger, loaded and cleared with a button. Everything demo is keyed under a <code>demo-</code> prefix, holds no credentials, and is skipped by refresh, so no demo row ever reaches a provider API.</li>
+<li><strong>One keychain item per account, not two.</strong> On macOS every keychain read can raise a password prompt — the item's access control names the binary that stored it, so a rebuild is a new binary. A refresh fetching several periods was paying that cost per period per key. The pair is now a single item, read once a session; a pair still in the old two-entry form migrates on first read.</li>
+<li><strong>The refresh interval is 24 hours, and configurable</strong> (6, 12, 24 or 48). It was a fixed 6. A provider's bill does not move faster than a day in any way worth paying for.</li>
+<li><strong>"Resolved this month"</strong> on the Alerts page keys on when an alert was resolved rather than when it was raised.</li>
+<li>Settings writes and the currency switch run off the UI thread, and a failed save is shown in its own color so it cannot be mistaken for a saved one.</li>
+</ul>
+<h2>What's next</h2>
+<p>The <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/roadmap.md">roadmap</a> has the rest of P1: a bill file <em>export</em> channel (S3 / OSS + Parquet) for the bills that arrive on a schedule instead of through a browser, and tag-based allocation with an explicit unallocated node. The billing APIs for Volcengine, OpenAI and Anthropic are still owed — those sources sit in the registry with the credential each will want already named.</p>
+
+            <div class="post-nav">
+                <a href="/blog.html" data-i18n="post.back">← All posts</a>
+            </div>
+        </article>
+    </main>
+
+    <footer>
+        <div class="container">
+            <span data-i18n="footer.copy">&copy; 2024-2026 CloudBridge. Released under MIT License.</span>
+            <span>AWS · Alibaba Cloud · DeepSeek</span>
+        </div>
+    </footer>
+
+    <!-- Same i18n scaffolding as index.html; see that file for how to add a locale. -->
+    <script>
+        (function () {
+            var LOCALES = {
+                en: {} // default: strings live in the markup
+            };
+
+            function applyLocale(locale) {
+                var dict = LOCALES[locale];
+                if (!dict) return;
+                document.querySelectorAll('[data-i18n]').forEach(function (el) {
+                    var key = el.getAttribute('data-i18n');
+                    if (typeof dict[key] === 'string') el.textContent = dict[key];
+                });
+                document.querySelectorAll('[data-i18n-html]').forEach(function (el) {
+                    var key = el.getAttribute('data-i18n-html');
+                    if (typeof dict[key] === 'string') el.innerHTML = dict[key];
+                });
+                document.documentElement.lang = locale;
+            }
+
+            var saved = null;
+            try { saved = localStorage.getItem('cloudbridge-locale'); } catch (e) {}
+            var browser = (navigator.language || 'en').slice(0, 2);
+            applyLocale(saved && LOCALES[saved] ? saved : (LOCALES[browser] ? browser : 'en'));
+        })();
+    </script>
+</body>
+</html>

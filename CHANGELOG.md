@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-11
+
+The release that gives the ledger a second way in and a face worth
+reading. Bills you downloaded from a console import into the same
+`fct_charge` rows a fetch produces; the Overview stops confusing what a
+credit covered with what was consumed; and the interface is rebuilt on
+GPUI Kit at desktop density.
+
 ### Added
 - **Bill file import** — a second channel into the ledger, beside the
   billing APIs. A bill export downloaded from a provider's console is
@@ -54,6 +62,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by an automatic fetch, **including under Force Refresh** — the export is
   the finer reading, and force means "do not trust the freshness window",
   not "discard what I imported". Re-import to update it
+- **DeepSeek bill import** — its billing API reports a balance and nothing
+  about what the spend was for, so the console's usage download is the
+  source's entire view of what it went on: one row per day per model, in
+  CNY. The console hands out a **zip**, and the zip imports as it
+  downloaded — CloudBridge reads the `cost-*.csv` in it and refuses
+  `amount-*.csv`, whose `amount` column is a token count that read as money
+  would book 10,787 tokens as ¥10,787
+- **An Overview you can set the range of.** MTD, the rolling last 30 days,
+  or the last 12 calendar months, as a segmented control in the header;
+  every number, chart and ranking on the page is computed for the window
+  you picked
+- **Gross usage beside the net total.** The headline stays net, but the
+  change percent, the chart, "Where it went" and the movers all run on
+  `charge_category = 'Usage'`: an account whose usage is fully offset by
+  credits nets to ≈ $0, and trends computed on that base are noise. The
+  usage and credit buckets are shown next to the total that hides them
+- **Demo data**, in **Settings → Demo data**: three accounts and twelve
+  months of realistically-shaped fake ledger, loaded and cleared with a
+  button, so the app can be reviewed and demonstrated without an empty
+  shell or a real bill. Everything demo is keyed under a `demo-` prefix;
+  demo accounts carry no credentials and are skipped by refresh, so no
+  demo row ever reaches a provider API
+- **"Resolved this month"** on the Alerts page keys on when an event was
+  resolved, not when it was raised (application schema v6 adds
+  `alert_event.resolved_at`; an existing database gains the column in
+  place). Events that closed before the stamp existed carry none and drop
+  out of the list rather than being filed under a month that would be a
+  guess
 
 ### Changed
 - **The refresh interval is 24 hours, and configurable.** It was a fixed 6
@@ -70,6 +106,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decomposition of a "gross, deductions, net" bill line, so a credit is
   labelled identically whichever channel it arrived through and the two
   reconcile against each other
+- **The interface is built on [GPUI Kit](https://crates.io/crates/gpui-kit)
+  0.6**, one dependency in place of `gpui` + `gpui-component` +
+  `gpui-component-assets`. The tree-sitter grammars stay off: a cost
+  dashboard does not need a syntax-highlighting stack compiled into it
+- **Desktop density.** A 13px base font and a 6px card radius, applied at
+  the application level over whatever a theme file ships, because this is a
+  dense data tool and the framework defaults read as web-sized in a desktop
+  window. Sizes are rem-derived, so the interface scales with the base font
+- The sidebar's sync card is now a **status bar** along the bottom of the
+  window — one muted line, in the desktop convention, instead of a card
+  competing with the navigation for the eye
+- **Credentials are one keychain item per account, not two.** On macOS each
+  keychain read can raise a password prompt, and a refresh that fetches
+  several periods was making one read per period per key. The pair is now a
+  single item, read once per session and cached in memory; a pair still
+  stored in the old two-entry form is migrated on first read
+- Settings writes and the currency switch run **off the UI thread**, with
+  the controls that would race them disabled while one is in flight. A
+  failed save is shown in its own color, so it cannot be mistaken for a
+  saved one; if the ledger rebuild fails, the currency selection is put back
+  to match what the ledger still shows
+- Amounts adapt their precision instead of rounding sub-dollar spend to
+  `$0`: whole units from 100 up, two decimals from a cent up, and `<$0.01`
+  below a cent
+- A slow page load can no longer clobber a newer one — each load carries a
+  generation and a late result is discarded
+- Per-account actions (validate, delete, import) disable their own row's
+  button while in flight, and a result whose account was deleted meanwhile
+  is dropped rather than reported against a row that is gone
+
+### Fixed
+- The warning badge was tinted green. Warnings are yellow
+- `usize::MAX` as "every row" wrapped to a negative SQL `LIMIT`, which
+  DuckDB refuses outright
 
 ## [0.2.0] - 2026-09-01
 
@@ -234,6 +304,7 @@ next.
 
 ## Version History
 
+- **0.3.0** - Bill file import, a range-selectable Overview, and a GPUI Kit interface
 - **0.2.0** - DeepSeek support, and a FOCUS billing ledger behind the dashboard
 - **0.1.2** - Documentation site and packaging fixes
 - **0.1.0** - Initial release with AWS and Alibaba Cloud support
