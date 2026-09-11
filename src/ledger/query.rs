@@ -406,10 +406,10 @@ fn total_between_of(conn: &Connection, since: DateTime<Utc>, until: DateTime<Utc
 /// series. Grouped by `billing_period` rather than by charge-time month
 /// so the buckets are the same months the rest of the app reasons about.
 pub fn monthly_usage(since: DateTime<Utc>) -> Result<Vec<(String, f64)>> {
-    with_connection_ref(|conn| monthly_usage_of(conn, since))
+    with_connection_ref(|conn| monthly_usage_all_of(conn, since))
 }
 
-fn monthly_usage_of(conn: &Connection, since: DateTime<Utc>) -> Result<Vec<(String, f64)>> {
+fn monthly_usage_all_of(conn: &Connection, since: DateTime<Utc>) -> Result<Vec<(String, f64)>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT billing_period, sum(billed_cost_base) AS amount
          FROM {NORMALIZED_VIEW}
@@ -977,6 +977,140 @@ fn unconverted_charges_of(conn: &Connection, billing_period: &str) -> Result<i64
         |row| row.get(0),
     )
     .map_err(Into::into)
+}
+
+// ==================== Per-account reads ====================
+//
+// The Account detail page's series: each mirrors its cross-account
+// original above, filtered to one `(provider, account_id)`.
+
+/// [`daily_usage_all`] for a single account.
+pub fn daily_usage_of(
+    provider: &str,
+    account_id: &str,
+    since: DateTime<Utc>,
+) -> Result<Vec<DailyTotal>> {
+    with_connection_ref(|conn| {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT strftime(charge_period_start, '%Y-%m-%d') AS day, sum(billed_cost_base) AS amount
+             FROM {NORMALIZED_VIEW}
+             WHERE provider = ? AND account_id = ?
+               AND charge_period_start >= CAST(? AS TIMESTAMP)
+               AND charge_category = 'Usage'
+             GROUP BY day
+             ORDER BY day"
+        ))?;
+
+        let rows = stmt
+            .query_map(
+                params![provider, account_id, since.format(TIMESTAMP_FORMAT).to_string()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<f64>>(1)?)),
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(day, amount)| (day, amount.unwrap_or(0.0)))
+            .collect())
+    })
+}
+
+/// [`monthly_usage`] for a single account.
+pub fn monthly_usage_of(
+    provider: &str,
+    account_id: &str,
+    since: DateTime<Utc>,
+) -> Result<Vec<(String, f64)>> {
+    with_connection_ref(|conn| {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT billing_period, sum(billed_cost_base) AS amount
+             FROM {NORMALIZED_VIEW}
+             WHERE provider = ? AND account_id = ?
+               AND charge_period_start >= CAST(? AS TIMESTAMP)
+               AND charge_category = 'Usage'
+             GROUP BY billing_period
+             ORDER BY billing_period"
+        ))?;
+
+        let rows = stmt
+            .query_map(
+                params![provider, account_id, since.format(TIMESTAMP_FORMAT).to_string()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<f64>>(1)?)),
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(period, amount)| (period, amount.unwrap_or(0.0)))
+            .collect())
+    })
+}
+
+/// [`provider_service_usage_between`] narrowed to a single account, so the
+/// service column drops out of the grouping.
+pub fn service_usage_of_between(
+    provider: &str,
+    account_id: &str,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+) -> Result<Vec<(String, f64)>> {
+    with_connection_ref(|conn| {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT coalesce(service_name, 'Other') AS service, sum(billed_cost_base) AS amount
+             FROM {NORMALIZED_VIEW}
+             WHERE provider = ? AND account_id = ?
+               AND charge_period_start >= CAST(? AS TIMESTAMP)
+               AND charge_period_start < CAST(? AS TIMESTAMP)
+               AND charge_category = 'Usage'
+             GROUP BY service
+             HAVING amount > 0
+             ORDER BY amount DESC"
+        ))?;
+
+        let rows = stmt
+            .query_map(
+                params![
+                    provider,
+                    account_id,
+                    since.format(TIMESTAMP_FORMAT).to_string(),
+                    until.format(TIMESTAMP_FORMAT).to_string()
+                ],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)),
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(rows)
+    })
+}
+
+/// [`usage_and_credits_between`] for a single account.
+pub fn usage_and_credits_of_between(
+    provider: &str,
+    account_id: &str,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+) -> Result<(f64, f64)> {
+    with_connection_ref(|conn| {
+        let (usage, credits): (Option<f64>, Option<f64>) = conn.query_row(
+            &format!(
+                "SELECT sum(billed_cost_base) FILTER (WHERE charge_category = 'Usage'),
+                        sum(billed_cost_base) FILTER (WHERE charge_category IN ('Credit', 'Adjustment'))
+                 FROM {NORMALIZED_VIEW}
+                 WHERE provider = ? AND account_id = ?
+                   AND charge_period_start >= CAST(? AS TIMESTAMP)
+                   AND charge_period_start < CAST(? AS TIMESTAMP)"
+            ),
+            params![
+                provider,
+                account_id,
+                since.format(TIMESTAMP_FORMAT).to_string(),
+                until.format(TIMESTAMP_FORMAT).to_string()
+            ],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+
+        Ok((usage.unwrap_or(0.0), credits.unwrap_or(0.0)))
+    })
 }
 
 #[cfg(test)]
@@ -1631,7 +1765,7 @@ mod tests {
         );
 
         // Ordered by period label; the credit is not usage.
-        let monthly = monthly_usage_of(&conn, jul(1)).unwrap();
+        let monthly = monthly_usage_all_of(&conn, jul(1)).unwrap();
         assert_eq!(
             monthly,
             vec![
@@ -1643,7 +1777,7 @@ mod tests {
 
         // `since` bounds by charge time: mid-August drops the earlier months.
         assert_eq!(
-            monthly_usage_of(&conn, at(15)).unwrap(),
+            monthly_usage_all_of(&conn, at(15)).unwrap(),
             vec![("2026-09".to_string(), 7.0)]
         );
     }

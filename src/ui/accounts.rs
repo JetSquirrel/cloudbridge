@@ -777,6 +777,8 @@ impl AccountsView {
             .map(format_last_sync)
             .unwrap_or_else(|| "never".to_string());
 
+        let detail_id = row.id.clone();
+
         div()
             .w_full()
             .h_flex()
@@ -788,11 +790,15 @@ impl AccountsView {
             .child(
                 div()
                     .w_40()
+                    // The account name is the drill-down affordance: it
+                    // opens the Account detail page.
+                    .id(SharedString::from(format!("account-detail-{}", row.id)))
+                    .cursor_pointer()
                     .v_flex()
                     .child(
                         div()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme::text_primary(cx))
+                            .text_color(theme::accent(cx))
                             .child(row.name.clone()),
                     )
                     // Absent for an account stored before the hint was
@@ -811,7 +817,10 @@ impl AccountsView {
                                     .child(masked),
                             )
                         },
-                    ),
+                    )
+                    .on_click(move |_, _, cx| {
+                        crate::app::navigate_to_account(detail_id.clone(), cx)
+                    }),
             )
             .child(
                 div()

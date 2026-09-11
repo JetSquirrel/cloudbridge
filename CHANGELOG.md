@@ -90,6 +90,15 @@ GPUI Kit at desktop density.
   place). Events that closed before the stamp existed carry none and drop
   out of the list rather than being filed under a month that would be a
   guess
+- **Account detail page** — an account name on the Accounts page is now a
+  link: one account's daily or monthly usage trend with the same MTD /
+  30d / 12m range control as the Overview, a net/gross/credits stat row,
+  and a per-service table with each service's share and its change against
+  the comparison window
+- **The trend charts answer the mouse.** Hovering snaps to the nearest
+  point and draws a guide line, a dot, and a tooltip with the bucket's
+  date and amount. The hover machinery is a shared component
+  (`chart::ChartHover`), used by the Overview and the account page alike
 
 ### Changed
 - **The refresh interval is 24 hours, and configurable.** It was a fixed 6
@@ -140,6 +149,23 @@ GPUI Kit at desktop density.
 - The warning badge was tinted green. Warnings are yellow
 - `usize::MAX` as "every row" wrapped to a negative SQL `LIMIT`, which
   DuckDB refuses outright
+- The Sankey with more than a handful of services per provider read as
+  crossing ribbons: each provider now keeps its top five services and
+  merges the tail — tag breakdown included — into one `Other` node, and
+  every column stacks largest-first so the thick flows sit low and
+  parallel. Nodes too thin for a text line no longer wear a label that
+  spills over their neighbors
+- The selected filter chip on the Alerts page paired a foreground token
+  with a background it was not designed for, which rendered its label
+  invisible in any theme where the two coincide
+- The Accounts page's bottom cards could push past the viewport on a long
+  raw-store path (a flex child without `min_w_0` cannot shrink below its
+  content), and a 96px source column wrapped "Amazon Web Services" onto
+  three lines
+- `cargo audit` is clean again: eighteen advisories closed by targeted
+  upgrades — bytes, h2, quinn-proto, rustls-webpki, tar, time, quick-xml
+  (0.30 and 0.37 both gone; the tree carries 0.41 alone), and rkyv, which
+  left the tree entirely when rust_decimal moved to 1.43
 
 ## [0.2.0] - 2026-09-01
 

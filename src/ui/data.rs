@@ -1239,6 +1239,212 @@ pub fn replay_normalization() -> Result<ingest::ReplayOutcome> {
     ingest::replay_all()
 }
 
+// ==================== Account detail ====================
+
+/// One row of the Account detail page's service table.
+pub struct ServiceRow {
+    pub name: String,
+    /// Window gross usage in the reporting currency.
+    pub amount: f64,
+    /// Share of the window's usage, 0.0–1.0.
+    pub share: f64,
+    /// Change against the comparison window; `None` when the base is too
+    /// small for a percentage to mean anything.
+    pub change_pct: Option<f64>,
+}
+
+/// The Account detail page: one account's trend and service breakdown for
+/// the selected range. Everything is gross usage except `spend`, which is
+/// net — the same split the Overview makes.
+pub struct AccountDetailData {
+    pub account_name: String,
+    /// The registry display name, e.g. "Amazon Web Services".
+    pub provider: String,
+    /// A balance-only source has no API-reported usage; its usage rows
+    /// arrive through bill file import.
+    pub is_snapshot: bool,
+    pub currency: String,
+    pub range: Range,
+    pub window_caption: String,
+    pub usage: f64,
+    pub credits: f64,
+    /// Net charged: usage plus (negative) credits.
+    pub spend: f64,
+    pub change_pct: Option<f64>,
+    pub change_caption: &'static str,
+    /// No baseline series: a single account's 7-day trailing mean is
+    /// noisier than it is informative.
+    pub chart: SpendChart,
+    pub services: Vec<ServiceRow>,
+}
+
+/// Load the Account detail page's data. Blocking; wrap in `smol::unblock`.
+pub fn load_account_detail(account_id: &str, range: Range) -> Result<AccountDetailData> {
+    let now = Utc::now();
+    let account = db::get_all_accounts()?
+        .into_iter()
+        .find(|account| account.id == account_id)
+        .ok_or_else(|| anyhow::anyhow!("No account {account_id}"))?;
+    let provider = account.source_id.as_str().to_string();
+    let descriptor = account.descriptor();
+
+    let ((since, until), (prior_since, prior_until)) = range.windows(now);
+    let (usage, credits) =
+        query::usage_and_credits_of_between(&provider, account_id, since, until)?;
+
+    // MTD compares against the same days of last month — a partial month
+    // against a full one would always read as a drop; the rolling ranges
+    // compare against the full prior window.
+    let (change_pct, change_caption) = match range {
+        Range::Mtd => {
+            let today = now.day();
+            let prev_label = BillingPeriod::containing(now).previous().label();
+            let lookback = now - chrono::Duration::days(i64::from(today) + 31);
+            let prior: f64 = query::daily_usage_of(&provider, account_id, lookback)?
+                .into_iter()
+                .filter(|(day, _)| {
+                    day.starts_with(&prev_label)
+                        && day
+                            .get(8..10)
+                            .and_then(|d| d.parse::<u32>().ok())
+                            .is_some_and(|d| d <= today)
+                })
+                .map(|(_, amount)| amount)
+                .sum();
+            (
+                (prior >= 0.01).then(|| (usage - prior) / prior * 100.0),
+                "vs same day last month",
+            )
+        }
+        _ => {
+            let (prior, _) =
+                query::usage_and_credits_of_between(&provider, account_id, prior_since, prior_until)?;
+            let caption = match range {
+                Range::Days30 => "vs prior 30 days",
+                _ => "vs prior 12 months",
+            };
+            (
+                (prior >= 0.01).then(|| (usage - prior) / prior * 100.0),
+                caption,
+            )
+        }
+    };
+
+    let chart = match range {
+        Range::Months12 => account_monthly_chart(&provider, account_id, now)?,
+        _ => account_daily_chart(&provider, account_id, since, until)?,
+    };
+
+    let current = query::service_usage_of_between(&provider, account_id, since, until)?;
+    let previous =
+        query::service_usage_of_between(&provider, account_id, prior_since, prior_until)?;
+    let services = current
+        .into_iter()
+        .map(|(name, amount)| {
+            let prior = previous
+                .iter()
+                .find(|(prior_name, _)| *prior_name == name)
+                .map(|(_, amount)| *amount)
+                .unwrap_or(0.0);
+            ServiceRow {
+                name,
+                amount,
+                share: if usage > 0.0 { amount / usage } else { 0.0 },
+                change_pct: (prior >= 0.01).then(|| (amount - prior) / prior * 100.0),
+            }
+        })
+        .collect();
+
+    Ok(AccountDetailData {
+        account_name: account.name.clone(),
+        provider: descriptor
+            .map(|d| d.display_name)
+            .unwrap_or(&provider)
+            .to_string(),
+        is_snapshot: descriptor.is_some_and(|d| d.is_snapshot()),
+        currency: reporting_currency(),
+        range,
+        window_caption: range.header_caption(now),
+        usage,
+        credits,
+        spend: usage + credits,
+        change_pct,
+        change_caption,
+        chart,
+        services,
+    })
+}
+
+/// The detail page's daily chart: one zero-filled point per day of the
+/// window, no baseline.
+fn account_daily_chart(
+    provider: &str,
+    account_id: &str,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+) -> Result<SpendChart> {
+    let by_day: BTreeMap<NaiveDate, f64> = query::daily_usage_of(provider, account_id, since)?
+        .into_iter()
+        .filter_map(|(day, amount)| {
+            NaiveDate::parse_from_str(&day, "%Y-%m-%d")
+                .ok()
+                .map(|day| (day, amount))
+        })
+        .collect();
+
+    let last = until.date_naive();
+    let mut day = since.date_naive();
+    let mut actual = Vec::new();
+    while day <= last {
+        actual.push(ChartPoint {
+            label: day.format("%Y-%m-%d").to_string(),
+            amount: by_day.get(&day).copied().unwrap_or(0.0),
+        });
+        day += chrono::Duration::days(1);
+    }
+
+    Ok(SpendChart {
+        actual,
+        baseline: Vec::new(),
+    })
+}
+
+/// The detail page's 12-month chart: one zero-filled point per calendar
+/// month, no baseline.
+fn account_monthly_chart(
+    provider: &str,
+    account_id: &str,
+    now: DateTime<Utc>,
+) -> Result<SpendChart> {
+    let mut periods = vec![BillingPeriod::containing(now)];
+    for _ in 0..11 {
+        periods.push(periods.last().expect("one period seeded").previous());
+    }
+    periods.reverse();
+
+    let since = periods[0]
+        .start()
+        .and_hms_opt(0, 0, 0)
+        .expect("midnight exists")
+        .and_utc();
+    let by_period: BTreeMap<String, f64> = query::monthly_usage_of(provider, account_id, since)?
+        .into_iter()
+        .collect();
+    let actual = periods
+        .into_iter()
+        .map(|period| {
+            let label = period.label();
+            let amount = by_period.get(&label).copied().unwrap_or(0.0);
+            ChartPoint { label, amount }
+        })
+        .collect();
+
+    Ok(SpendChart {
+        actual,
+        baseline: Vec::new(),
+    })
+}
+
 // ==================== Sidebar ====================
 
 /// The sync summary in the sidebar footer.

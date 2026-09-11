@@ -1,12 +1,13 @@
-//! The Overview page's spend chart.
+//! The spend chart shared by the Overview and Account detail pages.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use gpui_kit::component::*;
 use gpui_kit::*;
 
 use super::data::ChartPoint;
-use super::theme;
+use super::{fmt, theme};
 
 /// Gridlines sit behind the data series, faint enough to read as context
 /// rather than as part of it.
@@ -163,4 +164,162 @@ fn trace_smooth(path: &mut PathBuilder, points: &[(f32, f32)]) {
             ),
         );
     }
+}
+
+// ==================== Hover interactivity ====================
+
+/// Hover state for a [`spend_area_chart`]: which point the mouse is on,
+/// plus the geometry cells the canvas rewrites every frame. One per chart;
+/// the owning view keeps it and clears it whenever the underlying data
+/// reloads (a stale index would tag the wrong point).
+///
+/// The mouse listeners stay in the owning view — they need its
+/// `cx.listener` type — but each is a five-liner over [`ChartHover::nearest`]
+/// and [`ChartHover::set`].
+pub struct ChartHover {
+    /// The point under the mouse, if any.
+    index: Option<usize>,
+    /// The actual series' point coordinates in window space.
+    points: Rc<RefCell<Vec<(f32, f32)>>>,
+    /// The chart canvas bounds in window space.
+    bounds: Rc<RefCell<Option<Bounds<Pixels>>>>,
+}
+
+impl ChartHover {
+    pub fn new() -> Self {
+        Self {
+            index: None,
+            points: Rc::new(RefCell::new(Vec::new())),
+            bounds: Rc::new(RefCell::new(None)),
+        }
+    }
+
+    /// Forget the hovered point; call when the chart's data reloads.
+    pub fn clear(&mut self) {
+        self.index = None;
+    }
+
+    pub fn index(&self) -> Option<usize> {
+        self.index
+    }
+
+    pub fn set(&mut self, index: Option<usize>) {
+        self.index = index;
+    }
+
+    /// The cell a [`spend_area_chart`] writes its point coordinates into.
+    pub fn points_cell(&self) -> Rc<RefCell<Vec<(f32, f32)>>> {
+        self.points.clone()
+    }
+
+    /// The cell a [`spend_area_chart`] writes its canvas bounds into.
+    pub fn bounds_cell(&self) -> Rc<RefCell<Option<Bounds<Pixels>>>> {
+        self.bounds.clone()
+    }
+
+    /// The point nearest to a window-space x, if the chart has points.
+    pub fn nearest(&self, x: f32) -> Option<usize> {
+        self.points
+            .borrow()
+            .iter()
+            .enumerate()
+            .min_by(|(_, (ax, _)), (_, (bx, _))| (ax - x).abs().total_cmp(&(bx - x).abs()))
+            .map(|(i, _)| i)
+    }
+}
+
+impl Default for ChartHover {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Guide line, dot, and tooltip for the chart point under the mouse.
+/// Positions come from the cells the canvas wrote on the previous
+/// frame — a one-frame lag that is imperceptible in practice. The raw
+/// `px(...)` values here are measured runtime geometry (the coding guide's
+/// accepted exception); every size and offset derives from the rem scale
+/// so the overlay zooms with the base font.
+pub fn hover_overlay(
+    cx: &App,
+    hover: &ChartHover,
+    points: &[ChartPoint],
+    currency: &str,
+    rem: Pixels,
+) -> Option<Vec<AnyElement>> {
+    let index = hover.index()?;
+    let bounds = hover.bounds.borrow().clone()?;
+    let (x, y) = *hover.points.borrow().get(index)?;
+    let point = points.get(index)?;
+
+    // 10px dot, 150px tooltip at the default 16px rem.
+    let dot: f32 = rems(0.625).to_pixels(rem).into();
+    let tip_w: f32 = rems(9.375).to_pixels(rem).into();
+
+    let origin_x: f32 = bounds.origin.x.into();
+    let origin_y: f32 = bounds.origin.y.into();
+    let width: f32 = bounds.size.width.into();
+    let rel_x = x - origin_x;
+    let rel_y = y - origin_y;
+
+    // Clamped so the tooltip never leaves the chart.
+    let tip_left = (rel_x - tip_w / 2.0).clamp(0.0, (width - tip_w).max(0.0));
+    // Above the point unless there is no headroom; 56px / 14px at the
+    // default rem.
+    let headroom: f32 = rems(3.5).to_pixels(rem).into();
+    let below: f32 = rems(0.875).to_pixels(rem).into();
+    let tip_top = if rel_y > headroom + 4.0 {
+        rel_y - headroom
+    } else {
+        rel_y + below
+    };
+
+    Some(vec![
+        div()
+            .absolute()
+            .left(px(rel_x))
+            .top_0()
+            .bottom_0()
+            // 1px hairline: a physical-pixel boundary, like the gridlines.
+            .w(px(1.0))
+            .bg(theme::text_muted(cx).opacity(0.4))
+            .into_any_element(),
+        div()
+            .absolute()
+            .left(px(rel_x - dot / 2.0))
+            .top(px(rel_y - dot / 2.0))
+            .size(px(dot))
+            .rounded_full()
+            .bg(theme::accent(cx))
+            .border_2()
+            .border_color(theme::card_bg(cx))
+            .into_any_element(),
+        div()
+            .absolute()
+            .left(px(tip_left))
+            .top(px(tip_top))
+            .w(px(tip_w))
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(theme::card_bg(cx))
+            .border_1()
+            .border_color(theme::card_border(cx))
+            .shadow_md()
+            .v_flex()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme::text_muted(cx))
+                    .child(point.label.clone()),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme::text_primary(cx))
+                    .child(fmt::amount(point.amount, currency)),
+            )
+            .into_any_element(),
+    ])
 }

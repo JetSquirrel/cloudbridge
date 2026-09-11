@@ -8,8 +8,9 @@ use gpui_kit::*;
 use crate::ui::data::SyncStatus;
 use crate::ui::theme;
 use crate::ui::{
-    accounts::AccountsView, alerts::AlertsView, attribution::AttributionView,
-    overview::OverviewView, rules::RulesView, settings::SettingsView,
+    account_detail::AccountDetailView, accounts::AccountsView, alerts::AlertsView,
+    attribution::AttributionView, overview::OverviewView, rules::RulesView,
+    settings::SettingsView,
 };
 
 /// State shared across pages.
@@ -22,8 +23,9 @@ pub struct AppState {
     /// The sidebar sync card's data; `None` until the first load lands.
     pub sync: Option<SyncStatus>,
     /// A view switch a page asked for; the shell observes this entity,
-    /// applies the request, and clears it.
-    navigate_to: Option<CurrentView>,
+    /// applies the request, and clears it. The optional string is the
+    /// target's payload — the account id for the Account detail page.
+    navigate_to: Option<(CurrentView, Option<String>)>,
     /// A page changed data the current view shows (demo data load/clear);
     /// the shell reloads the current page and sidebar when set.
     reload_requested: bool,
@@ -42,7 +44,13 @@ impl AppState {
     /// Ask the app shell to switch to `view`. The shell observes this
     /// entity and applies the request on notify.
     pub fn navigate(&mut self, view: CurrentView, cx: &mut Context<Self>) {
-        self.navigate_to = Some(view);
+        self.navigate_to = Some((view, None));
+        cx.notify();
+    }
+
+    /// Ask the app shell to open the Account detail page for an account.
+    pub fn navigate_to_account(&mut self, account_id: String, cx: &mut Context<Self>) {
+        self.navigate_to = Some((CurrentView::AccountDetail, Some(account_id)));
         cx.notify();
     }
 
@@ -78,6 +86,12 @@ pub fn request_reload(cx: &mut App) {
     app_state.update(cx, |state, cx| state.request_reload(cx));
 }
 
+/// Ask the app shell to open the Account detail page for an account.
+pub fn navigate_to_account(account_id: String, cx: &mut App) {
+    let app_state = cx.global::<GlobalAppState>().0.clone();
+    app_state.update(cx, |state, cx| state.navigate_to_account(account_id, cx));
+}
+
 /// Main application view
 pub struct CloudBridgeApp {
     /// Current navigation item
@@ -92,6 +106,8 @@ pub struct CloudBridgeApp {
     attribution_view: Entity<AttributionView>,
     /// Accounts view
     accounts_view: Entity<AccountsView>,
+    /// Account detail view (opened from an Accounts row)
+    account_detail_view: Entity<AccountDetailView>,
     /// Rules view
     rules_view: Entity<RulesView>,
     /// Settings view
@@ -107,6 +123,9 @@ pub enum CurrentView {
     Alerts,
     Attribution,
     Accounts,
+    /// Per-account drill-down; not a sidebar entry — the Accounts nav item
+    /// stays highlighted while it shows.
+    AccountDetail,
     Rules,
     Settings,
 }
@@ -121,6 +140,7 @@ impl CloudBridgeApp {
         let alerts_view = cx.new(|cx| AlertsView::new(window, cx));
         let attribution_view = cx.new(|cx| AttributionView::new(window, cx));
         let accounts_view = cx.new(|cx| AccountsView::new(window, cx));
+        let account_detail_view = cx.new(|cx| AccountDetailView::new(window, cx));
         let rules_view = cx.new(|cx| RulesView::new(window, cx));
         let settings_view = cx.new(|cx| SettingsView::new(window, cx));
 
@@ -134,7 +154,13 @@ impl CloudBridgeApp {
                     std::mem::take(&mut state.reload_requested),
                 )
             });
-            if let Some(view) = target {
+            if let Some((view, payload)) = target {
+                // The detail page's payload names the account before the
+                // switch, so the page never renders another account's data.
+                if let (CurrentView::AccountDetail, Some(account_id)) = (view, payload) {
+                    this.account_detail_view
+                        .update(cx, |v, cx| v.show(account_id, cx));
+                }
                 if this.current_view != view {
                     this.current_view = view;
                     this.reload_view(view, cx);
@@ -156,6 +182,7 @@ impl CloudBridgeApp {
             alerts_view,
             attribution_view,
             accounts_view,
+            account_detail_view,
             rules_view,
             settings_view,
             _subscriptions: vec![observer],
@@ -174,6 +201,11 @@ impl CloudBridgeApp {
             CurrentView::Alerts => self.alerts_view.update(cx, |v, cx| v.reload(cx)),
             CurrentView::Attribution => self.attribution_view.update(cx, |v, cx| v.reload(cx)),
             CurrentView::Accounts => self.accounts_view.update(cx, |v, cx| v.reload(cx)),
+            // show() already started a fresh load; reload() no-ops while
+            // it is in flight.
+            CurrentView::AccountDetail => self
+                .account_detail_view
+                .update(cx, |v, cx| v.reload(cx)),
             CurrentView::Rules => self.rules_view.update(cx, |v, cx| v.reload(cx)),
             CurrentView::Settings => {}
         }
@@ -276,7 +308,9 @@ impl CloudBridgeApp {
                 "Accounts",
                 IconName::Building2,
                 CurrentView::Accounts,
-                current == CurrentView::Accounts,
+                // The Account detail page is a drill-down of Accounts;
+                // keep the parent highlighted while it shows.
+                matches!(current, CurrentView::Accounts | CurrentView::AccountDetail),
                 None,
                 cx,
             ))
@@ -415,6 +449,9 @@ impl CloudBridgeApp {
             CurrentView::Alerts => div().size_full().child(self.alerts_view.clone()),
             CurrentView::Attribution => div().size_full().child(self.attribution_view.clone()),
             CurrentView::Accounts => div().size_full().child(self.accounts_view.clone()),
+            CurrentView::AccountDetail => {
+                div().size_full().child(self.account_detail_view.clone())
+            }
             CurrentView::Rules => div().size_full().child(self.rules_view.clone()),
             CurrentView::Settings => div().size_full().child(self.settings_view.clone()),
         }
