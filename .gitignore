@@ -3,6 +3,13 @@
 debug/
 release/
 
+# macOS packaging output (scripts/package-macos.sh writes these into the
+# repository root; CI uploads them as release assets)
+/CloudBridge.app/
+/dmg-root/
+/cloudbridge-macos-*.dmg
+/cloudbridge-windows-*.exe
+
 # Cargo lock file (optional for applications, keep it)
 # Cargo.lock
 

@@ -1317,8 +1317,12 @@ pub fn load_account_detail(account_id: &str, range: Range) -> Result<AccountDeta
             )
         }
         _ => {
-            let (prior, _) =
-                query::usage_and_credits_of_between(&provider, account_id, prior_since, prior_until)?;
+            let (prior, _) = query::usage_and_credits_of_between(
+                &provider,
+                account_id,
+                prior_since,
+                prior_until,
+            )?;
             let caption = match range {
                 Range::Days30 => "vs prior 30 days",
                 _ => "vs prior 12 months",

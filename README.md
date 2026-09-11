@@ -270,17 +270,66 @@ CloudBridge reports how many charges it wrote and which months it
 replaced. Re-importing a corrected export of the same month is safe: the
 month is replaced, not added to.
 
-### Viewing Cost Data
+### Reading the Overview
 
-1. Go to **Dashboard**
-2. View the overview cards showing:
-   - Current month total cost (or balance for DeepSeek accounts)
-   - Last month total cost
-   - Month-over-month change
-   - Active accounts count
-3. Click on any account card to expand service-level details (or balance breakdown for DeepSeek)
-4. The expanded card charts the daily cost trend, read from the ledger
-   (DeepSeek reports a balance, so it has no trend)
+Pick a range in the header — **MTD**, **30d** or **12m** — and every number
+on the page is computed for that window.
+
+- **Spend** is net of credits: what you were actually charged. The gross
+  usage and the credits that took it down sit beside it
+- The **chart**, the change percent, **Where it went** and the **biggest
+  movers** all run on gross usage. An account whose usage is fully covered
+  by credits nets to ≈ 0, and a trend drawn on that base is noise
+- **Unallocated** is the share of usage reaching no business line — the
+  part of the bill you cannot yet explain
+
+Hovering a trend chart snaps to the nearest point and draws a guide line, a
+dot and a tooltip with that bucket's date and amount.
+
+### One Account at a Time
+
+Click an account's name on the **Accounts** page to drill into it: the same
+**MTD / 30d / 12m** range control, a net / gross / credits stat row, that
+one account's daily or monthly usage trend, and a per-service table showing
+each service's share of the window and its change against the comparison
+window.
+
+A balance-only source such as DeepSeek has no API-reported usage — its
+service rows arrive through bill file import, so the page is empty until
+you import one.
+
+### Alerts and Rules
+
+Three rules ship enabled, and each is tunable on the **Rules** page:
+
+| Rule | Fires when | Default |
+|------|------------|---------|
+| Model cost growth anomaly | A source's service runs far above its own 7-day trailing baseline for days running | 2.5× for 2 consecutive days |
+| Balance floor | A prepaid balance falls below the account's budget, or a default floor | 200, in the reporting currency |
+| Untagged spend ratio | Too much of the month's usage reaches no business line | Above 15% |
+
+An alert names what it saw: the day's figure, the baseline it broke, how
+long the streak has held, and where the month ends if it does. Resolve,
+snooze or dismiss it; a condition that stops holding is resolved for you
+the next time the page loads. Rules are evaluated when the app opens and
+when the Alerts page loads — a desktop app cannot watch your spend while
+it is closed, and CloudBridge does not pretend otherwise.
+
+### Attribution
+
+The **Attribution** page draws the month as a Sankey: source → service or
+model → business line, with an explicit **Unallocated** node. Flows are
+gross usage, because a net flow can be negative and that means nothing in a
+Sankey. A charge reaches a line through its `business_line` tag; without
+one it lands in Unallocated.
+
+### Trying It Without a Bill
+
+**Settings → Demo data** loads three accounts and twelve months of
+realistically-shaped fake ledger, so you can see the app with a bill in it
+before connecting anything. Demo rows are keyed under a `demo-` prefix,
+carry no credentials and are skipped by refresh, so none of them ever
+reaches a provider API. Clearing removes every one of them.
 
 ### Choosing a Reporting Currency
 
@@ -363,14 +412,26 @@ Files:
 Credentials are not in any of them: they are stored in the OS keyring
 (Windows Credential Manager, macOS Keychain, Linux Secret Service).
 
-> ⚠️ **Important:** Never share your `config.json` together with the database file, as this would expose your encrypted credentials.
+Either database can be copied, backed up or inspected without carrying
+your keys with it.
 
 ## 🔐 Security
 
-- Credentials are encrypted using AES-256-GCM before storage
-- Encryption key is generated locally and stored in `config.json`
-- No data is transmitted except direct API calls to cloud providers
+- Credentials live in the OS keyring only — Windows Credential Manager,
+  macOS Keychain, Linux Secret Service. Never in a database, never in
+  `config.json`
+- One keyring item per account, read once per session. On macOS a keyring
+  read can raise a password prompt, so a refresh does not go back to it per
+  billing period
+- No data is transmitted except direct API calls to your providers. A bill
+  file import touches the network not at all
+- Raw billing payloads are written to a local directory and nowhere else
 - The executable contains no embedded credentials
+
+Versions before 0.2.0 kept credentials in the database, encrypted with
+AES-256-GCM under a key in `config.json`. The v1 migration moves those into
+the keyring on first launch and drops the columns that held them; the
+decryption path exists for that migration and nothing else.
 
 ## 🤝 Contributing
 
@@ -389,8 +450,11 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🙏 Acknowledgments
 
 - [GPUI](https://gpui.rs/) - The GPU-accelerated UI framework from Zed
-- [GPUI Component](https://longbridge.github.io/gpui-component/) - UI component library
+- [GPUI Kit](https://crates.io/crates/gpui-kit) - GPUI plus the styled
+  component library this app is built from
 - [DuckDB](https://duckdb.org/) - Embedded analytical database
+- [FOCUS](https://focus.finops.org/) - The FinOps Foundation's open cost
+  and usage specification, which the ledger's columns are named after
 
 ---
 

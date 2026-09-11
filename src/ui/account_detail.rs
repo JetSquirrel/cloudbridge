@@ -79,8 +79,7 @@ impl AccountDetailView {
 
         let range = self.range;
         cx.spawn(async move |this, cx| {
-            let result =
-                smol::unblock(move || data::load_account_detail(&account_id, range)).await;
+            let result = smol::unblock(move || data::load_account_detail(&account_id, range)).await;
             this.update(cx, |this, cx| {
                 this.loading = false;
                 if this.generation == generation {
@@ -124,7 +123,10 @@ impl AccountDetailView {
                     .child(theme::page_title(cx, d.account_name.clone()))
                     .child(theme::caption(
                         cx,
-                        format!("{} · {} · reported in {}", d.provider, d.window_caption, d.currency),
+                        format!(
+                            "{} · {} · reported in {}",
+                            d.provider, d.window_caption, d.currency
+                        ),
                     )),
             )
             .child(
@@ -228,18 +230,13 @@ impl AccountDetailView {
 
     fn render_services(&self, d: &AccountDetailData, cx: &App) -> impl IntoElement {
         let currency = d.currency.as_str();
-        let card = theme::card(cx)
-            .w_full()
-            .p_5()
-            .v_flex()
-            .gap_4()
-            .child(
-                div()
-                    .text_base()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme::text_primary(cx))
-                    .child("By service or model"),
-            );
+        let card = theme::card(cx).w_full().p_5().v_flex().gap_4().child(
+            div()
+                .text_base()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(theme::text_primary(cx))
+                .child("By service or model"),
+        );
 
         if d.services.is_empty() {
             return card.child(theme::caption(
@@ -320,8 +317,18 @@ fn render_stats(d: &AccountDetailData, cx: &App) -> impl IntoElement {
         .h_flex()
         .items_stretch()
         .gap_4()
-        .child(stat_card(cx, "SPEND", fmt::amount(d.spend, currency), "net of credits"))
-        .child(stat_card(cx, "USAGE", fmt::amount(d.usage, currency), "gross usage"))
+        .child(stat_card(
+            cx,
+            "SPEND",
+            fmt::amount(d.spend, currency),
+            "net of credits",
+        ))
+        .child(stat_card(
+            cx,
+            "USAGE",
+            fmt::amount(d.usage, currency),
+            "gross usage",
+        ))
         .child(stat_card(
             cx,
             "CREDITS",
@@ -405,23 +412,20 @@ fn service_row(cx: &App, row: &ServiceRow, currency: &str) -> Div {
                 .child(fmt::amount(row.amount, currency)),
         )
         .child(
-            div()
-                .w_32()
-                .px_2()
-                .child(
-                    div()
-                        .w_full()
-                        .h_2()
-                        .rounded_full()
-                        .bg(theme::sidebar_bg(cx))
-                        .child(
-                            div()
-                                .h_full()
-                                .w(relative(row.share as f32))
-                                .rounded_full()
-                                .bg(theme::accent(cx)),
-                        ),
-                ),
+            div().w_32().px_2().child(
+                div()
+                    .w_full()
+                    .h_2()
+                    .rounded_full()
+                    .bg(theme::sidebar_bg(cx))
+                    .child(
+                        div()
+                            .h_full()
+                            .w(relative(row.share as f32))
+                            .rounded_full()
+                            .bg(theme::accent(cx)),
+                    ),
+            ),
         )
         .child(
             div()

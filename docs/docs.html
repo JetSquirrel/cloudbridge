@@ -576,6 +576,10 @@ cargo run --release</code></pre>
                             <li>The <strong>chart</strong>, the change percent, <strong>Where it went</strong> and the <strong>biggest movers</strong> all run on gross usage. An account whose usage is fully covered by credits nets to about zero, and a trend drawn on that base is noise rather than information.</li>
                             <li>The <strong>Unallocated</strong> figure is the share of usage that reaches no business line — the part of the bill you cannot yet explain.</li>
                         </ul>
+                        <p data-i18n="docs.usage.overview.p2">Hovering a trend chart snaps to the nearest point and draws a guide line, a dot, and a tooltip with that bucket's date and amount.</p>
+                        <h3 data-i18n="docs.usage.account.title">One account at a time</h3>
+                        <p data-i18n-html="docs.usage.account.p1">Click an account's name on the <strong>Accounts</strong> page to drill into it: the same range control, a net / gross / credits stat row, that one account's daily or monthly usage trend, and a per-service table giving each service's share of the window and its change against the comparison window.</p>
+                        <p data-i18n-html="docs.usage.account.p2">A balance-only source such as DeepSeek has no API-reported usage — its service rows arrive through <a href="#import">bill file import</a>, so the page stays empty until you import one.</p>
                         <h3 data-i18n="docs.usage.attribution.title">Attribution</h3>
                         <p data-i18n="docs.usage.attribution.p1">The Attribution page draws the month as a Sankey: source, then service or model, then business line, with an explicit Unallocated node. Flows are gross usage — a net flow can be negative, which means nothing in a Sankey. A charge is assigned to a line by its business_line tag; without one it lands in Unallocated.</p>
                         <h3 data-i18n="docs.usage.currency.title">Choosing a reporting currency</h3>

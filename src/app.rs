@@ -9,8 +9,7 @@ use crate::ui::data::SyncStatus;
 use crate::ui::theme;
 use crate::ui::{
     account_detail::AccountDetailView, accounts::AccountsView, alerts::AlertsView,
-    attribution::AttributionView, overview::OverviewView, rules::RulesView,
-    settings::SettingsView,
+    attribution::AttributionView, overview::OverviewView, rules::RulesView, settings::SettingsView,
 };
 
 /// State shared across pages.
@@ -203,9 +202,7 @@ impl CloudBridgeApp {
             CurrentView::Accounts => self.accounts_view.update(cx, |v, cx| v.reload(cx)),
             // show() already started a fresh load; reload() no-ops while
             // it is in flight.
-            CurrentView::AccountDetail => self
-                .account_detail_view
-                .update(cx, |v, cx| v.reload(cx)),
+            CurrentView::AccountDetail => self.account_detail_view.update(cx, |v, cx| v.reload(cx)),
             CurrentView::Rules => self.rules_view.update(cx, |v, cx| v.reload(cx)),
             CurrentView::Settings => {}
         }
@@ -449,9 +446,7 @@ impl CloudBridgeApp {
             CurrentView::Alerts => div().size_full().child(self.alerts_view.clone()),
             CurrentView::Attribution => div().size_full().child(self.attribution_view.clone()),
             CurrentView::Accounts => div().size_full().child(self.accounts_view.clone()),
-            CurrentView::AccountDetail => {
-                div().size_full().child(self.account_detail_view.clone())
-            }
+            CurrentView::AccountDetail => div().size_full().child(self.account_detail_view.clone()),
             CurrentView::Rules => div().size_full().child(self.rules_view.clone()),
             CurrentView::Settings => div().size_full().child(self.settings_view.clone()),
         }

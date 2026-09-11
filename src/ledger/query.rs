@@ -1003,7 +1003,11 @@ pub fn daily_usage_of(
 
         let rows = stmt
             .query_map(
-                params![provider, account_id, since.format(TIMESTAMP_FORMAT).to_string()],
+                params![
+                    provider,
+                    account_id,
+                    since.format(TIMESTAMP_FORMAT).to_string()
+                ],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<f64>>(1)?)),
             )?
             .collect::<Result<Vec<_>, _>>()?;
@@ -1034,7 +1038,11 @@ pub fn monthly_usage_of(
 
         let rows = stmt
             .query_map(
-                params![provider, account_id, since.format(TIMESTAMP_FORMAT).to_string()],
+                params![
+                    provider,
+                    account_id,
+                    since.format(TIMESTAMP_FORMAT).to_string()
+                ],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<f64>>(1)?)),
             )?
             .collect::<Result<Vec<_>, _>>()?;

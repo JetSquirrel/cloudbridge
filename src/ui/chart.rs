@@ -248,7 +248,7 @@ pub fn hover_overlay(
     rem: Pixels,
 ) -> Option<Vec<AnyElement>> {
     let index = hover.index()?;
-    let bounds = hover.bounds.borrow().clone()?;
+    let bounds = (*hover.bounds.borrow())?;
     let (x, y) = *hover.points.borrow().get(index)?;
     let point = points.get(index)?;
 
