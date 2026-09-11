@@ -15,6 +15,12 @@ const GRIDLINE_OPACITY: f32 = 0.6;
 /// The area fill is a whisper of the accent so the line keeps visual
 /// priority.
 const AREA_FILL_OPACITY: f32 = 0.12;
+/// Vertical breathing room above and below the data range, as a fraction
+/// of that range, so the line never touches the canvas edge.
+const Y_PAD_FRAC: f64 = 0.15;
+/// The hover guide line is fainter than the gridlines: it is transient
+/// chrome, not structure, so it sits one step further back.
+const GUIDE_OPACITY: f32 = 0.4;
 
 /// The Overview spend chart: a smooth area chart of actual usage in the
 /// accent color over a dashed olive 7-day baseline, with faint horizontal
@@ -60,7 +66,7 @@ pub fn spend_area_chart(
                 min = 0.0;
                 max = 1.0;
             }
-            let pad = (max - min) * 0.15;
+            let pad = (max - min) * Y_PAD_FRAC;
             min -= pad;
             max += pad;
 
@@ -88,11 +94,13 @@ pub fn spend_area_chart(
         },
         move |_bounds, (actual, baseline, rect), window, _cx| {
             let [left, top, right, bottom] = rect;
+            // Line widths derive from the rem scale, like the overlay.
+            let rem = window.rem_size();
 
             // Faint horizontal gridlines.
             for i in 0..=3 {
                 let y = top + (bottom - top) * (i as f32 / 3.0);
-                let mut grid = PathBuilder::stroke(px(1.0));
+                let mut grid = PathBuilder::stroke(rems(0.0625).to_pixels(rem));
                 grid.move_to(point(px(left), px(y)));
                 grid.line_to(point(px(right), px(y)));
                 if let Ok(path) = grid.build() {
@@ -114,7 +122,8 @@ pub fn spend_area_chart(
 
             // 7-day baseline: dashed olive line.
             if baseline.len() >= 2 {
-                let mut dashed = PathBuilder::stroke(px(1.5)).dash_array(&[px(4.0), px(4.0)]);
+                let mut dashed = PathBuilder::stroke(rems(0.09375).to_pixels(rem))
+                    .dash_array(&[px(4.0), px(4.0)]);
                 trace_smooth(&mut dashed, &baseline);
                 if let Ok(path) = dashed.build() {
                     window.paint_path(path, baseline_color);
@@ -123,7 +132,7 @@ pub fn spend_area_chart(
 
             // Actual spend: solid accent line.
             if actual.len() >= 2 {
-                let mut line = PathBuilder::stroke(px(2.0));
+                let mut line = PathBuilder::stroke(rems(0.125).to_pixels(rem));
                 trace_smooth(&mut line, &actual);
                 if let Ok(path) = line.build() {
                     window.paint_path(path, line_color);
@@ -268,7 +277,8 @@ pub fn hover_overlay(
     // default rem.
     let headroom: f32 = rems(3.5).to_pixels(rem).into();
     let below: f32 = rems(0.875).to_pixels(rem).into();
-    let tip_top = if rel_y > headroom + 4.0 {
+    let buf: f32 = rems(0.25).to_pixels(rem).into();
+    let tip_top = if rel_y > headroom + buf {
         rel_y - headroom
     } else {
         rel_y + below
@@ -280,9 +290,9 @@ pub fn hover_overlay(
             .left(px(rel_x))
             .top_0()
             .bottom_0()
-            // 1px hairline: a physical-pixel boundary, like the gridlines.
+            // 1px hairline guide: a physical-pixel boundary.
             .w(px(1.0))
-            .bg(theme::text_muted(cx).opacity(0.4))
+            .bg(theme::text_muted(cx).opacity(GUIDE_OPACITY))
             .into_any_element(),
         div()
             .absolute()
@@ -294,17 +304,13 @@ pub fn hover_overlay(
             .border_2()
             .border_color(theme::card_bg(cx))
             .into_any_element(),
-        div()
+        theme::card(cx)
             .absolute()
             .left(px(tip_left))
             .top(px(tip_top))
             .w(px(tip_w))
             .px_2()
             .py_1()
-            .rounded_md()
-            .bg(theme::card_bg(cx))
-            .border_1()
-            .border_color(theme::card_border(cx))
             .shadow_md()
             .v_flex()
             .child(

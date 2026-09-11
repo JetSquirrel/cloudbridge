@@ -12,8 +12,9 @@ use gpui_kit::*;
 use serde_json::json;
 
 use crate::alerts::{self, RuleView};
+use crate::ui::theme::CardOutline as _;
 
-use super::{data, theme};
+use super::{data, fmt, theme};
 
 actions!(rules, [CloseRulesDialog]);
 
@@ -42,46 +43,11 @@ const RULE_KINDS: [RuleKindSpec; 3] = [
     },
 ];
 
-/// Background for the condition / delivery chips: the visible tint used
-/// for tracks elsewhere — `theme().secondary` is nearly the card color in
-/// the CloudBridge themes, so chips painted with it read as stray text.
-fn chip_bg(cx: &App) -> Hsla {
-    theme::sidebar_bg(cx)
-}
-
-/// A rounded condition or delivery chip.
-fn chip(cx: &App, text: &str, mono: bool) -> Div {
-    let el = div()
-        .px_2()
-        .py_0p5()
-        .rounded_md()
-        .bg(chip_bg(cx))
-        .text_xs()
-        .text_color(theme::text_primary(cx))
-        .child(text.to_string());
-    if mono {
-        // "monospace" is a platform font alias resolved by the OS font
-        // stack, not a bundled family.
-        el.font_family("monospace")
-    } else {
-        el
-    }
-}
-
 /// Humanized "last fired" line under a rule's switch.
 fn last_fired_label(last_fired_at: Option<DateTime<Utc>>) -> String {
-    let Some(at) = last_fired_at else {
-        return "Never fired".to_string();
-    };
-    let elapsed = (Utc::now() - at).num_minutes().max(0);
-    if elapsed < 60 {
-        format!("Fired {elapsed} min ago")
-    } else if elapsed < 48 * 60 {
-        format!("Fired {} h ago", elapsed / 60)
-    } else if elapsed < 7 * 24 * 60 {
-        format!("Fired {} d ago", elapsed / (24 * 60))
-    } else {
-        format!("Fired {}", at.format("%Y-%m-%d"))
+    match last_fired_at {
+        Some(at) => format!("Fired {}", fmt::relative_time(at)),
+        None => "Never fired".to_string(),
     }
 }
 
@@ -458,10 +424,13 @@ impl RulesView {
             .children(
                 rule.condition_chips
                     .iter()
-                    .enumerate()
-                    .map(|(i, text)| chip(cx, text, i == 0)),
+                    .map(|text| theme::pill_outline(cx, text.clone())),
             )
-            .children(rule.delivery_chips.iter().map(|text| chip(cx, text, false)));
+            .children(
+                rule.delivery_chips
+                    .iter()
+                    .map(|text| theme::pill_outline(cx, text.clone())),
+            );
 
         let switch_id = SharedString::from(format!("rule-switch-{}", rule.id));
         let rule_id = rule.id.clone();
@@ -510,6 +479,7 @@ impl RulesView {
                             Button::new(SharedString::from(format!("rule-delete-{}", rule.id)))
                                 .label("Delete")
                                 .ghost()
+                                .danger()
                                 .small()
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.ask_delete(rule_id.clone(), window, cx);
@@ -528,7 +498,13 @@ impl RulesView {
                 let kind = spec.kind;
                 Button::new(SharedString::from(format!("rule-kind-{kind}")))
                     .label(spec.name)
-                    .when(kind == self.selected_kind, |button| button.primary())
+                    .small()
+                    .when(kind == self.selected_kind, |button| {
+                        button.custom(theme::accent_variant(cx))
+                    })
+                    .when(kind != self.selected_kind, |button| {
+                        button.custom(theme::outline_variant(cx)).card_outline(cx)
+                    })
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.set_kind(kind, window, cx);
                     }))
@@ -670,10 +646,12 @@ impl RulesView {
                                     .child(Input::new(&self.name_input)),
                             )
                             .child(parameters)
-                            .child(div().text_xs().text_color(theme::text_muted(cx)).child(
-                                "The rule is enabled on creation and runs on the next \
-                                 evaluation, right after it is saved.",
-                            ))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_muted(cx))
+                                    .child("The rule is enabled on creation."),
+                            )
                             .when_some(self.dialog_error.clone(), |el, error| {
                                 el.child(div().text_sm().text_color(theme::danger(cx)).child(error))
                             }),
@@ -765,9 +743,23 @@ impl RulesView {
                     .gap_4()
                     .child(
                         div()
-                            .text_lg()
-                            .font_weight(FontWeight::BOLD)
-                            .child("Delete rule"),
+                            .h_flex()
+                            .justify_between()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(FontWeight::BOLD)
+                                    .child("Delete rule"),
+                            )
+                            .child(
+                                Button::new("close-delete-rule")
+                                    .label("×")
+                                    .ghost()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.cancel_delete(cx);
+                                    })),
+                            ),
                     )
                     .child(
                         div()
@@ -793,7 +785,7 @@ impl RulesView {
                             .child(
                                 Button::new("confirm-delete-rule")
                                     .label("Delete")
-                                    .primary()
+                                    .danger()
                                     .disabled(self.deleting)
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.confirm_delete(cx);
@@ -833,36 +825,80 @@ impl Render for RulesView {
 
         let body: AnyElement = if self.loading && self.data.is_none() {
             theme::caption(cx, "Loading rules…").into_any_element()
-        } else if let Some(error) = &self.error {
+        } else if let Some(data) = &self.data {
+            let rules: &[RuleView] = data.rules.as_slice();
             div()
+                .id("rules-list")
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .v_flex()
+                .gap_4()
+                .overflow_y_scroll()
+                .when_some(self.error.clone(), |el, error| {
+                    el.child(
+                        div()
+                            .w_full()
+                            .p_3()
+                            .rounded_md()
+                            .bg(theme::danger_bg(cx))
+                            .h_flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_3()
+                            .child(div().text_sm().text_color(theme::danger(cx)).child(error))
+                            .child(
+                                Button::new("retry-load-rules")
+                                    .label("Retry")
+                                    .small()
+                                    .custom(theme::outline_variant(cx))
+                                    .card_outline(cx)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.load(cx);
+                                    })),
+                            ),
+                    )
+                })
+                .when(rules.is_empty(), |el| {
+                    el.child(
+                        theme::card(cx).p_3().child(
+                            div()
+                                .text_sm()
+                                .text_color(theme::text_muted(cx))
+                                .child("No rules yet. Create one with New rule in the top right."),
+                        ),
+                    )
+                })
+                .children(rules.iter().map(|rule| self.render_rule(rule, cx)))
+                .into_any_element()
+        } else if let Some(error) = &self.error {
+            // First load failed: there is no list to keep on screen.
+            theme::card(cx)
                 .w_full()
-                .p_3()
-                .rounded_md()
-                .bg(theme::danger_bg(cx))
-                .text_sm()
-                .text_color(theme::danger(cx))
-                .child(error.clone())
+                .p_5()
+                .v_flex()
+                .gap_3()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme::danger(cx))
+                        .child(error.clone()),
+                )
+                .child(
+                    div().h_flex().child(
+                        Button::new("retry-first-load-rules")
+                            .label("Retry")
+                            .small()
+                            .custom(theme::outline_variant(cx))
+                            .card_outline(cx)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.load(cx);
+                            })),
+                    ),
+                )
                 .into_any_element()
         } else {
-            let rules: &[RuleView] = self
-                .data
-                .as_ref()
-                .map(|data| data.rules.as_slice())
-                .unwrap_or(&[]);
-            if rules.is_empty() {
-                theme::caption(cx, "No rules yet.").into_any_element()
-            } else {
-                div()
-                    .id("rules-list")
-                    .flex_1()
-                    .min_w_0()
-                    .min_h_0()
-                    .v_flex()
-                    .gap_4()
-                    .overflow_y_scroll()
-                    .children(rules.iter().map(|rule| self.render_rule(rule, cx)))
-                    .into_any_element()
-            }
+            div().size_0().into_any_element()
         };
 
         div()

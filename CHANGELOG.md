@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-12
+
+A consistency pass over the whole interface: one shared set of cards,
+buttons, pills and table headers in place of per-page copies that had
+already started to drift — and a signed, notarized macOS build.
+
+### Changed
+- Every page now draws from the same theme components — cards, page and
+  section titles, stat cards, table headers, primary/outline/danger
+  button variants, pills and the range control each have exactly one
+  definition. Settings, the last page still hand-rolling its own styles,
+  is rebuilt on them
+- Amount, relative-time and change-percent formatting are single shared
+  implementations; the four diverging copies are gone
+- "Biggest movers" ranks by the size of the change rather than the size
+  of the spend — a large but flat service no longer holds the list
+  forever
+- Refresh is the primary action on the Overview; Force Refresh, the
+  expensive one, is demoted to a secondary button
+- The account detail page merges its SPEND / USAGE / CREDITS cards into
+  one SPEND card that breaks the total down in a line
+- Terminology is unified on "Unallocated" where the UI previously mixed
+  it with "Untagged"
+- Docs site: duplicate "How it works" heading renamed, repeated
+  explanations deduplicated, hardcoded colors moved into the design
+  tokens, and the navigation's left edge aligned with the content
+- macOS release builds are now signed and notarized in CI
+
+### Fixed
+- Accounts state column no longer gives Healthy the brightest badge
+  while Anomaly and Low balance render as plain text — severity now
+  decides prominence
+- Critical alerts are at least as prominent as warnings; warning yellow
+  and alert red are reserved for actual alerts, not neutral labels
+- Delete actions and delete confirmations use the danger style; alert
+  action buttons are styled by what they do, not by their position, so
+  Dismiss can never become the primary button
+- A failed toggle or delete on the Rules page no longer replaces the
+  whole rule list with an error banner — errors sit inline above the
+  list, with a Retry button
+- The status bar's freshness dot reflects whether the next fetch is due,
+  rather than merely that a sync once happened
+- "Resolved this month" shows the date an alert was resolved, not the
+  date it was raised
+- Yen amounts no longer display meaningless decimals
+- Theme and refresh-interval changes no longer fire a redundant
+  "Settings saved" banner, and the banner that remains sits under the
+  page title where the action happened
+
 ## [0.3.0] - 2026-09-11
 
 The release that gives the ledger a second way in and a face worth

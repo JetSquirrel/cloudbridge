@@ -1,16 +1,16 @@
 //! Main application module
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use gpui_kit::component::*;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use crate::ui::data::SyncStatus;
-use crate::ui::theme;
 use crate::ui::{
     account_detail::AccountDetailView, accounts::AccountsView, alerts::AlertsView,
     attribution::AttributionView, overview::OverviewView, rules::RulesView, settings::SettingsView,
 };
+use crate::ui::{fmt, theme};
 
 /// State shared across pages.
 ///
@@ -19,14 +19,14 @@ use crate::ui::{
 pub struct AppState {
     /// Open alerts, shown as the sidebar badge. 0 hides the badge.
     pub open_alerts: usize,
-    /// The sidebar sync card's data; `None` until the first load lands.
+    /// The status bar's sync data; `None` until the first load lands.
     pub sync: Option<SyncStatus>,
     /// A view switch a page asked for; the shell observes this entity,
     /// applies the request, and clears it. The optional string is the
     /// target's payload — the account id for the Account detail page.
     navigate_to: Option<(CurrentView, Option<String>)>,
     /// A page changed data the current view shows (demo data load/clear);
-    /// the shell reloads the current page and sidebar when set.
+    /// the shell reloads the current page and status bar when set.
     reload_requested: bool,
 }
 
@@ -144,8 +144,8 @@ impl CloudBridgeApp {
         let settings_view = cx.new(|cx| SettingsView::new(window, cx));
 
         // A page's navigation request lands on AppState::navigate_to; apply
-        // it and clear it. The update in refresh_sidebar does not notify, so
-        // this observer cannot loop.
+        // it and clear it. The update in refresh_status_bar does not notify,
+        // so this observer cannot loop.
         let observer = cx.observe(&app_state, |this, app_state, cx| {
             let (target, reload) = app_state.update(cx, |state, _| {
                 (
@@ -163,13 +163,13 @@ impl CloudBridgeApp {
                 if this.current_view != view {
                     this.current_view = view;
                     this.reload_view(view, cx);
-                    this.refresh_sidebar(cx);
+                    this.refresh_status_bar(cx);
                 }
                 cx.notify();
             }
             if reload {
                 this.reload_view(this.current_view, cx);
-                this.refresh_sidebar(cx);
+                this.refresh_status_bar(cx);
                 cx.notify();
             }
         });
@@ -187,7 +187,7 @@ impl CloudBridgeApp {
             _subscriptions: vec![observer],
         };
 
-        this.refresh_sidebar(cx);
+        this.refresh_status_bar(cx);
         this
     }
 
@@ -208,12 +208,12 @@ impl CloudBridgeApp {
         }
     }
 
-    /// Reload the sidebar's sync status and open-alert count.
+    /// Reload the status bar's sync status and open-alert count.
     ///
     /// Both loaders are blocking DuckDB reads, so they run in
     /// `smol::unblock` and the result lands back on `AppState` — the same
     /// thread + unblock + spawn + notify pattern as `accounts.rs`.
-    fn refresh_sidebar(&mut self, cx: &mut Context<Self>) {
+    fn refresh_status_bar(&mut self, cx: &mut Context<Self>) {
         let app_state = self.app_state.clone();
 
         cx.spawn(async move |this, cx| {
@@ -270,12 +270,10 @@ impl CloudBridgeApp {
                             .text_color(theme::accent(cx))
                             .child("CloudBridge"),
                     )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme::text_muted(cx))
-                            .child("LOCAL LEDGER · V0.3"),
-                    ),
+                    .child(theme::caption(
+                        cx,
+                        format!("LOCAL LEDGER · V{}", env!("CARGO_PKG_VERSION")),
+                    )),
             )
             .child(self.nav_item(
                 "Overview",
@@ -362,36 +360,23 @@ impl CloudBridgeApp {
             .child(label);
 
         if let Some(count) = badge {
-            item = item.child(div().flex_1()).child(
-                div()
-                    .size(rems(1.125))
-                    .rounded_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_xs()
-                    .bg(if is_active {
-                        theme::on_accent(cx)
-                    } else {
-                        theme::accent(cx)
-                    })
-                    .text_color(if is_active {
-                        theme::accent(cx)
-                    } else {
-                        theme::on_accent(cx)
-                    })
-                    .child(count.to_string()),
-            );
+            item = item.child(div().flex_1()).child(theme::count_badge(
+                cx,
+                count,
+                if is_active {
+                    theme::on_accent(cx)
+                } else {
+                    theme::accent(cx)
+                },
+                if is_active {
+                    theme::accent(cx)
+                } else {
+                    theme::on_accent(cx)
+                },
+            ));
         }
 
-        item.on_click(cx.listener(move |this, _, _, cx| {
-            if this.current_view != view {
-                this.current_view = view;
-                this.reload_view(view, cx);
-            }
-            this.refresh_sidebar(cx);
-            cx.notify();
-        }))
+        item.on_click(move |_, _, cx| crate::app::navigate_to(view, cx))
     }
 
     /// The window's bottom status bar: sync state as one muted line, in
@@ -399,19 +384,22 @@ impl CloudBridgeApp {
     fn render_status_bar(&self, cx: &App) -> impl IntoElement {
         let sync = self.app_state.read(cx).sync.as_ref();
 
-        let (text, fresh) = match sync {
+        let (text, dot_color) = match sync {
             Some(sync) => {
                 let synced = match sync.last_synced_at {
-                    Some(at) => format!("Synced {}", relative_time(at)),
+                    Some(at) => format!("Synced {}", fmt::relative_time(at)),
                     None => "Never synced".to_string(),
                 };
                 // sync_detail carries "N sources · next auto-fetch …".
-                (
-                    format!("{synced} · {}", sync_detail(sync)),
-                    sync.last_synced_at.is_some(),
-                )
+                // The dot follows the same due-now cutoff as that line.
+                let dot_color = match sync.next_fetch_at {
+                    Some(at) if at > Utc::now() => theme::olive(cx),
+                    Some(_) => theme::warning_text(cx),
+                    None => theme::grey(cx),
+                };
+                (format!("{synced} · {}", sync_detail(sync)), dot_color)
             }
-            None => ("Syncing… · reading the ledger.".to_string(), false),
+            None => ("Syncing…".to_string(), theme::grey(cx)),
         };
 
         div()
@@ -423,11 +411,7 @@ impl CloudBridgeApp {
             .py_1()
             .border_t_1()
             .border_color(theme::card_border(cx))
-            .child(theme::dot(if fresh {
-                theme::olive(cx)
-            } else {
-                theme::grey(cx)
-            }))
+            .child(theme::dot(dot_color))
             .child(
                 div()
                     .text_xs()
@@ -478,23 +462,11 @@ impl Render for CloudBridgeApp {
     }
 }
 
-/// "N min ago" / "N h ago"; anything under a minute reads as just now.
-fn relative_time(at: DateTime<Utc>) -> String {
-    let delta = Utc::now() - at;
-    if delta.num_minutes() < 1 {
-        "just now".to_string()
-    } else if delta.num_hours() < 1 {
-        format!("{} min ago", delta.num_minutes())
-    } else {
-        format!("{} h ago", delta.num_hours())
-    }
-}
-
 /// The muted line under the sync title: source count plus when the next
 /// automatic fetch is due.
 fn sync_detail(sync: &SyncStatus) -> String {
     if sync.source_count == 0 {
-        return "No sources configured.".to_string();
+        return "No sources configured".to_string();
     }
 
     let sources = format!(
@@ -504,21 +476,21 @@ fn sync_detail(sync: &SyncStatus) -> String {
     );
 
     match sync.next_fetch_at {
-        None => format!("{} · waiting for the first sync.", sources),
+        None => format!("{} · waiting for the first sync", sources),
         Some(at) => {
             let remaining = at - Utc::now();
             if remaining.num_seconds() <= 0 {
-                format!("{} · next auto-fetch due now.", sources)
+                format!("{} · next auto-fetch due now", sources)
             } else if remaining.num_hours() >= 1 {
                 format!(
-                    "{} · next auto-fetch in {}h {}m.",
+                    "{} · next auto-fetch in {}h {}m",
                     sources,
                     remaining.num_hours(),
                     remaining.num_minutes() % 60
                 )
             } else {
                 format!(
-                    "{} · next auto-fetch in {} min.",
+                    "{} · next auto-fetch in {} min",
                     sources,
                     remaining.num_minutes().max(1)
                 )

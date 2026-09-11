@@ -7,7 +7,8 @@ use gpui_kit::component::{button::*, StyledExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use super::{data, theme};
+use super::{data, fmt, theme};
+use crate::ui::theme::CardOutline as _;
 
 /// Sankey drawing constants.
 const SANKEY_HEIGHT: f32 = 420.0;
@@ -19,52 +20,6 @@ const LINK_OPACITY: f32 = 0.35;
 /// than a rem helper: it is canvas-mirroring geometry and must track the
 /// sankey's pixel-exact heights and gaps, not the font scale.
 const LABEL_WIDTH: f32 = 110.0;
-
-/// Currency symbol for a reporting-currency code.
-fn currency_symbol(currency: &str) -> &str {
-    match currency {
-        "USD" => "$",
-        "EUR" => "€",
-        "GBP" => "£",
-        "JPY" | "CNY" => "¥",
-        _ => "",
-    }
-}
-
-/// Amount with the currency's symbol, e.g. `$51,080`. Precision adapts to
-/// the size so sub-dollar spend does not round to `$0`: whole units from
-/// 100 up, two decimals from a cent up, and `<$0.01` below a cent.
-fn fmt_amount(currency: &str, amount: f64) -> String {
-    let symbol = currency_symbol(currency);
-    let prefix = if symbol.is_empty() {
-        format!("{currency} ")
-    } else {
-        symbol.to_string()
-    };
-
-    let magnitude = amount.abs();
-    // Below half a cent is netting round-off, not an amount.
-    if magnitude < 0.005 {
-        return format!("{prefix}0");
-    }
-    let sign = if amount < 0.0 { "-" } else { "" };
-    if magnitude < 0.01 {
-        // A sub-cent amount has no honest rounding; say so instead.
-        return format!("{sign}<{prefix}0.01");
-    }
-    if magnitude < 100.0 {
-        return format!("{sign}{prefix}{magnitude:.2}");
-    }
-
-    let mut digits = format!("{magnitude:.0}");
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    while digits.len() > 3 {
-        let split = digits.len() - 3;
-        out.insert_str(0, &format!(",{}", &digits[split..]));
-        digits.truncate(split);
-    }
-    format!("{sign}{prefix}{digits}{out}")
-}
 
 /// Number of Sankey columns in the data (0 source … N-1 business line).
 fn column_count(data: &data::SankeyData) -> usize {
@@ -257,28 +212,16 @@ impl AttributionView {
     }
 
     fn render_header(&self, cx: &Context<Self>, total: Option<(f64, &str)>) -> impl IntoElement {
-        let caption = match total {
-            Some((amount, currency)) => format!(
-                "{} of this billing period's spend traced from the source that \
-                 billed it to the business that caused it",
-                fmt_amount(currency, amount)
-            ),
-            None => "Spend traced from the source that billed it to the business \
-                      that caused it"
-                .to_string(),
-        };
-        div()
-            .w_full()
-            .h_flex()
-            .justify_between()
-            .items_center()
-            .child(
-                div()
-                    .v_flex()
-                    .gap_1()
-                    .child(theme::page_title(cx, "Attribution"))
-                    .child(theme::caption(cx, caption)),
-            )
+        let caption = total.map(|(amount, currency)| {
+            format!("{} this billing period", fmt::amount(amount, currency))
+        });
+        div().w_full().h_flex().items_center().child(
+            div()
+                .v_flex()
+                .gap_1()
+                .child(theme::page_title(cx, "Attribution"))
+                .when_some(caption, |el, text| el.child(theme::caption(cx, text))),
+        )
     }
 
     fn render_path_row(&self, cx: &Context<Self>, steps: &[data::PathStep]) -> impl IntoElement {
@@ -293,27 +236,11 @@ impl AttributionView {
                     .child("PATH"),
             )
             .child(
-                div()
-                    .h_flex()
-                    .items_center()
-                    .gap_2()
-                    .children(steps.iter().map(|step| {
-                        let (border, fg) = if step.dimmed {
-                            (theme::grey(cx), theme::text_muted(cx))
-                        } else {
-                            (theme::accent(cx), theme::accent(cx))
-                        };
-                        div()
-                            .px_3()
-                            .py_1()
-                            .rounded_full()
-                            .bg(theme::card_bg(cx))
-                            .border_1()
-                            .border_color(border)
-                            .text_xs()
-                            .text_color(fg)
-                            .child(step.label.clone())
-                    })),
+                div().h_flex().items_center().gap_2().children(
+                    steps
+                        .iter()
+                        .map(|step| theme::pill_outline(cx, step.label.clone())),
+                ),
             )
     }
 
@@ -592,8 +519,8 @@ impl AttributionView {
                         .child(
                             div()
                                 .text_sm()
-                                .text_color(theme::text_muted(cx))
-                                .child(fmt_amount(currency, item.amount)),
+                                .text_color(theme::text_primary(cx))
+                                .child(fmt::amount(item.amount, currency)),
                         )
                 }))
                 .into_any_element()
@@ -601,7 +528,7 @@ impl AttributionView {
 
         theme::card(cx)
             .w_full()
-            .bg(theme::alert_tint(cx))
+            .bg(theme::warning_bg(cx))
             .p_5()
             .v_flex()
             .gap_4()
@@ -611,7 +538,7 @@ impl AttributionView {
                     .text_color(theme::text_primary(cx))
                     .child(format!(
                         "Unallocated · {} ({:.1}%)",
-                        fmt_amount(currency, card.amount),
+                        fmt::amount(card.amount, currency),
                         card.pct
                     )),
             )
@@ -620,7 +547,8 @@ impl AttributionView {
                 div().h_flex().child(
                     Button::new("write-allocation-rule")
                         .label(card.action.clone())
-                        .outline()
+                        .custom(theme::outline_variant(cx))
+                        .card_outline(cx)
                         .on_click(|_, _, cx| {
                             crate::app::navigate_to(crate::app::CurrentView::Rules, cx)
                         }),
@@ -684,13 +612,15 @@ impl AttributionView {
                     .child(error.to_string()),
             )
             .child(
-                div()
-                    .h_flex()
-                    .child(Button::new("retry-load").label("Retry").outline().on_click(
-                        cx.listener(|this, _, _, cx| {
+                div().h_flex().child(
+                    Button::new("retry-load")
+                        .label("Retry")
+                        .custom(theme::outline_variant(cx))
+                        .card_outline(cx)
+                        .on_click(cx.listener(|this, _, _, cx| {
                             this.load(cx);
-                        }),
-                    )),
+                        })),
+                ),
             )
     }
 }
@@ -751,7 +681,12 @@ impl Render for AttributionView {
                 .child(self.render_loading(cx))
                 .into_any_element()
         } else {
-            self.render_empty_state(cx).into_any_element()
+            div()
+                .v_flex()
+                .gap_6()
+                .child(self.render_header(cx, None))
+                .child(self.render_empty_state(cx))
+                .into_any_element()
         };
 
         div()

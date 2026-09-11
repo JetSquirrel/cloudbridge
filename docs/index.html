@@ -76,6 +76,8 @@
             --fg-strong: #101828;
             --fg-body: #47536B;
             --fg-faint: #7A8699;
+            --fg-on-ink: #C4CEDE;
+            --fg-on-ink-faint: #8FA0BC;
             --signal: #2F6FED;
             --signal-dark: #1F5BD8;
             --aws: #E8830C;
@@ -151,7 +153,6 @@
             height: var(--nav-height);
             display: flex;
             align-items: center;
-            padding: 0 1rem;
             position: sticky;
             top: 0;
             z-index: 100;
@@ -262,7 +263,7 @@
         /* Hero */
         .hero {
             background: var(--ink);
-            color: #C4CEDE;
+            color: var(--fg-on-ink);
             padding: 6.5rem 0;
             position: relative;
         }
@@ -303,7 +304,7 @@
         }
 
         .hero .btn-outline {
-            color: #C4CEDE;
+            color: var(--fg-on-ink);
             border-color: var(--hairline-dark);
         }
 
@@ -364,6 +365,19 @@
         .converge text {
             font-family: var(--font-mono);
         }
+
+        .converge .lbl { fill: var(--fg-faint); }
+        .converge .amt.aws { fill: var(--aws); }
+        .converge .amt.aliyun { fill: var(--aliyun); }
+        .converge .amt.deepseek { fill: var(--deepseek); }
+        .converge .node { fill: var(--local); }
+        .converge .frame {
+            fill: none;
+            stroke: var(--local);
+            stroke-width: 1.5;
+        }
+        .converge .frame-title { fill: var(--local); }
+        .converge .total { fill: #fff; }
 
         .converge .fade-in {
             opacity: 0;
@@ -428,6 +442,14 @@
             padding: 6rem 0;
         }
 
+        .section--flush-b {
+            padding-bottom: 0;
+        }
+
+        .section--flush-t {
+            padding-top: 0;
+        }
+
         .section-head {
             display: flex;
             align-items: baseline;
@@ -440,6 +462,19 @@
 
         .section-head .eyebrow {
             color: var(--fg-faint);
+        }
+
+        /* Diagram */
+        .diagram-frame {
+            margin-top: 3rem;
+        }
+
+        .diagram-frame img {
+            display: block;
+            width: 100%;
+            height: auto;
+            border: 1px solid var(--hairline);
+            border-radius: var(--radius);
         }
 
         /* App window (screenshot) */
@@ -556,7 +591,7 @@
         /* Download manifest */
         .download {
             background: var(--ink);
-            color: #C4CEDE;
+            color: var(--fg-on-ink);
         }
 
         .download .section-head {
@@ -611,7 +646,7 @@
         .manifest-row .m-file {
             font-family: var(--font-mono);
             font-size: 0.8125rem;
-            color: #8FA0BC;
+            color: var(--fg-on-ink-faint);
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -637,7 +672,7 @@
         .download-notes {
             margin-top: 2rem;
             font-size: 0.875rem;
-            color: #8FA0BC;
+            color: var(--fg-on-ink-faint);
             max-width: 46rem;
         }
 
@@ -730,7 +765,7 @@
         /* Footer */
         footer {
             background: var(--ink);
-            color: #8FA0BC;
+            color: var(--fg-on-ink-faint);
             padding: 4rem 0 2rem;
             border-top: 1px solid var(--hairline-dark);
         }
@@ -762,7 +797,7 @@
         }
 
         .footer-links a {
-            color: #8FA0BC;
+            color: var(--fg-on-ink-faint);
             text-decoration: none;
             font-size: 0.9375rem;
             transition: color 0.15s;
@@ -934,36 +969,34 @@
                     <figure class="converge">
                         <svg viewBox="0 0 660 320" role="img" aria-label="Diagram: cost data streams from AWS, Alibaba Cloud, and DeepSeek converging through a 24-hour refresh window into one local ledger">
                             <!-- source labels -->
-                            <text x="0" y="46" font-size="11" fill="#7A8699" letter-spacing="1.5">AWS</text>
-                            <text x="0" y="66" font-size="15" fill="#E8830C" font-weight="500">$182.40</text>
-                            <text x="0" y="166" font-size="11" fill="#7A8699" letter-spacing="1.5">ALIBABA</text>
-                            <text x="0" y="186" font-size="15" fill="#E14D43" font-weight="500">$96.10</text>
-                            <text x="0" y="286" font-size="11" fill="#7A8699" letter-spacing="1.5">DEEPSEEK</text>
-                            <text x="0" y="306" font-size="15" fill="#4D6BFE" font-weight="500">$12.00</text>
+                            <text x="0" y="46" font-size="11" class="lbl" letter-spacing="1.5">AWS</text>
+                            <text x="0" y="66" font-size="15" class="amt aws" font-weight="500">$182.40</text>
+                            <text x="0" y="166" font-size="11" class="lbl" letter-spacing="1.5">ALIBABA</text>
+                            <text x="0" y="186" font-size="15" class="amt aliyun" font-weight="500">$96.10</text>
+                            <text x="0" y="286" font-size="11" class="lbl" letter-spacing="1.5">DEEPSEEK</text>
+                            <text x="0" y="306" font-size="15" class="amt deepseek" font-weight="500">$12.00</text>
                             <!-- streams -->
                             <path class="stream aws" d="M 120 60 C 230 60, 280 172, 356 172" />
                             <path class="stream aliyun" d="M 120 180 L 356 180" />
                             <path class="stream deepseek" d="M 120 300 C 230 300, 280 188, 356 188" />
                             <!-- merge node -->
-                            <circle class="fade-in" cx="362" cy="180" r="5" fill="#2FA97C" style="animation-delay: 1s" />
+                            <circle class="node fade-in" cx="362" cy="180" r="5" style="animation-delay: 1s" />
                             <!-- merged stream into the cache stage -->
                             <path class="stream merged merged-a" d="M 372 180 L 416 180" />
                             <!-- cache stage: trims paid API calls -->
                             <g class="fade-in" style="animation-delay: 1.5s">
-                                <rect x="416" y="158" width="104" height="44" fill="none" stroke="#2FA97C" stroke-width="1.5" rx="4" />
-                                <text x="468" y="176" font-size="10" fill="#2FA97C" text-anchor="middle" letter-spacing="1">24H WINDOW</text>
-                                <text x="468" y="192" font-size="9" fill="#7A8699" text-anchor="middle">≈2 CALLS/DAY</text>
-                                <text x="468" y="222" font-size="9" fill="#7A8699" text-anchor="middle" letter-spacing="1">API SPEND ≈ $0.02/DAY</text>
+                                <rect class="frame" x="416" y="158" width="104" height="44" rx="4" />
+                                <text x="468" y="185" font-size="10" class="frame-title" text-anchor="middle" letter-spacing="1">24H WINDOW</text>
                             </g>
                             <!-- merged stream into the local ledger -->
                             <path class="stream merged merged-b" d="M 520 180 L 556 180" />
                             <!-- local ledger -->
                             <g class="fade-in" style="animation-delay: 2s">
-                                <rect x="556" y="146" width="76" height="68" fill="none" stroke="#2FA97C" stroke-width="1.5" rx="4" />
-                                <text x="594" y="172" font-size="10" fill="#2FA97C" text-anchor="middle">LOCAL</text>
-                                <text x="594" y="188" font-size="10" fill="#7A8699" text-anchor="middle">DUCKDB</text>
-                                <text x="594" y="240" font-size="11" fill="#7A8699" text-anchor="middle" letter-spacing="1">THIS MONTH</text>
-                                <text x="594" y="262" font-size="17" fill="#fff" text-anchor="middle" font-weight="500">$290.50</text>
+                                <rect class="frame" x="556" y="146" width="76" height="68" rx="4" />
+                                <text x="594" y="172" font-size="10" class="frame-title" text-anchor="middle">LOCAL</text>
+                                <text x="594" y="188" font-size="10" class="lbl" text-anchor="middle">DUCKDB</text>
+                                <text x="594" y="240" font-size="11" class="lbl" text-anchor="middle" letter-spacing="1">THIS MONTH</text>
+                                <text x="594" y="262" font-size="17" class="total" text-anchor="middle" font-weight="500">$290.50</text>
                             </g>
                         </svg>
                         <figcaption data-i18n="chart.caption">sample data — billing.duckdb, on your machine</figcaption>
@@ -996,21 +1029,21 @@
             </div>
         </section>
 
-        <!-- How it works -->
-        <section class="section" style="padding-bottom: 0;">
+        <!-- The big picture -->
+        <section class="section section--flush-b">
             <div class="container">
                 <div class="section-head">
-                    <h2 data-i18n="howitworks.title">How it works</h2>
+                    <h2 data-i18n="howitworks.title">The big picture</h2>
                     <span class="eyebrow" data-i18n="howitworks.eyebrow">local-first</span>
                 </div>
-                <figure style="margin: 0; text-align: center;">
-                    <img src="diagram.jpg" alt="Hand-drawn diagram: bills from AWS, Alibaba Cloud, DeepSeek and CSV/Parquet bill files flow across a bridge into a local desktop app with a unified cost view — credentials stay local, no cloud sync" width="1440" height="810" loading="lazy" decoding="async" style="max-width: 900px; width: 100%; height: auto; border: 1px solid var(--hairline); border-radius: 12px;">
+                <figure class="diagram-frame">
+                    <img src="diagram.jpg" alt="Hand-drawn diagram: bills from AWS, Alibaba Cloud, DeepSeek and CSV/Parquet bill files flow across a bridge into a local desktop app with a unified cost view — credentials stay local, no cloud sync" width="1440" height="810" loading="lazy" decoding="async">
                 </figure>
             </div>
         </section>
 
         <!-- Screenshot -->
-        <section class="section" style="padding-bottom: 0;">
+        <section class="section section--flush-b">
             <div class="container">
                 <div class="section-head">
                     <h2 data-i18n="screenshot.title">The dashboard</h2>
@@ -1076,8 +1109,8 @@
             </div>
         </section>
 
-        <!-- How It Works -->
-        <section id="how-it-works" class="section" style="padding-top: 0;">
+        <!-- How it works -->
+        <section id="how-it-works" class="section section--flush-t">
             <div class="container">
                 <div class="section-head">
                     <h2 data-i18n="how.title">How it works</h2>
@@ -1087,7 +1120,7 @@
                     <div class="step">
                         <span class="num">01</span>
                         <h3 data-i18n="how.step1.title">Download &amp; install</h3>
-                        <p data-i18n="how.step1.desc">Download the build for your platform and run it. No installer, no sign-up.</p>
+                        <p data-i18n="how.step1.desc">Download the build for your platform and run it. No installer.</p>
                     </div>
                     <div class="step">
                         <span class="num">02</span>
@@ -1097,7 +1130,7 @@
                     <div class="step">
                         <span class="num">03</span>
                         <h3 data-i18n="how.step3.title">Read the ledger</h3>
-                        <p data-i18n="how.step3.desc">Open the Overview for totals, trends and the biggest movers, over the range you pick. Each billing period is re-fetched at most once a day, and you set that window in Settings.</p>
+                        <p data-i18n="how.step3.desc">Open the Overview for totals, trends and the biggest movers, over the range you pick.</p>
                     </div>
                 </div>
             </div>

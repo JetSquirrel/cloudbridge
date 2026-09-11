@@ -20,6 +20,7 @@ use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use super::fmt;
 use crate::alerts::{self, AlertKind, AlertStatus, AlertView, RuleView};
 use crate::cloud::registry;
 use crate::cloud::BillingPeriod;
@@ -34,9 +35,13 @@ use crate::{db, ingest};
 /// as "Unallocated" everywhere.
 pub const BUSINESS_LINE_TAG: &str = "business_line";
 
+/// The label every breakdown gives usage that carries no
+/// [`BUSINESS_LINE_TAG`] value.
+pub const UNALLOCATED: &str = "Unallocated";
+
 /// The reporting currency every amount below is expressed in, so a page
 /// can format without asking config again.
-fn reporting_currency() -> String {
+pub fn reporting_currency() -> String {
     crate::config::load_config()
         .map(|settings| settings.reporting_currency)
         .unwrap_or_else(|_| crate::config::DEFAULT_REPORTING_CURRENCY.to_string())
@@ -182,7 +187,8 @@ pub struct BusinessLineRow {
     pub amount: f64,
 }
 
-/// One row of the "Biggest movers" table, ranked by window usage.
+/// One row of the "Biggest movers" table, ranked by the size of the swing
+/// against the comparison window.
 pub struct MoverRow {
     pub provider: String,
     pub service: String,
@@ -192,7 +198,7 @@ pub struct MoverRow {
     /// when the service's comparison-window usage is under a cent — same
     /// dust-division rule as the headline percent.
     pub change_pct: Option<f64>,
-    /// The business line this usage mostly drives, or "Untagged".
+    /// The business line this usage mostly drives, or "Unallocated".
     pub drives: String,
 }
 
@@ -215,16 +221,21 @@ pub struct OverviewData {
     pub window_caption: String,
     /// Movers table delta column header ("VS LAST MONTH", …).
     pub movers_delta_header: &'static str,
-    /// Movers card title ("Biggest movers this month", …).
+    /// Movers card title.
     pub movers_title: &'static str,
     /// Movers amount column header ("MTD", "30D", "12M").
-    pub movers_amount_header: &'static str,
+    pub movers_amount_header: String,
     pub chart_title: &'static str,
     pub chart_caption: &'static str,
     pub chart: SpendChart,
     pub business_lines: Vec<BusinessLineRow>,
     pub movers: Vec<MoverRow>,
 }
+
+/// Chart title and caption of the daily ranges — MTD and 30d both plot
+/// daily points against the 7-day trailing mean.
+const DAILY_CHART_TITLE: &str = "Daily spend, all sources";
+const DAILY_CHART_CAPTION: &str = "Actual against the 7-day trailing mean.";
 
 /// Load the Overview page's data for a range. Blocking; wrap in
 /// `smol::unblock`.
@@ -269,7 +280,8 @@ fn load_overview_mtd(now: DateTime<Utc>) -> Result<OverviewData> {
         .sum();
 
     // A percentage against a sub-cent base is noise, not signal.
-    let change_pct = (prev_mtd >= 0.01).then(|| (mtd_usage - prev_mtd) / prev_mtd * 100.0);
+    let change_pct =
+        (prev_mtd >= fmt::DUST_THRESHOLD).then(|| (mtd_usage - prev_mtd) / prev_mtd * 100.0);
 
     // Forecast: usage MTD plus the recent run rate for the days left.
     let current_days: Vec<(u32, f64)> = daily_all
@@ -358,13 +370,13 @@ fn load_overview_mtd(now: DateTime<Utc>) -> Result<OverviewData> {
         change_caption: "vs same day last month",
         card2_label: "MONTH-END FORECAST",
         card2_value: forecast,
-        card2_caption: "MTD plus the mean of the last 7 days of burn",
+        card2_caption: "MTD plus the mean of the last 7 days of daily usage",
         window_caption: Range::Mtd.header_caption(now),
         movers_delta_header: "VS LAST MONTH",
-        movers_title: "Biggest movers this month",
-        movers_amount_header: "MTD",
-        chart_title: "Daily spend, all sources",
-        chart_caption: "Actual against the 7-day trailing mean.",
+        movers_title: "Biggest movers",
+        movers_amount_header: Range::Mtd.label().to_uppercase(),
+        chart_title: DAILY_CHART_TITLE,
+        chart_caption: DAILY_CHART_CAPTION,
         chart: SpendChart { actual, baseline },
         business_lines,
         movers,
@@ -380,7 +392,8 @@ fn load_overview_window(range: Range, now: DateTime<Utc>) -> Result<OverviewData
     let spend = query::total_between(since, until)?;
     let (usage, credits) = query::usage_and_credits_between(since, until)?;
     let (prior_usage, _) = query::usage_and_credits_between(prior_since, prior_until)?;
-    let change_pct = (prior_usage >= 0.01).then(|| (usage - prior_usage) / prior_usage * 100.0);
+    let change_pct =
+        (prior_usage >= fmt::DUST_THRESHOLD).then(|| (usage - prior_usage) / prior_usage * 100.0);
 
     let breakdown = query::tag_usage_breakdown_between(since, until, BUSINESS_LINE_TAG)?;
     let (unallocated_pct, unallocated_amount) = unallocated(&breakdown, usage);
@@ -390,8 +403,6 @@ fn load_overview_window(range: Range, now: DateTime<Utc>) -> Result<OverviewData
         spend_label,
         change_caption,
         movers_delta_header,
-        movers_title,
-        movers_amount_header,
         chart_title,
         chart_caption,
         chart,
@@ -401,10 +412,8 @@ fn load_overview_window(range: Range, now: DateTime<Utc>) -> Result<OverviewData
             "LAST 30 DAYS",
             "vs prior 30 days",
             "VS PRIOR 30D",
-            "Biggest movers, last 30 days",
-            "30D",
-            "Daily spend, all sources",
-            "Actual against the 7-day trailing mean.",
+            DAILY_CHART_TITLE,
+            DAILY_CHART_CAPTION,
             daily_chart(since, until)?,
             (
                 "DAILY AVERAGE",
@@ -416,10 +425,8 @@ fn load_overview_window(range: Range, now: DateTime<Utc>) -> Result<OverviewData
             "LAST 12 MONTHS",
             "vs prior 12 months",
             "VS PRIOR 12M",
-            "Biggest movers, last 12 months",
-            "12M",
             "Monthly spend, all sources",
-            "One point per month of gross usage; no baseline.",
+            "One point per month of gross usage.",
             monthly_chart(now)?,
             (
                 "MONTHLY AVERAGE",
@@ -458,8 +465,8 @@ fn load_overview_window(range: Range, now: DateTime<Utc>) -> Result<OverviewData
         card2_caption,
         window_caption: range.header_caption(now),
         movers_delta_header,
-        movers_title,
-        movers_amount_header,
+        movers_title: "Biggest movers",
+        movers_amount_header: range.label().to_uppercase(),
         chart_title,
         chart_caption,
         chart,
@@ -549,43 +556,60 @@ fn business_lines(breakdown: Vec<(String, f64)>) -> Vec<BusinessLineRow> {
         .collect()
 }
 
-/// The "Biggest movers" rows: the five largest services of the window,
-/// each against its comparison-window usage, with the business line it
-/// mostly drives. `drives` resolves that line, since the lookup differs
-/// between the period-keyed and window-bounded queries.
+/// The "Biggest movers" rows: the five services whose usage swung hardest
+/// against the comparison window, by absolute percent change, with the
+/// business line each mostly drives. Services with no meaningful prior
+/// base have no percentage and rank below every one that does. `drives`
+/// resolves that line, since the lookup differs between the period-keyed
+/// and window-bounded queries.
 fn movers(
     current_totals: Vec<(String, String, f64)>,
     previous_totals: &[(String, String, f64)],
     drives: impl Fn(&str, &str) -> Result<String>,
 ) -> Result<Vec<MoverRow>> {
-    let mut rows = Vec::new();
-    for (provider, service, amount) in current_totals.into_iter().take(5) {
-        let before = previous_totals
-            .iter()
-            .find(|(p, s, _)| p == &provider && s == &service)
-            .map(|(_, _, amount)| *amount)
-            .unwrap_or(0.0);
-        let change_pct = (before >= 0.01).then(|| (amount - before) / before * 100.0);
-        rows.push(MoverRow {
-            drives: drives(&provider, &service)?,
-            provider,
-            service,
-            amount,
-            change_pct,
-        });
-    }
-    Ok(rows)
+    let mut ranked: Vec<(String, String, f64, Option<f64>)> = current_totals
+        .into_iter()
+        .map(|(provider, service, amount)| {
+            let before = previous_totals
+                .iter()
+                .find(|(p, s, _)| p == &provider && s == &service)
+                .map(|(_, _, amount)| *amount)
+                .unwrap_or(0.0);
+            let change_pct =
+                (before >= fmt::DUST_THRESHOLD).then(|| (amount - before) / before * 100.0);
+            (provider, service, amount, change_pct)
+        })
+        .collect();
+    ranked.sort_by(|a, b| match (a.3, b.3) {
+        (Some(a), Some(b)) => b.abs().total_cmp(&a.abs()),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => b.2.total_cmp(&a.2),
+    });
+    ranked.truncate(5);
+    ranked
+        .into_iter()
+        .map(|(provider, service, amount, change_pct)| {
+            Ok(MoverRow {
+                drives: drives(&provider, &service)?,
+                provider,
+                service,
+                amount,
+                change_pct,
+            })
+        })
+        .collect()
 }
 
 /// The business line a service's period usage mostly drives, or
-/// "Untagged".
+/// "Unallocated".
 fn drives_of_period(period: &str, provider: &str, service: &str) -> Result<String> {
     Ok(
         query::service_tag_usage_breakdown(period, provider, service, BUSINESS_LINE_TAG)?
             .into_iter()
-            .find(|(value, _)| value != "Unallocated")
+            .find(|(value, _)| value != UNALLOCATED)
             .map(|(value, _)| value)
-            .unwrap_or_else(|| "Untagged".to_string()),
+            .unwrap_or_else(|| UNALLOCATED.to_string()),
     )
 }
 
@@ -604,9 +628,9 @@ fn drives_between(
         BUSINESS_LINE_TAG,
     )?
     .into_iter()
-    .find(|(value, _)| value != "Unallocated")
+    .find(|(value, _)| value != UNALLOCATED)
     .map(|(value, _)| value)
-    .unwrap_or_else(|| "Untagged".to_string()))
+    .unwrap_or_else(|| UNALLOCATED.to_string()))
 }
 
 /// The unallocated amount of a business-line breakdown and its share of
@@ -614,7 +638,7 @@ fn drives_between(
 fn unallocated(breakdown: &[(String, f64)], usage: f64) -> (f64, f64) {
     let amount = breakdown
         .iter()
-        .find(|(value, _)| value == "Unallocated")
+        .find(|(value, _)| value == UNALLOCATED)
         .map(|(_, amount)| *amount)
         .unwrap_or(0.0);
     let pct = if usage > 0.0 {
@@ -635,7 +659,11 @@ fn alert_counts() -> (usize, usize, usize) {
         .iter()
         .filter(|a| a.severity == alerts::Severity::Critical)
         .count();
-    (open.len(), critical, open.len() - critical)
+    let warning = open
+        .iter()
+        .filter(|a| a.severity == alerts::Severity::Warning)
+        .count();
+    (open.len(), critical, warning)
 }
 
 /// Days in a calendar month.
@@ -666,7 +694,7 @@ impl AccountState {
         match self {
             Self::Healthy => "Healthy",
             Self::Anomaly => "Anomaly",
-            Self::UntaggedSpend => "Untagged spend",
+            Self::UntaggedSpend => "Unallocated spend",
             Self::LowBalance => "Low balance",
         }
     }
@@ -860,10 +888,10 @@ fn account_state(
 
 // ==================== Attribution ====================
 
-/// One step of the attribution path (Source → … → Business line).
+/// One step of the attribution path (Source → Service → Business line),
+/// matching the Sankey's three columns.
 pub struct PathStep {
     pub label: String,
-    pub dimmed: bool,
 }
 
 /// A node in the Sankey. `column` is 0-based: 0 source, 1 service,
@@ -921,7 +949,7 @@ pub struct AttributionData {
 
 /// Load the Attribution page's data. Blocking; wrap in `smol::unblock`.
 ///
-/// The Sankey is three levels — source, model/service, business line —
+/// The Sankey is three levels — source, service, business line —
 /// because the ledger holds no API-key hop: charges arrive per account,
 /// and the `business_line` tag is the only split below the service. Every
 /// flow is gross usage, not net: net flows can be negative, which is
@@ -936,11 +964,10 @@ pub fn load_attribution() -> Result<AttributionData> {
     let period = BillingPeriod::containing(Utc::now()).label();
     let currency = reporting_currency();
 
-    let path = ["Source", "Model / service", "Tag", "Business line"]
+    let path = ["Source", "Service", "Business line"]
         .into_iter()
         .map(|label| PathStep {
             label: label.to_string(),
-            dimmed: false,
         })
         .collect();
 
@@ -1047,8 +1074,11 @@ pub fn load_attribution() -> Result<AttributionData> {
     line_totals.sort_by(|a, b| b.1.total_cmp(&a.1));
 
     for (id, value) in provider_totals {
+        let provider = id.trim_start_matches("src-");
         nodes.push(SankeyNode {
-            label: id.trim_start_matches("src-").to_string(),
+            label: registry::get(provider)
+                .map(|descriptor| descriptor.display_name.to_string())
+                .unwrap_or_else(|| provider.to_string()),
             id,
             column: 0,
             value,
@@ -1066,18 +1096,20 @@ pub fn load_attribution() -> Result<AttributionData> {
     let (usage_total, _) = query::usage_and_credits(&period)?;
     let unallocated_amount = query::tag_usage_breakdown(&period, BUSINESS_LINE_TAG)?
         .into_iter()
-        .find(|(value, _)| value == "Unallocated")
+        .find(|(value, _)| value == UNALLOCATED)
         .map(|(_, amount)| amount)
         .unwrap_or(0.0);
-    let largest = query::untagged_usage_by_service(&period, BUSINESS_LINE_TAG, 3)?
-        .into_iter()
-        .map(|row| UnallocatedItem {
-            provider: row.provider,
-            service: row.service,
-            description: None,
-            amount: row.amount,
-        })
-        .collect();
+    const TOP_UNALLOCATED_SERVICES: usize = 3;
+    let largest =
+        query::untagged_usage_by_service(&period, BUSINESS_LINE_TAG, TOP_UNALLOCATED_SERVICES)?
+            .into_iter()
+            .map(|row| UnallocatedItem {
+                provider: row.provider,
+                service: row.service,
+                description: None,
+                amount: row.amount,
+            })
+            .collect();
 
     Ok(AttributionData {
         currency,
@@ -1312,7 +1344,7 @@ pub fn load_account_detail(account_id: &str, range: Range) -> Result<AccountDeta
                 .map(|(_, amount)| amount)
                 .sum();
             (
-                (prior >= 0.01).then(|| (usage - prior) / prior * 100.0),
+                (prior >= fmt::DUST_THRESHOLD).then(|| (usage - prior) / prior * 100.0),
                 "vs same day last month",
             )
         }
@@ -1328,7 +1360,7 @@ pub fn load_account_detail(account_id: &str, range: Range) -> Result<AccountDeta
                 _ => "vs prior 12 months",
             };
             (
-                (prior >= 0.01).then(|| (usage - prior) / prior * 100.0),
+                (prior >= fmt::DUST_THRESHOLD).then(|| (usage - prior) / prior * 100.0),
                 caption,
             )
         }
@@ -1354,7 +1386,8 @@ pub fn load_account_detail(account_id: &str, range: Range) -> Result<AccountDeta
                 name,
                 amount,
                 share: if usage > 0.0 { amount / usage } else { 0.0 },
-                change_pct: (prior >= 0.01).then(|| (amount - prior) / prior * 100.0),
+                change_pct: (prior >= fmt::DUST_THRESHOLD)
+                    .then(|| (amount - prior) / prior * 100.0),
             }
         })
         .collect();
@@ -1451,7 +1484,7 @@ fn account_monthly_chart(
 
 // ==================== Sidebar ====================
 
-/// The sync summary in the sidebar footer.
+/// The sync summary in the status bar.
 pub struct SyncStatus {
     /// The freshest successful ingest across all accounts, if any.
     pub last_synced_at: Option<DateTime<Utc>>,
@@ -1462,7 +1495,7 @@ pub struct SyncStatus {
     pub next_fetch_at: Option<DateTime<Utc>>,
 }
 
-/// Load the sidebar's sync status. Blocking; wrap in `smol::unblock`.
+/// Load the status bar's sync status. Blocking; wrap in `smol::unblock`.
 pub fn load_sync_status() -> Result<SyncStatus> {
     let accounts = db::get_all_accounts().unwrap_or_else(|e| {
         tracing::warn!("Could not list accounts for the sync status: {}", e);

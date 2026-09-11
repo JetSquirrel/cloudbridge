@@ -16,28 +16,8 @@ fn kind_icon(kind: AlertKind) -> IconName {
     }
 }
 
-/// Terracotta primary button in the warm palette (matches overview.rs / accounts.rs).
-fn primary_variant(cx: &App) -> ButtonCustomVariant {
-    ButtonCustomVariant::new(cx)
-        .color(theme::accent(cx))
-        .foreground(theme::on_accent(cx))
-        .hover(theme::accent_hover(cx))
-        .active(theme::accent_hover(cx))
-}
-
-/// The selected filter chip: a solid accent pill. The fg token must be
-/// the one designed to sit on `accent` (`on_accent`) — pairing it with an
-/// ink background leaves the label invisible in any theme where
-/// `primary.foreground ≈ foreground`, which read as a label-less pill.
-fn active_chip_variant(cx: &App) -> ButtonCustomVariant {
-    ButtonCustomVariant::new(cx)
-        .color(theme::accent(cx))
-        .foreground(theme::on_accent(cx))
-        .hover(theme::accent_hover(cx))
-        .active(theme::accent_hover(cx))
-}
-
-/// An unselected filter chip: a bordered card-colored pill.
+/// An unselected filter chip: a bordered card-colored pill. The selected
+/// chip uses the shared `theme::accent_variant`.
 fn inactive_chip_variant(cx: &App) -> ButtonCustomVariant {
     ButtonCustomVariant::new(cx)
         .color(theme::card_bg(cx))
@@ -67,11 +47,7 @@ fn icon_badge(alert: &AlertView, cx: &App) -> Div {
 /// The severity marker next to an alert title.
 fn severity_badge(severity: Severity, cx: &App) -> Div {
     match severity {
-        Severity::Critical => div()
-            .text_xs()
-            .font_weight(FontWeight::BOLD)
-            .text_color(theme::accent(cx))
-            .child("Critical"),
+        Severity::Critical => theme::pill("Critical", theme::alert_tint(cx), theme::danger(cx)),
         Severity::Warning => theme::pill("Warning", theme::warning_bg(cx), theme::warning_text(cx)),
     }
 }
@@ -241,13 +217,15 @@ impl AlertsView {
         let label = filter.label.clone();
 
         Button::new(SharedString::from(format!("alert-filter-{label}")))
-            .label(format!("{} {}", filter.label, filter.count))
+            .label(filter.label.clone())
+            .child(div().text_xs().opacity(0.7).child(filter.count.to_string()))
             .custom(if active {
-                active_chip_variant(cx)
+                theme::accent_variant(cx)
             } else {
                 inactive_chip_variant(cx)
             })
-            // Only the unselected chip is outlined; the selected one is solid ink.
+            // Only the unselected chip is outlined; the selected one is
+            // solid accent.
             .when(!active, |chip| chip.card_outline(cx))
             .rounded_full()
             .h_auto()
@@ -259,13 +237,15 @@ impl AlertsView {
             }))
     }
 
-    /// One action of an alert card. Chrome follows position (first is the
-    /// primary); behaviour follows the label the backend emitted — only the
-    /// lifecycle actions do anything yet. All actions are disabled while an
-    /// action or reload is in flight so rapid clicks can't race.
+    /// One action of an alert card. Chrome follows the action's semantics:
+    /// Dismiss is always a text button, the first non-Dismiss action is the
+    /// primary, and any remaining ones are outlined. Behaviour follows the
+    /// label the backend emitted — only the lifecycle actions do anything
+    /// yet. All actions are disabled while an action or reload is in flight
+    /// so rapid clicks can't race.
     fn render_action(
         &self,
-        action_index: usize,
+        primary: bool,
         alert_id: &str,
         action: &str,
         cx: &Context<Self>,
@@ -283,32 +263,35 @@ impl AlertsView {
             _ => {}
         };
 
-        match action_index {
-            0 => Button::new(id)
-                .label(action.to_string())
-                .custom(primary_variant(cx))
-                .disabled(self.loading)
-                .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
-                .into_any_element(),
-            1 => Button::new(id)
-                .label(action.to_string())
-                .custom(theme::outline_variant(cx))
-                .card_outline(cx)
-                .disabled(self.loading)
-                .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
-                .into_any_element(),
-            _ => Button::new(id)
+        if action == "Dismiss" {
+            Button::new(id)
                 .label(action.to_string())
                 .text()
                 .text_sm()
                 .text_color(theme::accent(cx))
                 .disabled(self.loading)
                 .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
-                .into_any_element(),
+                .into_any_element()
+        } else if primary {
+            Button::new(id)
+                .label(action.to_string())
+                .custom(theme::accent_variant(cx))
+                .disabled(self.loading)
+                .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
+                .into_any_element()
+        } else {
+            Button::new(id)
+                .label(action.to_string())
+                .custom(theme::outline_variant(cx))
+                .card_outline(cx)
+                .disabled(self.loading)
+                .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
+                .into_any_element()
         }
     }
 
     fn render_alert(&self, alert: &AlertView, cx: &Context<Self>) -> impl IntoElement {
+        let primary_action = alert.actions.iter().position(|action| action != "Dismiss");
         let top_row = div()
             .h_flex()
             .gap_4()
@@ -327,7 +310,8 @@ impl AlertsView {
                             .gap_2()
                             .child(
                                 div()
-                                    .font_weight(FontWeight::BOLD)
+                                    .text_base()
+                                    .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme::text_primary(cx))
                                     .child(alert.title.clone()),
                             )
@@ -360,18 +344,14 @@ impl AlertsView {
                 )
             })
             .child(divider(cx))
-            .child(
-                div().h_flex().items_center().gap_3().children(
-                    alert
-                        .actions
-                        .iter()
-                        .enumerate()
-                        .map(|(i, action)| self.render_action(i, &alert.id, action, cx)),
-                ),
-            )
+            .child(div().h_flex().items_center().gap_3().children(
+                alert.actions.iter().enumerate().map(|(i, action)| {
+                    self.render_action(Some(i) == primary_action, &alert.id, action, cx)
+                }),
+            ))
     }
 
-    /// One row of the resolved list: the alert's title and when it fired.
+    /// One row of the resolved list: the alert's title and when it resolved.
     fn render_resolved_row(&self, alert: &AlertView, cx: &Context<Self>) -> Stateful<Div> {
         div()
             .id(SharedString::from(format!("resolved-{}", alert.id)))
@@ -392,7 +372,13 @@ impl AlertsView {
                     .flex_shrink_0()
                     .text_xs()
                     .text_color(theme::text_muted(cx))
-                    .child(alert.created_at.format("%b %d").to_string()),
+                    .child(
+                        alert
+                            .resolved_at
+                            .unwrap_or(alert.created_at)
+                            .format("%b %d")
+                            .to_string(),
+                    ),
             )
     }
 
@@ -515,6 +501,12 @@ impl Render for AlertsView {
                 .map(|filter| self.render_filter_chip(filter, cx)),
         );
 
+        let error_banner = self.error.clone().map(|error| {
+            theme::card(cx)
+                .p_3()
+                .child(div().text_sm().text_color(theme::danger(cx)).child(error))
+        });
+
         let list = div()
             .id("alerts-list")
             .flex_1()
@@ -522,9 +514,6 @@ impl Render for AlertsView {
             .v_flex()
             .gap_4()
             .overflow_y_scroll()
-            .when_some(self.error.clone(), |el, error| {
-                el.child(div().text_sm().text_color(theme::danger(cx)).child(error))
-            })
             .when(alerts.is_empty(), |el| {
                 // Slim banner, not a hero card: an empty list page should
                 // not burn vertical space announcing that it is empty.
@@ -533,7 +522,7 @@ impl Render for AlertsView {
                         div()
                             .text_sm()
                             .text_color(theme::text_muted(cx))
-                            .child("All clear — rules evaluate after every ingest."),
+                            .child("All clear"),
                     ),
                 )
             })
@@ -548,6 +537,7 @@ impl Render for AlertsView {
             .bg(theme::app_bg(cx))
             .child(header)
             .child(chips)
+            .when_some(error_banner, |el, banner| el.child(banner))
             .child(list)
     }
 }

@@ -1,6 +1,6 @@
 //! Cloud Account Management View
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use gpui_kit::component::{
     button::*,
     input::{Input, InputState},
@@ -15,8 +15,18 @@ use uuid::Uuid;
 use crate::cloud::registry::{self, SourceDescriptor};
 use crate::cloud::CloudAccount;
 use crate::db;
+use crate::ui::theme::CardOutline as _;
 
-use super::{data, theme};
+use super::{data, fmt, theme};
+
+actions!(accounts, [CloseAccountDialog]);
+
+/// Key context for the add-account dialog, so Escape closes it.
+const ACCOUNT_DIALOG_CONTEXT: &str = "AccountDialog";
+
+/// Column widths (rem) shared by the accounts table header and its rows,
+/// so the two cannot drift apart.
+const COLUMN_REMS: [f32; 7] = [10.0, 10.0, 8.0, 5.0, 6.0, 8.0, 12.0];
 
 /// Account Management View
 pub struct AccountsView {
@@ -39,6 +49,10 @@ pub struct AccountsView {
     error: Option<String>,
     /// Success message
     success: Option<String>,
+    /// Neutral in-progress message, shown while an action runs
+    info: Option<String>,
+    /// Focus anchor the add dialog tracks, so Escape reaches it
+    dialog_focus: FocusHandle,
     /// Input field states
     name_input: Entity<InputState>,
     ak_input: Entity<InputState>,
@@ -71,6 +85,15 @@ impl AccountsView {
 
         let default_source = registry::default_source();
 
+        static BIND_KEYS: std::sync::Once = std::sync::Once::new();
+        BIND_KEYS.call_once(|| {
+            cx.bind_keys([KeyBinding::new(
+                "escape",
+                CloseAccountDialog,
+                Some(ACCOUNT_DIALOG_CONTEXT),
+            )]);
+        });
+
         let mut view = Self {
             accounts: Vec::new(),
             accounts_data: None,
@@ -83,6 +106,8 @@ impl AccountsView {
             fill_status: None,
             error: None,
             success: None,
+            info: None,
+            dialog_focus: cx.focus_handle(),
             name_input,
             ak_input,
             sk_input,
@@ -165,7 +190,8 @@ impl AccountsView {
     /// table and the raw-payloads card reflect the new ledger.
     fn replay_normalization(&mut self, cx: &mut Context<Self>) {
         self.error = None;
-        self.success = Some("Replaying normalization from the raw store...".to_string());
+        self.success = None;
+        self.info = Some("Replaying normalization from the raw store...".to_string());
         cx.notify();
 
         cx.spawn(async move |this, cx| {
@@ -185,11 +211,13 @@ impl AccountsView {
                         Ok(message) => {
                             this.success = Some(message);
                             this.error = None;
+                            this.info = None;
                             this.load_data(cx);
                         }
                         Err(e) => {
                             this.error = Some(e);
                             this.success = None;
+                            this.info = None;
                         }
                     }
                     cx.notify();
@@ -200,12 +228,14 @@ impl AccountsView {
         .detach();
     }
 
-    fn show_add_dialog(&mut self, cx: &mut Context<Self>) {
+    fn show_add_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show_add_dialog = true;
         self.selected_source = registry::default_source();
         self.fill_status = None;
         self.error = None;
         self.success = None;
+        self.info = None;
+        self.dialog_focus.focus(window, cx);
         cx.notify();
     }
 
@@ -359,12 +389,14 @@ impl AccountsView {
                         Ok(_) => {
                             this.success = Some("Account added successfully".to_string());
                             this.error = None;
+                            this.info = None;
                             this.show_add_dialog = false;
                             this.load_accounts(cx);
                             this.load_data(cx);
                         }
                         Err(e) => {
                             this.error = Some(format!("Save failed: {}", e));
+                            this.info = None;
                         }
                     }
                     cx.notify();
@@ -396,11 +428,13 @@ impl AccountsView {
                     match outcome {
                         Ok(_) => {
                             this.success = Some("Account deleted".to_string());
+                            this.info = None;
                             this.load_accounts(cx);
                             this.load_data(cx);
                         }
                         Err(e) => {
                             this.error = Some(format!("Delete failed: {}", e));
+                            this.info = None;
                         }
                     }
                     cx.notify();
@@ -418,6 +452,7 @@ impl AccountsView {
                 account.name
             ));
             self.success = None;
+            self.info = None;
             cx.notify();
             return;
         };
@@ -430,6 +465,7 @@ impl AccountsView {
             Err(e) => {
                 self.error = Some(format!("Cannot validate {}: {}", account_name, e));
                 self.success = None;
+                self.info = None;
                 cx.notify();
                 return;
             }
@@ -443,8 +479,9 @@ impl AccountsView {
         }
 
         // Show validating status
-        self.success = Some(format!("Validating account {}...", account_name));
+        self.info = Some(format!("Validating account {}...", account_name));
         self.error = None;
+        self.success = None;
         cx.notify();
 
         // Use standard thread to handle sync HTTP requests
@@ -473,6 +510,7 @@ impl AccountsView {
                     // The account may have been deleted while the request
                     // was out; its result has no row to report against.
                     if this.accounts.iter().any(|a| a.id == account_id) {
+                        this.info = None;
                         match validation_result {
                             Ok(true) => {
                                 this.success = Some(format!(
@@ -514,6 +552,7 @@ impl AccountsView {
                 account.name
             ));
             self.success = None;
+            self.info = None;
             cx.notify();
             return;
         };
@@ -523,6 +562,7 @@ impl AccountsView {
                 descriptor.display_name
             ));
             self.success = None;
+            self.info = None;
             cx.notify();
             return;
         };
@@ -542,7 +582,8 @@ impl AccountsView {
         });
 
         self.error = None;
-        self.success = Some(format!(
+        self.success = None;
+        self.info = Some(format!(
             "Choose the {} to import ({})",
             format.display_name,
             format.extension_hint()
@@ -626,22 +667,10 @@ impl AccountsView {
                     .label(source.short_name)
                     .small()
                     .when(is_selected, |button| {
-                        button.custom(
-                            ButtonCustomVariant::new(cx)
-                                .color(theme::accent(cx))
-                                .foreground(theme::on_accent(cx))
-                                .hover(theme::accent_hover(cx))
-                                .active(theme::accent_hover(cx)),
-                        )
+                        button.custom(theme::accent_variant(cx))
                     })
                     .when(!is_selected, |button| {
-                        button.custom(
-                            ButtonCustomVariant::new(cx)
-                                .color(theme::card_border(cx))
-                                .foreground(theme::text_primary(cx))
-                                .hover(theme::card_border(cx))
-                                .active(theme::card_border(cx)),
-                        )
+                        button.custom(theme::outline_variant(cx)).card_outline(cx)
                     })
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.set_source(source, window, cx);
@@ -650,7 +679,7 @@ impl AccountsView {
     }
 
     fn render_header(&self, cx: &Context<Self>) -> impl IntoElement {
-        let source_count = self.accounts.len();
+        let account_count = self.accounts.len();
 
         div()
             .w_full()
@@ -665,34 +694,25 @@ impl AccountsView {
                     .child(theme::caption(
                         cx,
                         format!(
-                            "{} sources · credentials in the OS keyring, never in the database",
-                            source_count
+                            "{} accounts · credentials in the OS keyring, never in the database",
+                            account_count
                         ),
                     )),
             )
             .child(
                 Button::new("add")
                     .label("Add account")
-                    .custom(
-                        ButtonCustomVariant::new(cx)
-                            .color(theme::accent(cx))
-                            .foreground(theme::on_accent(cx))
-                            .hover(theme::accent_hover(cx))
-                            .active(theme::accent_hover(cx)),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.show_add_dialog(cx);
+                    .custom(theme::accent_variant(cx))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.show_add_dialog(window, cx);
                     })),
             )
     }
 
     /// The accounts table: a header row plus one row per configured source.
-    /// Validate / Import bill / Delete live on the row, so this table is the
+    /// Validate / Import / Delete live on the row, so this table is the
     /// single place an account appears.
     fn render_accounts_table(&self, cx: &Context<Self>) -> impl IntoElement {
-        // Column widths are rem-scale steps; the row cells in
-        // render_table_row set the same width with the same helper, and
-        // the two must be changed together.
         let card = theme::card(cx).w_full().p_5().v_flex().child(
             div()
                 .w_full()
@@ -700,13 +720,17 @@ impl AccountsView {
                 .items_center()
                 .gap_4()
                 .pb_2()
-                .child(table_header_cell(cx, "ACCOUNT").w_40())
-                .child(table_header_cell(cx, "SOURCE").w_40())
-                .child(table_header_cell(cx, "REPORTS").w_32())
-                .child(table_header_cell(cx, "MTD").w_20())
-                .child(table_header_cell(cx, "LAST FETCH").w_24())
-                .child(table_header_cell(cx, "STATE").w_32())
-                .child(table_header_cell(cx, "ACTIONS").w_40()),
+                .child(theme::header_cell(cx, "ACCOUNT").w(rems(COLUMN_REMS[0])))
+                .child(theme::header_cell(cx, "SOURCE").w(rems(COLUMN_REMS[1])))
+                .child(theme::header_cell(cx, "REPORTS").w(rems(COLUMN_REMS[2])))
+                .child(
+                    theme::header_cell(cx, "MTD / BAL")
+                        .w(rems(COLUMN_REMS[3]))
+                        .text_right(),
+                )
+                .child(theme::header_cell(cx, "LAST FETCH").w(rems(COLUMN_REMS[4])))
+                .child(theme::header_cell(cx, "STATE").w(rems(COLUMN_REMS[5])))
+                .child(theme::header_cell(cx, "ACTIONS").w(rems(COLUMN_REMS[6]))),
         );
 
         match &self.accounts_data {
@@ -769,12 +793,12 @@ impl AccountsView {
                 None => "—".to_string(),
             }
         } else {
-            format_money(row.mtd, currency)
+            fmt::amount(row.mtd, currency)
         };
 
         let last_sync = row
             .last_sync
-            .map(format_last_sync)
+            .map(fmt::relative_time)
             .unwrap_or_else(|| "never".to_string());
 
         let detail_id = row.id.clone();
@@ -789,7 +813,7 @@ impl AccountsView {
             .border_color(theme::card_border(cx))
             .child(
                 div()
-                    .w_40()
+                    .w(rems(COLUMN_REMS[0]))
                     // The account name is the drill-down affordance: it
                     // opens the Account detail page.
                     .id(SharedString::from(format!("account-detail-{}", row.id)))
@@ -826,7 +850,7 @@ impl AccountsView {
                 div()
                     // Wide enough for "Amazon Web Services" on one line;
                     // nowrap + ellipsis instead of a 3-line wrap.
-                    .w_40()
+                    .w(rems(COLUMN_REMS[1]))
                     .whitespace_nowrap()
                     .text_ellipsis()
                     .text_color(theme::text_primary(cx))
@@ -834,26 +858,39 @@ impl AccountsView {
             )
             .child(
                 div()
-                    .w_32()
+                    .w(rems(COLUMN_REMS[2]))
                     .text_sm()
                     .text_color(theme::text_muted(cx))
                     .child(row.source_kind.clone()),
             )
-            .child(div().w_20().text_color(theme::text_primary(cx)).child(mtd))
             .child(
                 div()
-                    .w_24()
+                    .w(rems(COLUMN_REMS[3]))
+                    .text_right()
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme::text_primary(cx))
+                    .child(mtd),
+            )
+            .child(
+                div()
+                    .w(rems(COLUMN_REMS[4]))
                     .text_sm()
                     .text_color(theme::text_muted(cx))
                     .child(last_sync),
             )
-            .child(div().w_32().child(render_state(row.state, cx)))
             .child(
                 div()
-                    .w_40()
+                    .w(rems(COLUMN_REMS[5]))
+                    .child(render_state(row.state, cx)),
+            )
+            .child(
+                div()
+                    .w(rems(COLUMN_REMS[6]))
                     .h_flex()
                     .gap_1()
-                    .flex_wrap()
+                    .flex_shrink_0()
+                    .whitespace_nowrap()
                     .when_some(account_for_validate, |el, account| {
                         el.child(
                             Button::new(SharedString::from(format!("validate-{}", validate_id)))
@@ -869,7 +906,7 @@ impl AccountsView {
                     .when_some(account_for_import, |el, account| {
                         el.child(
                             Button::new(SharedString::from(format!("import-{}", import_id)))
-                                .label("Import bill")
+                                .label("Import")
                                 .ghost()
                                 .small()
                                 .disabled(self.importing_ids.contains(&row.id))
@@ -912,9 +949,9 @@ impl AccountsView {
             .unwrap_or((0, data::API_CALL_CEILING, 0.0));
         let budget_fill = (budget_used as f32 / budget_ceiling.max(1) as f32).clamp(0.0, 1.0);
         let budget_body = format!(
-            "AWS Cost Explorer charges $0.01 per request. CloudBridge has spent \
-             ${:.2} on fetches this month across {} calls, one per stale period.",
-            budget_spent, budget_used
+            "CloudBridge has spent {} on paid API fetches this month, one call \
+             per stale period.",
+            fmt::amount(budget_spent, "USD")
         );
 
         let raw_body = match &self.accounts_data {
@@ -1030,6 +1067,22 @@ impl AccountsView {
             .child(
                 // Dialog content
                 div()
+                    .id("add-account-dialog")
+                    .key_context(ACCOUNT_DIALOG_CONTEXT)
+                    .track_focus(&self.dialog_focus)
+                    .on_action(cx.listener(|this, _: &CloseAccountDialog, _, cx| {
+                        this.hide_add_dialog(cx);
+                        cx.stop_propagation();
+                    }))
+                    // When an input inside is focused, its own Escape
+                    // binding wins the keystroke but re-propagates, so the
+                    // raw key is caught here on the bubble.
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                        if event.keystroke.key == "escape" {
+                            this.hide_add_dialog(cx);
+                            cx.stop_propagation();
+                        }
+                    }))
                     .w_128()
                     .max_h(rems(37.5))
                     .p_6()
@@ -1089,7 +1142,7 @@ impl AccountsView {
                             // A source with no billing API in this build has
                             // nothing to sign, so the form does not ask for a
                             // secret it would only file away unused. Its bill
-                            // arrives through Import bill instead.
+                            // arrives through Import instead.
                             .when(self.selected_source.fetches_from_api(), |el| {
                                 el.child(
                                     div()
@@ -1134,7 +1187,7 @@ impl AccountsView {
                                             format!(
                                                 "No credentials needed: this source is read \
                                                  from its {}. Save the account, then use \
-                                                 Import bill. ({})",
+                                                 Import. ({})",
                                                 format.display_name, format.origin_hint
                                             ),
                                         ),
@@ -1195,7 +1248,7 @@ impl AccountsView {
                             .child(
                                 Button::new("save")
                                     .label("Save")
-                                    .primary()
+                                    .custom(theme::accent_variant(cx))
                                     .disabled(self.saving)
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.save_account(cx);
@@ -1229,6 +1282,17 @@ impl AccountsView {
                         .child(success),
                 )
             })
+            .when_some(self.info.clone(), |el, info| {
+                el.child(
+                    div()
+                        .w_full()
+                        .p_3()
+                        .rounded_md()
+                        .bg(theme::card_bg(cx))
+                        .text_color(theme::text_muted(cx))
+                        .child(info),
+                )
+            })
     }
 }
 
@@ -1243,10 +1307,12 @@ fn report(view: &WeakEntity<AccountsView>, cx: &mut AsyncApp, outcome: Result<St
                 Ok(message) if message.is_empty() => {
                     view.success = None;
                     view.error = None;
+                    view.info = None;
                 }
                 Ok(message) => {
                     view.success = Some(message);
                     view.error = None;
+                    view.info = None;
                     // The ledger moved, and the row shows a sync time.
                     view.load_accounts(cx);
                     view.load_data(cx);
@@ -1254,6 +1320,7 @@ fn report(view: &WeakEntity<AccountsView>, cx: &mut AsyncApp, outcome: Result<St
                 Err(e) => {
                     view.error = Some(e);
                     view.success = None;
+                    view.info = None;
                 }
             }
             cx.notify();
@@ -1262,91 +1329,9 @@ fn report(view: &WeakEntity<AccountsView>, cx: &mut AsyncApp, outcome: Result<St
     });
 }
 
-/// Symbol prefix for the currencies the sources bill in.
-fn currency_symbol(currency: &str) -> &str {
-    match currency {
-        "USD" => "$",
-        "CNY" => "¥",
-        _ => "",
-    }
-}
-
-/// Thousands separators on a whole-unit amount.
-fn thousands(n: i64) -> String {
-    let digits = n.unsigned_abs().to_string();
-    let mut out = String::new();
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    if n < 0 {
-        format!("-{}", out)
-    } else {
-        out
-    }
-}
-
-/// Amount with the currency's symbol, e.g. `$18,420`. Precision adapts to
-/// the size so sub-dollar spend does not round to `$0`: whole units from
-/// 100 up, two decimals from a cent up, and `<$0.01` below a cent.
-fn format_money(amount: f64, currency: &str) -> String {
-    let symbol = currency_symbol(currency);
-    let magnitude = amount.abs();
-    // Below half a cent is netting round-off, not an amount.
-    if magnitude < 0.005 {
-        return if symbol.is_empty() {
-            format!("0 {currency}")
-        } else {
-            format!("{symbol}0")
-        };
-    }
-    let sign = if amount < 0.0 { "-" } else { "" };
-    if magnitude < 0.01 {
-        // A sub-cent amount has no honest rounding; say so instead.
-        return if symbol.is_empty() {
-            format!("{sign}<0.01 {currency}")
-        } else {
-            format!("{sign}<{symbol}0.01")
-        };
-    }
-    if magnitude < 100.0 {
-        return if symbol.is_empty() {
-            format!("{sign}{magnitude:.2} {currency}")
-        } else {
-            format!("{sign}{symbol}{magnitude:.2}")
-        };
-    }
-    if symbol.is_empty() {
-        format!("{} {}", thousands(amount.round() as i64), currency)
-    } else {
-        format!("{}{}", symbol, thousands(amount.round() as i64))
-    }
-}
-
 /// A prepaid balance in its own currency, e.g. `¥8.14 left`.
 fn format_balance(amount: f64, currency: &str) -> String {
-    let symbol = currency_symbol(currency);
-    if symbol.is_empty() {
-        format!("{:.2} {} left", amount, currency)
-    } else {
-        format!("{}{:.2} left", symbol, amount)
-    }
-}
-
-/// A sync time as an age, e.g. `14 min ago`.
-fn format_last_sync(at: DateTime<Utc>) -> String {
-    let secs = (Utc::now() - at).num_seconds().max(0);
-    if secs < 60 {
-        "just now".to_string()
-    } else if secs < 3_600 {
-        format!("{} min ago", secs / 60)
-    } else if secs < 86_400 {
-        format!("{} h ago", secs / 3_600)
-    } else {
-        format!("{} d ago", secs / 86_400)
-    }
+    format!("{} left", fmt::amount(amount, currency))
 }
 
 /// A byte size as GB, MB, KB, or B, whichever reads whole-ish.
@@ -1365,35 +1350,22 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
-/// One header cell of the accounts table: small, muted, semibold caps.
-/// The width is set at the call site with the same rem helper the row
-/// cell uses.
-fn table_header_cell(cx: &App, text: &'static str) -> Div {
-    div()
-        .text_xs()
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(theme::text_muted(cx))
-        .child(text)
-}
-
-/// The STATE column: a tint pill for healthy, an accent outline pill for
-/// untagged spend, plain text otherwise.
+/// The STATE column: problems get a pill in their severity's colours,
+/// untagged spend an outline pill, healthy plain muted text.
 fn render_state(state: data::AccountState, cx: &App) -> Div {
     match state {
-        data::AccountState::Healthy => {
-            theme::pill(state.label(), theme::success_bg(cx), theme::success(cx))
+        data::AccountState::Anomaly => {
+            theme::pill(state.label(), theme::alert_tint(cx), theme::danger(cx))
         }
-        data::AccountState::UntaggedSpend => div()
-            .px_2()
-            .py_0p5()
-            .rounded_full()
-            .border_1()
-            .border_color(theme::accent(cx))
-            .text_xs()
-            .text_color(theme::accent(cx))
-            .child(state.label()),
-        _ => div()
-            .text_color(theme::text_primary(cx))
+        data::AccountState::LowBalance => theme::pill(
+            state.label(),
+            theme::warning_bg(cx),
+            theme::warning_text(cx),
+        ),
+        data::AccountState::UntaggedSpend => theme::pill_outline(cx, state.label()),
+        data::AccountState::Healthy => div()
+            .text_sm()
+            .text_color(theme::text_muted(cx))
             .child(state.label()),
     }
 }

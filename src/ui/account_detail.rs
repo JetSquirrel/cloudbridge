@@ -6,6 +6,7 @@ use gpui_kit::*;
 
 use super::data::{AccountDetailData, Range, ServiceRow};
 use super::{chart, data, fmt, theme};
+use crate::ui::theme::CardOutline as _;
 
 /// Account Detail View
 ///
@@ -144,7 +145,7 @@ impl AccountDetailView {
                             .label(range.label())
                             .small()
                             .rounded_full()
-                            .when(active, |button| button.primary())
+                            .custom(theme::range_pill(cx, active))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if this.range != *range {
                                     this.range = *range;
@@ -152,7 +153,7 @@ impl AccountDetailView {
                                 }
                             }));
                         if active {
-                            button.font_weight(FontWeight::MEDIUM)
+                            button.card_outline(cx).font_weight(FontWeight::MEDIUM)
                         } else {
                             button
                         }
@@ -177,13 +178,7 @@ impl AccountDetailView {
             .p_5()
             .v_flex()
             .gap_4()
-            .child(
-                div()
-                    .text_base()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme::text_primary(cx))
-                    .child(title),
-            )
+            .child(theme::section_title(cx, title))
             .child(
                 div()
                     .id("account-chart")
@@ -222,32 +217,47 @@ impl AccountDetailView {
                         |el, overlay| el.children(overlay),
                     ),
             )
-            .child(theme::caption(
-                cx,
-                "Gross usage; credits are shown separately above.",
-            ))
     }
 
     fn render_services(&self, d: &AccountDetailData, cx: &App) -> impl IntoElement {
         let currency = d.currency.as_str();
-        let card = theme::card(cx).w_full().p_5().v_flex().gap_4().child(
-            div()
-                .text_base()
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(theme::text_primary(cx))
-                .child("By service or model"),
-        );
+        let vs_prior = match d.range {
+            Range::Mtd => "VS LAST MONTH",
+            Range::Days30 => "VS PRIOR 30D",
+            Range::Months12 => "VS PRIOR 12M",
+        };
+        let card = theme::card(cx)
+            .w_full()
+            .p_5()
+            .v_flex()
+            .gap_4()
+            .child(theme::section_title(cx, "By service or model"));
 
         if d.services.is_empty() {
-            return card.child(theme::caption(
-                cx,
-                if d.is_snapshot {
-                    "No usage in this window. A balance-reporting source's usage \
-                     arrives through its bill file import (Accounts → Import bill)."
-                } else {
-                    "No usage in this window."
-                },
-            ));
+            if !d.is_snapshot {
+                return card.child(theme::caption(cx, "No usage in this window."));
+            }
+            return card.child(
+                div()
+                    .v_flex()
+                    .gap_1()
+                    .items_start()
+                    .child(theme::caption(
+                        cx,
+                        "No usage in this window. A balance-reporting source's usage \
+                         arrives through its bill file import.",
+                    ))
+                    .child(
+                        Button::new("go-to-accounts")
+                            .label("Go to Accounts → Import")
+                            .link()
+                            .small()
+                            .text_color(theme::accent(cx))
+                            .on_click(|_, _, cx| {
+                                crate::app::navigate_to(crate::app::CurrentView::Accounts, cx)
+                            }),
+                    ),
+            );
         }
 
         card.child(
@@ -255,10 +265,10 @@ impl AccountDetailView {
                 .h_flex()
                 .items_center()
                 .pb_2()
-                .child(header_cell(cx, "SERVICE / MODEL").flex_1().min_w_0())
-                .child(header_cell(cx, "AMOUNT").w_24().text_right())
-                .child(header_cell(cx, "SHARE").w_32())
-                .child(header_cell(cx, "VS PRIOR").w_24().text_right()),
+                .child(theme::header_cell(cx, "SERVICE / MODEL").flex_1().min_w_0())
+                .child(theme::header_cell(cx, "AMOUNT").w_24().text_right())
+                .child(theme::header_cell(cx, "SHARE").w_32().px_2())
+                .child(theme::header_cell(cx, vs_prior).w_24().text_right()),
         )
         .child(
             div()
@@ -272,7 +282,16 @@ impl Render for AccountDetailView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body: AnyElement = match (&self.account_id, &self.data) {
             (None, _) => theme::caption(cx, "No account selected.").into_any_element(),
-            (Some(_), None) if self.loading => theme::caption(cx, "Loading…").into_any_element(),
+            (Some(_), None) if self.loading => div()
+                .w_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .py_16()
+                .text_base()
+                .text_color(theme::text_muted(cx))
+                .child("Loading…")
+                .into_any_element(),
             (Some(_), None) => div().into_any_element(),
             (Some(_), Some(d)) => div()
                 .v_flex()
@@ -308,8 +327,8 @@ impl Render for AccountDetailView {
     }
 }
 
-/// The four headline stats: net spend, gross usage, credits, and the
-/// change against the comparison window.
+/// The headline stats: net spend with the usage/credits split inline, and
+/// the change against the comparison window.
 fn render_stats(d: &AccountDetailData, cx: &App) -> impl IntoElement {
     let currency = d.currency.as_str();
     div()
@@ -317,62 +336,26 @@ fn render_stats(d: &AccountDetailData, cx: &App) -> impl IntoElement {
         .h_flex()
         .items_stretch()
         .gap_4()
-        .child(stat_card(
+        .child(theme::stat_card(
             cx,
             "SPEND",
             fmt::amount(d.spend, currency),
-            "net of credits",
+            div().text_color(theme::text_muted(cx)).child(format!(
+                "usage {} · credits {}",
+                fmt::amount(d.usage, currency),
+                fmt::amount(d.credits, currency)
+            )),
         ))
-        .child(stat_card(
-            cx,
-            "USAGE",
-            fmt::amount(d.usage, currency),
-            "gross usage",
-        ))
-        .child(stat_card(
-            cx,
-            "CREDITS",
-            fmt::amount(d.credits, currency),
-            "credits and adjustments",
-        ))
-        .child(stat_card(
+        .child(theme::stat_card(
             cx,
             "CHANGE",
             d.change_pct
-                .map(|pct| format!("{pct:+.1}%"))
+                .map(fmt::change_pct)
                 .unwrap_or_else(|| "—".to_string()),
-            d.change_caption,
+            div()
+                .text_color(theme::text_muted(cx))
+                .child(d.change_caption),
         ))
-}
-
-fn stat_card(cx: &App, label: &'static str, value: String, caption: &'static str) -> Div {
-    theme::card(cx)
-        .flex_1()
-        // min_w_0: four equal cards must shrink below their content width
-        // instead of overflowing the row on narrow windows.
-        .min_w_0()
-        .p_5()
-        .v_flex()
-        .gap_1()
-        .child(
-            div()
-                .text_xs()
-                .text_color(theme::text_muted(cx))
-                .child(label),
-        )
-        .child(
-            div()
-                .text_3xl()
-                .font_weight(FontWeight::BOLD)
-                .text_color(theme::text_primary(cx))
-                .child(value),
-        )
-        .child(
-            div()
-                .text_sm()
-                .text_color(theme::text_muted(cx))
-                .child(caption),
-        )
 }
 
 /// One service row: name, amount, a share bar, and the change against the
@@ -435,11 +418,4 @@ fn service_row(cx: &App, row: &ServiceRow, currency: &str) -> Div {
                 .text_color(delta_color)
                 .child(delta_text),
         )
-}
-
-fn header_cell(cx: &App, text: &'static str) -> Div {
-    div()
-        .text_xs()
-        .text_color(theme::text_muted(cx))
-        .child(text)
 }

@@ -1,15 +1,32 @@
 #!/usr/bin/env bash
 #
-# Package a built binary as CloudBridge.app inside a .dmg.
+# Package a built binary as CloudBridge.app inside a .dmg, signed with a
+# Developer ID and notarized by Apple.
 #
 # A bare executable in a zip is not what macOS expects: Finder shows it as
 # a document, it arrives without the execute bit, and it has no bundle to
 # hang an identity, a version or an icon on. A .dmg with an app bundle and
 # an Applications symlink is the drag-to-install shape people know.
 #
+# Signing and notarization are *required*, not optional. An ad-hoc signed
+# build is refused by Gatekeeper on every current macOS — and since 15
+# (Sequoia) there is no Control-click bypass left, so an unnotarized
+# artifact is not something a user can reasonably open. Rather than let one
+# ship by accident, this script fails when the credentials are absent.
+#
 # Usage: scripts/package-macos.sh <binary> <output.dmg> <version>
 # Run from the repository root; writes CloudBridge.app and the dmg into the
 # working directory.
+#
+# Required environment:
+#   NOTARY_KEY        Path to the App Store Connect API key (.p8)
+#   NOTARY_KEY_ID     That key's Key ID
+#   NOTARY_ISSUER     The issuer UUID the key belongs to
+#
+# Optional:
+#   MACOS_SIGN_IDENTITY  Signing identity. Defaults to the one
+#                        "Developer ID Application" identity in the
+#                        keychain, which is what CI imports.
 set -euo pipefail
 
 BINARY="$1"
@@ -17,7 +34,59 @@ DMG="$2"
 VERSION="$3"
 APP="CloudBridge.app"
 
-rm -rf "$APP" dmg-root "$DMG"
+die() {
+  echo "package-macos: $*" >&2
+  exit 1
+}
+
+# ---------------------------------------------------------------------------
+# Credentials, checked before anything is built: a failure here is a
+# configuration mistake, and finding out after a five-minute build is worse
+# than finding out now.
+# ---------------------------------------------------------------------------
+
+if [ -z "${MACOS_SIGN_IDENTITY:-}" ]; then
+  # `security find-identity` prints one indented line per identity:
+  #   1) <40 hex> "Developer ID Application: Name (TEAMID)"
+  # No mapfile: the macOS runners (and /bin/bash on every shipping macOS)
+  # are bash 3.2.
+  IDENTITIES=()
+  while IFS= read -r line; do
+    IDENTITIES+=("$line")
+  done < <(
+    security find-identity -v -p codesigning |
+      sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p'
+  )
+  case ${#IDENTITIES[@]} in
+    1) MACOS_SIGN_IDENTITY="${IDENTITIES[0]}" ;;
+    0) die "no 'Developer ID Application' identity in the keychain.
+
+An 'Apple Development' certificate cannot sign for distribution. Create a
+Developer ID Application certificate at
+https://developer.apple.com/account/resources/certificates, install it, and
+re-run. To pick an identity explicitly, set MACOS_SIGN_IDENTITY." ;;
+    *) die "${#IDENTITIES[@]} Developer ID Application identities found; set \
+MACOS_SIGN_IDENTITY to the one to use:
+$(printf '  %s\n' "${IDENTITIES[@]}")" ;;
+  esac
+fi
+
+for var in NOTARY_KEY NOTARY_KEY_ID NOTARY_ISSUER; do
+  [ -n "${!var:-}" ] || die "$var is not set.
+
+Notarization needs an App Store Connect API key. Create one under
+App Store Connect -> Users and Access -> Integrations -> Keys, then set
+NOTARY_KEY (path to the .p8), NOTARY_KEY_ID and NOTARY_ISSUER."
+done
+[ -f "$NOTARY_KEY" ] || die "NOTARY_KEY points at no file: $NOTARY_KEY"
+
+echo "package-macos: signing as $MACOS_SIGN_IDENTITY"
+
+# ---------------------------------------------------------------------------
+# The bundle
+# ---------------------------------------------------------------------------
+
+rm -rf "$APP" dmg-root "$DMG" "$APP.zip"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINARY" "$APP/Contents/MacOS/CloudBridge"
 chmod +x "$APP/Contents/MacOS/CloudBridge"
@@ -64,15 +133,71 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Ad-hoc signature. There is no Developer ID to sign with, and an arm64
-# bundle with no signature at all is refused outright rather than merely
-# warned about. This still is not notarized: first launch needs a
-# right-click -> Open.
-codesign --force --deep --sign - "$APP"
-codesign --verify --strict "$APP"
+# ---------------------------------------------------------------------------
+# Signing
+#
+# `--options runtime` (the hardened runtime) and `--timestamp` are both
+# preconditions for notarization, not preferences.
+#
+# No entitlements file: nothing here needs an exception from the hardened
+# runtime. The binary is statically linked, loads no plug-ins, and reaches
+# the keychain through the Security framework, which needs no entitlement.
+# A dependency that wants JIT or an unsigned dylib would need one — this is
+# where it would go.
+#
+# Inside out, and no `--deep`: Apple discourages it, and the only nested
+# code here is the main executable.
+# ---------------------------------------------------------------------------
+
+sign() {
+  codesign --force --timestamp --options runtime \
+    --sign "$MACOS_SIGN_IDENTITY" "$1"
+}
+
+sign "$APP/Contents/MacOS/CloudBridge"
+sign "$APP"
+codesign --verify --deep --strict --verbose=2 "$APP"
+
+# ---------------------------------------------------------------------------
+# Notarization
+#
+# Twice, on purpose. The .dmg is what a browser downloads, so its ticket is
+# what Gatekeeper reads on open; the .app is what ends up in /Applications
+# long after the disk image is thrown away, so it carries its own ticket and
+# launches even with no network to ask Apple over.
+# ---------------------------------------------------------------------------
+
+notarize() {
+  echo "package-macos: notarizing $1"
+  xcrun notarytool submit "$1" \
+    --key "$NOTARY_KEY" \
+    --key-id "$NOTARY_KEY_ID" \
+    --issuer "$NOTARY_ISSUER" \
+    --wait --timeout 30m
+}
+
+ditto -c -k --keepParent "$APP" "$APP.zip"
+notarize "$APP.zip"
+rm -f "$APP.zip"
+xcrun stapler staple "$APP"
 
 mkdir -p dmg-root
 cp -R "$APP" dmg-root/
 ln -s /Applications dmg-root/Applications
 hdiutil create -volname CloudBridge -srcfolder dmg-root -ov -format UDZO "$DMG" >/dev/null
 rm -rf dmg-root
+
+notarize "$DMG"
+xcrun stapler staple "$DMG"
+
+# ---------------------------------------------------------------------------
+# What a user's Mac will conclude. `spctl` here is the whole point of the
+# exercise: it is the check that rejected every build before this one.
+# ---------------------------------------------------------------------------
+
+xcrun stapler validate "$APP"
+xcrun stapler validate "$DMG"
+spctl --assess --type execute --verbose=2 "$APP"
+spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
+
+echo "package-macos: $DMG is signed, notarized and stapled"

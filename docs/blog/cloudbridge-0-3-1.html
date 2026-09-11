@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="CloudBridge blog - release notes and engineering decisions behind the local-first multi-cloud cost ledger.">
+    <meta name="description" content="A consistency pass over the whole interface — one shared set of cards, buttons, pills and table headers — plus a signed, notarized macOS build.">
     <meta name="theme-color" content="#0E1420">
-    <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/blog.html">
-    <link rel="icon" type="image/png" href="icon.png">
-    <link rel="apple-touch-icon" href="icon.png">
-    <title>Blog - CloudBridge</title>
+    <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/blog/cloudbridge-0-3-1.html">
+    <link rel="icon" type="image/png" href="../icon.png">
+    <link rel="apple-touch-icon" href="../icon.png">
+    <title>0.3.1: one of everything - CloudBridge Blog</title>
 
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -36,6 +36,7 @@
 
         :root {
             --ink: #0E1420;
+            --panel: #151E30;
             --paper: #FAFBFC;
             --hairline: #E3E8EF;
             --hairline-dark: #263349;
@@ -150,13 +151,14 @@
             color: var(--signal);
         }
 
-        /* Page head */
-        .page-head {
-            padding: 4rem 0 2.5rem;
-            border-bottom: 1px solid var(--hairline);
+        /* Article */
+        .post {
+            max-width: 44rem;
+            margin: 0 auto;
+            padding: 4rem 0 6rem;
         }
 
-        .page-head .eyebrow {
+        .post .eyebrow {
             font-family: var(--font-mono);
             font-size: 0.75rem;
             font-weight: 500;
@@ -164,66 +166,88 @@
             text-transform: uppercase;
             color: var(--local);
             display: block;
-            margin-bottom: 1rem;
+            margin-bottom: 1.25rem;
         }
 
-        .page-head h1 {
-            font-size: 2.75rem;
+        .post h1 {
+            font-size: 2.5rem;
             font-weight: 700;
+            margin-bottom: 1.5rem;
         }
 
-        .page-head p {
-            margin-top: 1rem;
-            font-size: 1.125rem;
-            max-width: 40rem;
-        }
-
-        /* Post list */
-        .post-list {
-            padding: 1rem 0 6rem;
-            max-width: 56rem;
-        }
-
-        .post-row {
-            display: grid;
-            grid-template-columns: 9rem 1fr;
-            gap: 2rem;
-            padding: 2rem 0;
+        .post .lede {
+            font-size: 1.25rem;
+            color: var(--fg-strong);
+            margin-bottom: 2.5rem;
+            padding-bottom: 2.5rem;
             border-bottom: 1px solid var(--hairline);
-            text-decoration: none;
-            color: var(--fg-body);
-            align-items: baseline;
         }
 
-        .post-row .date {
+        .post h2 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin: 3rem 0 1rem;
+        }
+
+        .post p {
+            margin-bottom: 1.25rem;
+            line-height: 1.8;
+        }
+
+        .post a {
+            color: var(--signal);
+        }
+
+        .post code {
             font-family: var(--font-mono);
             font-size: 0.8125rem;
-            color: var(--fg-faint);
+            background: #fff;
+            border: 1px solid var(--hairline);
+            padding: 0.05rem 0.4rem;
+            border-radius: 4px;
         }
 
-        .post-row h2 {
-            font-size: 1.375rem;
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-            transition: color 0.15s;
+        .post pre {
+            background: var(--ink);
+            border-radius: var(--radius);
+            padding: 1.25rem 1.5rem;
+            overflow-x: auto;
+            margin-bottom: 1.25rem;
         }
 
-        .post-row:hover h2 {
-            color: var(--signal);
+        .post pre code {
+            background: none;
+            border: none;
+            padding: 0;
+            color: #C4CEDE;
+            font-size: 0.8125rem;
+            line-height: 1.7;
         }
 
-        .post-row p {
-            font-size: 1rem;
+        .post ul, .post ol {
+            margin: 0 0 1.25rem 1.25rem;
         }
 
-        .post-row .tag {
-            font-family: var(--font-mono);
-            font-size: 0.6875rem;
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
-            color: var(--signal);
-            display: block;
+        .post li {
             margin-bottom: 0.4rem;
+            line-height: 1.7;
+        }
+
+        .post-nav {
+            margin-top: 4rem;
+            padding-top: 2rem;
+            border-top: 1px solid var(--hairline);
+            font-family: var(--font-mono);
+            font-size: 0.875rem;
+        }
+
+        .post-nav a {
+            color: var(--signal);
+            text-decoration: none;
+        }
+
+        .post-nav a:hover {
+            text-decoration: underline;
         }
 
         /* Footer (shared, compact) */
@@ -254,17 +278,12 @@
         }
 
         @media (max-width: 768px) {
-            .page-head {
-                padding: 2.5rem 0 2rem;
+            .post {
+                padding: 2.5rem 0 4rem;
             }
 
-            .page-head h1 {
-                font-size: 2rem;
-            }
-
-            .post-row {
-                grid-template-columns: 1fr;
-                gap: 0.5rem;
+            .post h1 {
+                font-size: 1.875rem;
             }
 
             .nav-links {
@@ -298,43 +317,37 @@
         </div>
     </nav>
 
+    <!-- GENERATED FROM cloudbridge-0-3-1.md - edit the Markdown, then re-run scripts/render-blog.py -->
     <main id="main">
-        <header class="page-head">
-            <div class="container">
-                <span class="eyebrow" data-i18n="blog.eyebrow">Blog</span>
-                <h1 data-i18n="blog.title">Release notes and decisions</h1>
-                <p data-i18n="blog.sub">What shipped, and why it is built the way it is.</p>
-            </div>
-        </header>
+        <article class="post">
+            <span class="eyebrow">Release · 2026-09-12</span>
+            <h1>0.3.1: one of everything</h1>
+            <p class="lede">A consistency pass over the whole interface — one shared set of cards, buttons, pills and table headers — plus a signed, notarized macOS build.</p>
 
-        <div class="container">
-            <div class="post-list">
-                <a class="post-row" href="/blog/cloudbridge-0-3-1.html">
-                    <span class="date">2026-09-12</span>
-                    <div>
-                        <span class="tag" data-i18n="blog.post0.tag">Release</span>
-                        <h2 data-i18n="blog.post0.title">0.3.1: one of everything</h2>
-                        <p data-i18n="blog.post0.desc">A consistency pass over the whole interface — one shared set of cards, buttons, pills and table headers — plus a signed, notarized macOS build.</p>
-                    </div>
-                </a>
-                <a class="post-row" href="/blog/cloudbridge-0-3-0.html">
-                    <span class="date">2026-09-11</span>
-                    <div>
-                        <span class="tag" data-i18n="blog.post1.tag">Release</span>
-                        <h2 data-i18n="blog.post1.title">0.3.0: bring your own bill</h2>
-                        <p data-i18n="blog.post1.desc">A bill you downloaded from a console now imports into the same ledger the APIs feed, the Overview stops mistaking a covered cost for a cheap one, and the interface is rebuilt at desktop density.</p>
-                    </div>
-                </a>
-                <a class="post-row" href="/blog/cloudbridge-0-2-0.html">
-                    <span class="date">2026-09-01</span>
-                    <div>
-                        <span class="tag" data-i18n="blog.post2.tag">Release</span>
-                        <h2 data-i18n="blog.post2.title">0.2.0: a cost viewer becomes a ledger</h2>
-                        <p data-i18n="blog.post2.desc">Charges from every source now land in one FOCUS-shaped fact table, raw payloads are kept so a mapping fix costs nothing to replay, and a total is finally a single currency.</p>
-                    </div>
-                </a>
+            <p>0.3.0 rebuilt the interface on GPUI Kit, but it rebuilt it page by page. Each page got the new look; each page also kept its own copy of what a card, a primary button or a table header is. Copies drift: the Settings page still had the pre-rebuild styles, and elsewhere the same "pick one of three" control appeared in four different shapes. 0.3.1 is the pass that makes the design system real — one definition per element, in the theme, with every page drawing from it.</p>
+<h2>Severity decides prominence</h2>
+<p>The pass turned up places where the visual hierarchy argued with the information. On the Accounts page, <strong>Healthy</strong> — the one state that asks nothing of you — wore the brightest badge, while Anomaly and Low balance rendered as plain text. On the Alerts page, a Critical alert was less prominent than a Warning. Both are now inverted the right way: the louder the state, the louder the style, and alert red and warning yellow are reserved for actual alerts rather than neutral labels.</p>
+<p>The same logic applied to actions. Refresh, the cheap everyday operation, is now the Overview's primary button; Force Refresh, the expensive one, is a secondary. Delete buttons and delete confirmations use the danger style. And an alert's action buttons are styled by what they do, not by where they happen to sit in a list — so Dismiss can never end up as the big primary button just because it came first.</p>
+<h2>Errors that don't evict the content</h2>
+<p>A failed toggle on the Rules page used to replace the entire rule list with a red banner. Errors now sit inline above the list, the list stays put, and every error offers Retry.</p>
+<h2>Smaller corrections</h2>
+<ul>
+<li><strong>"Biggest movers"</strong> now ranks by the size of the change, not the size of the spend — a large but flat service no longer holds the list forever.</li>
+<li>The status bar's freshness dot reflects whether the next fetch is due, instead of staying green forever after the first sync.</li>
+<li><strong>"Resolved this month"</strong> shows the date an alert was resolved, not the date it was raised.</li>
+<li>Yen amounts no longer display meaningless decimals.</li>
+<li>The account detail page merges its SPEND / USAGE / CREDITS cards into one SPEND card that breaks the total down in a line.</li>
+<li>The docs site got the same treatment: a duplicated heading renamed, repeated explanations deduplicated, hardcoded colors moved into the design tokens.</li>
+</ul>
+<h2>A signed macOS build</h2>
+<p>Release builds for macOS are now signed and notarized in CI. The Gatekeeper workaround in the install notes — Control-click, "Open Anyway", the <code>xattr</code> line — stops being part of installing CloudBridge; download the DMG and drag it to Applications.</p>
+<h2>What's next</h2>
+<p>Unchanged from 0.3.0: the <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/roadmap.md">roadmap</a> still owes a bill file <em>export</em> channel (S3 / OSS + Parquet), tag-based allocation with an explicit unallocated node, and the billing APIs for Volcengine, OpenAI and Anthropic.</p>
+
+            <div class="post-nav">
+                <a href="/blog.html" data-i18n="post.back">← All posts</a>
             </div>
-        </div>
+        </article>
     </main>
 
     <footer>
@@ -357,6 +370,10 @@
                 document.querySelectorAll('[data-i18n]').forEach(function (el) {
                     var key = el.getAttribute('data-i18n');
                     if (typeof dict[key] === 'string') el.textContent = dict[key];
+                });
+                document.querySelectorAll('[data-i18n-html]').forEach(function (el) {
+                    var key = el.getAttribute('data-i18n-html');
+                    if (typeof dict[key] === 'string') el.innerHTML = dict[key];
                 });
                 document.documentElement.lang = locale;
             }

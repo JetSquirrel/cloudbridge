@@ -157,7 +157,7 @@ impl OverviewView {
             None => format!(
                 "{} · reported in {}",
                 self.range.header_caption(self.opened_at),
-                crate::config::DEFAULT_REPORTING_CURRENCY
+                data::reporting_currency()
             ),
         };
 
@@ -193,7 +193,7 @@ impl OverviewView {
                                     .label(range.label())
                                     .small()
                                     .rounded_full()
-                                    .custom(range_pill(cx, active))
+                                    .custom(theme::range_pill(cx, active))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         if this.range != *range {
                                             this.range = *range;
@@ -216,8 +216,7 @@ impl OverviewView {
                                 "Refresh"
                             })
                             .small()
-                            .custom(theme::outline_variant(cx))
-                            .card_outline(cx)
+                            .custom(theme::accent_variant(cx))
                             .disabled(refreshing)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.refresh(false, cx);
@@ -231,7 +230,8 @@ impl OverviewView {
                                 "Force refresh"
                             })
                             .small()
-                            .primary()
+                            .custom(theme::outline_variant(cx))
+                            .card_outline(cx)
                             .disabled(refreshing)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.refresh(true, cx);
@@ -275,7 +275,7 @@ impl OverviewView {
                             .h_flex()
                             .items_center()
                             .justify_between()
-                            .child(section_title(cx, d.chart_title))
+                            .child(theme::section_title(cx, d.chart_title))
                             .child(
                                 div()
                                     .h_flex()
@@ -317,18 +317,22 @@ impl OverviewView {
                                 .child(theme::caption(cx, last)),
                         )
                     })
-                    .child(theme::caption(cx, d.chart_caption)),
+                    // Only the 12-month caption adds information beyond
+                    // the legend; MTD/30d just restate it.
+                    .when(d.range == Range::Months12, |el| {
+                        el.child(theme::caption(cx, d.chart_caption))
+                    }),
             )
             // Where it went
             .child(
                 theme::card(cx)
-                    // 340px ≈ the 20rem step.
+                    // 320px ≈ the 20rem step.
                     .w_80()
                     .flex_shrink_0()
                     .p_5()
                     .v_flex()
                     .gap_4()
-                    .child(section_title(cx, "Where it went"))
+                    .child(theme::section_title(cx, "Where it went"))
                     .child(
                         div()
                             .v_flex()
@@ -466,7 +470,7 @@ impl Render for OverviewView {
                 .w_full()
                 .text_sm()
                 .text_color(theme::text_muted(cx))
-                .child("Loading…")
+                .child("Loading overview…")
                 .into_any_element(),
             None => div().into_any_element(),
             Some(d) if is_empty(d) => self.render_empty_state(cx).into_any_element(),
@@ -495,7 +499,7 @@ impl Render for OverviewView {
                             .w_full()
                             .p_3()
                             .rounded_md()
-                            .bg(theme::alert_tint(cx))
+                            .bg(theme::danger_bg(cx))
                             .text_sm()
                             .text_color(theme::text_primary(cx))
                             .child(error),
@@ -521,7 +525,7 @@ fn render_stats(cx: &App, d: &data::OverviewData) -> impl IntoElement {
         .h_flex()
         .items_stretch()
         .gap_4()
-        .child(stat_card(
+        .child(theme::stat_card(
             cx,
             d.spend_label,
             fmt::amount(stats.spend, currency),
@@ -541,14 +545,14 @@ fn render_stats(cx: &App, d: &data::OverviewData) -> impl IntoElement {
                     fmt::amount(stats.credits, currency)
                 )))
                 .when_some(stats.change_pct, |el, pct| {
-                    el.child(
-                        div()
-                            .text_color(theme::accent(cx))
-                            .child(format!("· {pct:+.1}% {}", d.change_caption)),
-                    )
+                    el.child(div().text_color(theme::accent(cx)).child(format!(
+                        "· {} {}",
+                        fmt::change_pct(pct),
+                        d.change_caption
+                    )))
                 }),
         ))
-        .child(stat_card(
+        .child(theme::stat_card(
             cx,
             d.card2_label,
             fmt::amount(d.card2_value, currency),
@@ -556,7 +560,7 @@ fn render_stats(cx: &App, d: &data::OverviewData) -> impl IntoElement {
                 .text_color(theme::text_muted(cx))
                 .child(d.card2_caption),
         ))
-        .child(stat_card(
+        .child(theme::stat_card(
             cx,
             "UNALLOCATED",
             format!("{:.1}%", stats.unallocated_pct),
@@ -566,7 +570,7 @@ fn render_stats(cx: &App, d: &data::OverviewData) -> impl IntoElement {
             )),
         ))
         .child(
-            stat_card(
+            theme::stat_card(
                 cx,
                 "OPEN ALERTS",
                 stats.open_alerts.to_string(),
@@ -582,7 +586,7 @@ fn render_stats(cx: &App, d: &data::OverviewData) -> impl IntoElement {
                         crate::app::navigate_to(crate::app::CurrentView::Alerts, cx)
                     }),
             )
-            .bg(theme::alert_tint(cx)),
+            .when(stats.open_alerts > 0, |el| el.bg(theme::alert_tint(cx))),
         )
 }
 
@@ -595,7 +599,7 @@ fn render_movers(cx: &App, d: &data::OverviewData) -> impl IntoElement {
         .p_5()
         .v_flex()
         .gap_4()
-        .child(section_title(cx, d.movers_title))
+        .child(theme::section_title(cx, d.movers_title))
         .child(
             div()
                 .v_flex()
@@ -604,21 +608,33 @@ fn render_movers(cx: &App, d: &data::OverviewData) -> impl IntoElement {
                         .h_flex()
                         .items_center()
                         .pb_2()
-                        .child(header_cell(cx, "SOURCE").w_32())
-                        .child(header_cell(cx, "MODEL OR SERVICE").flex_1().min_w_0())
-                        .child(header_cell(cx, d.movers_amount_header).w_24().text_right())
-                        .child(header_cell(cx, d.movers_delta_header).w_40().text_right())
-                        .child(header_cell(cx, "DRIVES").w_32()),
+                        .child(theme::header_cell(cx, "SOURCE").w_32())
+                        .child(
+                            theme::header_cell(cx, "MODEL OR SERVICE")
+                                .flex_1()
+                                .min_w_0(),
+                        )
+                        .child(
+                            theme::header_cell(cx, d.movers_amount_header.clone())
+                                .w_24()
+                                .text_right(),
+                        )
+                        .child(
+                            theme::header_cell(cx, d.movers_delta_header)
+                                .w_40()
+                                .text_right(),
+                        )
+                        .child(theme::header_cell(cx, "DRIVES").w_32()),
                 )
                 .children(movers.iter().map(|mover| {
                     let (delta_text, delta_color) = match mover.change_pct {
-                        Some(pct) if pct < 0.0 => (format!("{pct:+.0}%"), theme::text_muted(cx)),
-                        Some(pct) => (format!("{pct:+.0}%"), theme::accent(cx)),
+                        Some(pct) if pct < 0.0 => (fmt::change_pct(pct), theme::text_muted(cx)),
+                        Some(pct) => (fmt::change_pct(pct), theme::accent(cx)),
                         // No meaningful previous-period base to compare
                         // against.
                         None => ("—".to_string(), theme::text_muted(cx)),
                     };
-                    let drives: AnyElement = if mover.drives == "Untagged" {
+                    let drives: AnyElement = if mover.drives == data::UNALLOCATED {
                         div()
                             .text_sm()
                             .text_color(theme::text_muted(cx))
@@ -627,8 +643,8 @@ fn render_movers(cx: &App, d: &data::OverviewData) -> impl IntoElement {
                     } else {
                         theme::pill(
                             mover.drives.clone(),
-                            theme::warning_bg(cx),
-                            theme::warning_text(cx),
+                            theme::sidebar_bg(cx),
+                            theme::text_primary(cx),
                         )
                         .into_any_element()
                     };
@@ -679,48 +695,6 @@ fn render_movers(cx: &App, d: &data::OverviewData) -> impl IntoElement {
         )
 }
 
-fn stat_card(cx: &App, label: &'static str, value: String, sub: impl IntoElement) -> Div {
-    theme::card(cx)
-        .flex_1()
-        // min_w_0: four equal cards must shrink below their content
-        // width instead of overflowing the row on narrow windows.
-        .min_w_0()
-        .p_5()
-        .v_flex()
-        .gap_1()
-        .child(
-            div()
-                .text_xs()
-                .text_color(theme::text_muted(cx))
-                .child(label),
-        )
-        .child(
-            div()
-                // 13px base: text_3xl ≈ 24px — the KPI tier, clearly above
-                // the text_2xl (≈20px) page title.
-                .text_3xl()
-                .font_weight(FontWeight::BOLD)
-                .text_color(theme::text_primary(cx))
-                .child(value),
-        )
-        .child(div().text_sm().child(sub))
-}
-
-fn section_title(cx: &App, text: &'static str) -> Div {
-    div()
-        .text_base()
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(theme::text_primary(cx))
-        .child(text)
-}
-
-fn header_cell(cx: &App, text: &'static str) -> Div {
-    div()
-        .text_xs()
-        .text_color(theme::text_muted(cx))
-        .child(text)
-}
-
 fn legend_solid(cx: &App, color: Hsla, label: &'static str) -> Div {
     div()
         .h_flex()
@@ -769,20 +743,5 @@ fn line_color(cx: &App, name: &str, index: usize) -> Hsla {
         theme::accent(cx)
     } else {
         theme::olive(cx)
-    }
-}
-
-/// Segmented-control pill: the active range reads as a raised chip, the
-/// others as plain text on the track.
-fn range_pill(cx: &App, active: bool) -> ButtonCustomVariant {
-    let pill = ButtonCustomVariant::new(cx)
-        .foreground(theme::text_muted(cx))
-        .hover(theme::sidebar_bg(cx))
-        .active(theme::sidebar_bg(cx));
-    if active {
-        pill.color(theme::card_bg(cx))
-            .foreground(theme::text_primary(cx))
-    } else {
-        pill
     }
 }

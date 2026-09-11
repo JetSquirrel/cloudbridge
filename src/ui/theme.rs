@@ -9,8 +9,10 @@
 #![allow(dead_code)]
 
 use gpui_kit::component::button::{Button, ButtonCustomVariant};
-use gpui_kit::component::{ActiveTheme, Theme, ThemeRegistry};
-use gpui_kit::{div, App, Div, FontWeight, Hsla, ParentElement, SharedString, Styled};
+use gpui_kit::component::{ActiveTheme, StyledExt, Theme, ThemeRegistry};
+use gpui_kit::{
+    div, rems, App, Div, FontWeight, Hsla, IntoElement, ParentElement, SharedString, Styled,
+};
 
 /// Name of the light theme in `themes/cloudbridge.json`.
 pub const LIGHT_THEME_NAME: &str = "CloudBridge Light";
@@ -101,7 +103,10 @@ pub fn on_accent(cx: &App) -> Hsla {
     cx.theme().primary_foreground
 }
 
-/// Critical/alert tint background (highlighted alert cards and badges).
+/// Critical/alert tint background, used to highlight alert cards and badges.
+///
+/// Intentionally the same token as `danger_bg`, but a different semantic
+/// slot: this one is for alert severity, not error states.
 pub fn alert_tint(cx: &App) -> Hsla {
     cx.theme().red_light
 }
@@ -141,7 +146,10 @@ pub fn danger(cx: &App) -> Hsla {
     cx.theme().red
 }
 
-/// Error banner tint.
+/// Error banner tint, used behind failure/error banners.
+///
+/// Intentionally the same token as `alert_tint`, but a different semantic
+/// slot: this one is for error states, not alert severity highlighting.
 pub fn danger_bg(cx: &App) -> Hsla {
     cx.theme().red_light
 }
@@ -233,5 +241,96 @@ pub fn caption(cx: &App, text: impl Into<SharedString>) -> Div {
     div()
         .text_sm()
         .text_color(text_muted(cx))
+        .child(text.into())
+}
+
+/// Terracotta solid accent variant: primary buttons and selected chips
+/// share it so the two cannot drift apart.
+pub fn accent_variant(cx: &App) -> ButtonCustomVariant {
+    ButtonCustomVariant::new(cx)
+        .color(accent(cx))
+        .foreground(on_accent(cx))
+        .hover(accent_hover(cx))
+        .active(accent_hover(cx))
+}
+
+/// Segmented-control pill: the active range reads as a raised chip, the
+/// others as plain text on the track.
+pub fn range_pill(cx: &App, active: bool) -> ButtonCustomVariant {
+    let pill = ButtonCustomVariant::new(cx)
+        .foreground(text_muted(cx))
+        .hover(sidebar_bg(cx))
+        .active(sidebar_bg(cx));
+    if active {
+        pill.color(card_bg(cx)).foreground(text_primary(cx))
+    } else {
+        pill
+    }
+}
+
+/// KPI card: muted label, bold 3xl value, small sub-line.
+pub fn stat_card(cx: &App, label: &'static str, value: String, sub: impl IntoElement) -> Div {
+    card(cx)
+        .flex_1()
+        // min_w_0: four equal cards must shrink below their content
+        // width instead of overflowing the row on narrow windows.
+        .min_w_0()
+        .p_5()
+        .v_flex()
+        .gap_1()
+        .child(div().text_xs().text_color(text_muted(cx)).child(label))
+        .child(
+            div()
+                // 13px base: text_3xl ≈ 24px — the KPI tier, clearly above
+                // the text_2xl (≈20px) page title.
+                .text_3xl()
+                .font_weight(FontWeight::BOLD)
+                .text_color(text_primary(cx))
+                .child(value),
+        )
+        .child(div().text_sm().child(sub))
+}
+
+/// Bold section heading inside a page.
+pub fn section_title(cx: &App, text: &'static str) -> Div {
+    div()
+        .text_base()
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(text_primary(cx))
+        .child(text)
+}
+
+/// Muted table header cell.
+pub fn header_cell(cx: &App, text: impl Into<SharedString>) -> Div {
+    div()
+        .text_xs()
+        .text_color(text_muted(cx))
+        .child(text.into())
+}
+
+/// Circular numeric badge (18px), e.g. the sidebar open-alerts count.
+pub fn count_badge(_cx: &App, count: usize, bg: Hsla, fg: Hsla) -> Div {
+    div()
+        .size(rems(1.125))
+        .rounded_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_xs()
+        .bg(bg)
+        .text_color(fg)
+        .child(count.to_string())
+}
+
+/// Outline version of `pill`: no fill, 1px card border, ink label.
+pub fn pill_outline(cx: &App, text: impl Into<SharedString>) -> Div {
+    div()
+        .px_2()
+        .py_0p5()
+        .rounded_full()
+        .border_1()
+        .border_color(card_border(cx))
+        .text_xs()
+        .text_color(text_primary(cx))
         .child(text.into())
 }

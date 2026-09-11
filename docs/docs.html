@@ -28,8 +28,8 @@
 
         body {
             font-family: 'IBM Plex Sans', sans-serif;
-            color: #47536B;
-            background: #FAFBFC;
+            color: var(--fg-body);
+            background: var(--paper);
             line-height: 1.6;
             overflow-x: hidden;
         }
@@ -47,6 +47,7 @@
             --local: #2FA97C;
             --radius: 6px;
             --nav-height: 4.5rem;
+            --anchor-offset: calc(var(--nav-height) + 1rem);
             --font-display: 'Space Grotesk', sans-serif;
             --font-mono: 'IBM Plex Mono', monospace;
         }
@@ -189,7 +190,7 @@
 
         .docs-side {
             position: sticky;
-            top: calc(var(--nav-height) + 2rem);
+            top: var(--anchor-offset);
             align-self: start;
         }
 
@@ -225,7 +226,7 @@
 
         .docs-content section {
             margin-bottom: 4rem;
-            scroll-margin-top: calc(var(--nav-height) + 1rem);
+            scroll-margin-top: var(--anchor-offset);
         }
 
         .docs-content h2 {
@@ -320,7 +321,7 @@
         /* Footer (shared, compact) */
         footer {
             background: var(--ink);
-            color: #8FA0BC;
+            color: var(--fg-faint);
             padding: 2rem 0;
             border-top: 1px solid var(--hairline-dark);
         }
@@ -336,7 +337,7 @@
         }
 
         footer a {
-            color: #8FA0BC;
+            color: var(--fg-faint);
             text-decoration: none;
         }
 
@@ -459,8 +460,7 @@
                             </tbody>
                         </table>
                         <div class="note" data-i18n-html="docs.install.windows"><strong>Windows:</strong> SmartScreen may warn about unsigned executables. Click "More info" → "Run anyway" to proceed.</div>
-                        <div class="note" data-i18n-html="docs.install.macos"><strong>macOS:</strong> Open the <code>.dmg</code> and drag CloudBridge to Applications. The app is ad-hoc signed but <strong>not notarized</strong>, so the first launch is blocked with "Apple could not verify CloudBridge is free of malware". Double-click the app, click <strong>Done</strong>, then open <strong>System Settings → Privacy &amp; Security</strong>, scroll to Security, and click <strong>Open Anyway</strong> — the button appears only after a blocked attempt and expires after about an hour. From a terminal, <code>xattr -d com.apple.quarantine /Applications/CloudBridge.app</code> does the same thing in one step.</div>
-                        <div class="note" data-i18n-html="docs.install.macos15"><strong>On macOS 15 (Sequoia) and later, Control-click → Open no longer works.</strong> Apple removed that bypass for unnotarized apps, which is why the warning offers only <em>Done</em> and <em>Move to Trash</em>. Use System Settings or the terminal command above. On macOS 14 and earlier, Control-click → <strong>Open</strong> is still the quickest route.</div>
+                        <div class="note" data-i18n-html="docs.install.macos"><strong>macOS:</strong> Open the <code>.dmg</code> and drag CloudBridge to Applications. The app is ad-hoc signed but <strong>not notarized</strong>, so the first launch is blocked with "Apple could not verify CloudBridge is free of malware". Double-click the app, click <strong>Done</strong>, then open <strong>System Settings → Privacy &amp; Security</strong>, scroll to Security, and click <strong>Open Anyway</strong> — the button appears only after a blocked attempt and expires after about an hour. From a terminal, <code>xattr -d com.apple.quarantine /Applications/CloudBridge.app</code> does the same thing in one step.<br><strong>macOS 15+:</strong> Control-click → Open no longer works — Apple removed that bypass for unnotarized apps, which is why the warning offers only <em>Done</em> and <em>Move to Trash</em>. Use System Settings or the terminal command above.<br><strong>macOS 14 and earlier:</strong> Control-click → <strong>Open</strong> is still the quickest route.</div>
                         <p data-i18n-html="docs.install.p2">Linux and Intel Macs are not published as binaries; both build from source. You need Rust 1.75+, and on Windows the <code>fxc.exe</code> shader compiler from the Windows SDK in your PATH:</p>
                         <pre><code>git clone https://github.com/JetSquirrel/cloudbridge.git
 cd cloudbridge
@@ -549,8 +549,7 @@ cargo run --release</code></pre>
                             <li>Go to <strong>Accounts</strong> and click <strong>Import bill</strong> on the account's row.</li>
                             <li>Pick the file. CloudBridge reports how many charges it wrote and which months it replaced.</li>
                         </ol>
-                        <div class="note" data-i18n-html="docs.import.replace"><strong>An import replaces every month the file covers.</strong> The export is the provider's own bill, so it supersedes whatever the billing API reported for that month rather than being added to it. The corollary: a file narrowed to a single product in the console replaces that whole month with that one product — export the full bill unless that is what you mean. Re-importing a corrected export of the same month is safe.</div>
-                        <div class="note" data-i18n-html="docs.import.force">An imported month is <strong>never</strong> replaced by an automatic fetch, Force Refresh included. "Force" means "do not trust the freshness window", not "discard what I imported". To update an imported month, import a corrected export of it.</div>
+                        <div class="note" data-i18n-html="docs.import.replace"><strong>An import replaces every month the file covers, and an imported month is never replaced by a fetch — Force Refresh included.</strong> The export is the provider's own bill, so it supersedes whatever the billing API reported for that month rather than being added to it; "Force" means "do not trust the freshness window", not "discard what I imported". The corollary: a file narrowed to a single product in the console replaces that whole month with that one product — export the full bill unless that is what you mean. To update an imported month, import a corrected export of it.</div>
                         <h3 data-i18n="docs.import.deepseek.title">DeepSeek's zip</h3>
                         <p data-i18n-html="docs.import.deepseek.p1">DeepSeek's console hands out a zip of two CSVs. Import it exactly as it downloaded: CloudBridge reads the <code>cost-*.csv</code> inside and leaves <code>amount-*.csv</code> alone, because that file's <code>amount</code> column is a <em>token count</em> — read as money, a day of 10,787 cached input tokens would book as ¥10,787.</p>
                         <h3 data-i18n="docs.import.usage.title">Usage exports carry no money</h3>
@@ -580,13 +579,13 @@ cargo run --release</code></pre>
                         <p data-i18n="docs.usage.overview.p2">Hovering a trend chart snaps to the nearest point and draws a guide line, a dot, and a tooltip with that bucket's date and amount.</p>
                         <h3 data-i18n="docs.usage.account.title">One account at a time</h3>
                         <p data-i18n-html="docs.usage.account.p1">Click an account's name on the <strong>Accounts</strong> page to drill into it: the same range control, a net / gross / credits stat row, that one account's daily or monthly usage trend, and a per-service table giving each service's share of the window and its change against the comparison window.</p>
-                        <p data-i18n-html="docs.usage.account.p2">A balance-only source such as DeepSeek has no API-reported usage — its service rows arrive through <a href="#import">bill file import</a>, so the page stays empty until you import one.</p>
+                        <p data-i18n-html="docs.usage.account.p2">A balance-only source such as DeepSeek has no API-reported usage — see <a href="#import">Bill file import</a> for how its service rows arrive; until you import one, the page stays empty.</p>
                         <h3 data-i18n="docs.usage.attribution.title">Attribution</h3>
                         <p data-i18n="docs.usage.attribution.p1">The Attribution page draws the month as a Sankey: source, then service or model, then business line, with an explicit Unallocated node. Flows are gross usage — a net flow can be negative, which means nothing in a Sankey. A charge is assigned to a line by its business_line tag; without one it lands in Unallocated.</p>
                         <h3 data-i18n="docs.usage.currency.title">Choosing a reporting currency</h3>
                         <p data-i18n-html="docs.usage.currency.p1">Go to <strong>Settings → Reporting</strong> and pick the currency totals are shown in. Charges keep the currency they were billed in — only the view they are read through changes, so switching back and forth costs nothing. A charge no rate covers is reported, never counted at par.</p>
                         <h3 data-i18n="docs.usage.refresh.title">Refreshing</h3>
-                        <p data-i18n-html="docs.usage.refresh.p1">A billing period is re-fetched at most once a day by default; <strong>Settings → Refreshing</strong> offers 6, 12, 24 or 48 hours. <strong>Refresh</strong> picks up anything stale; <strong>Force Refresh</strong> re-fetches regardless, at the cost of another paid API call. A month that arrived by import is never replaced by a fetch, Force Refresh included.</p>
+                        <p data-i18n-html="docs.usage.refresh.p1">A billing period is re-fetched at most once a day by default; <strong>Settings → Refreshing</strong> offers 6, 12, 24 or 48 hours. <strong>Refresh</strong> picks up anything stale; <strong>Force Refresh</strong> re-fetches regardless, at the cost of another paid API call. Imported months are never overwritten — see <a href="#import">Bill file import</a>.</p>
                         <h3 data-i18n="docs.usage.demo.title">Demo data</h3>
                         <p data-i18n-html="docs.usage.demo.p1"><strong>Settings → Demo data</strong> loads three accounts and twelve months of realistically-shaped fake ledger, so you can see what the app looks like with a bill in it before connecting anything. Demo rows are keyed under a <code>demo-</code> prefix, carry no credentials, and are skipped by refresh, so none of them ever reaches a provider API. Clearing removes every one of them.</p>
                     </section>
@@ -626,7 +625,6 @@ cargo run --release</code></pre>
                             <li><code>raw/</code> — provider responses as fetched <em>and bill files as imported</em>, partitioned by source, account, and billing period, so a mapping fix replays from the copy CloudBridge kept instead of paying for another fetch</li>
                             <li><code>config.json</code> — application configuration</li>
                         </ul>
-                        <p data-i18n="docs.storage.p2">Credentials are not in any of these files. They live in the OS keyring.</p>
                     </section>
 
                     <section id="security">

@@ -81,8 +81,46 @@ jobs:
         run: |
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}" "${{ matrix.asset_name }}"
 
+      - name: Import signing certificate (macOS only)
+        if: runner.os == 'macOS'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          NOTARY_KEY_BASE64: ${{ secrets.NOTARY_KEY_BASE64 }}
+        run: |
+          # A throwaway keychain for this run: importing into the runner's
+          # login keychain would leave a distribution private key behind
+          # for whatever runs next.
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          CERTIFICATE_PATH="$RUNNER_TEMP/certificate.p12"
+          NOTARY_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+
+          echo -n "$MACOS_CERTIFICATE" | base64 --decode -o "$CERTIFICATE_PATH"
+          echo -n "$NOTARY_KEY_BASE64" | base64 --decode -o "$NOTARY_KEY_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERTIFICATE_PATH" -P "$MACOS_CERTIFICATE_PWD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          # codesign runs non-interactively here; without a partition list
+          # the keychain would pop a GUI prompt that nobody can answer.
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" \
+            $(security list-keychains -d user | sed -e 's/"//g')
+
+          rm -f "$CERTIFICATE_PATH"
+
+          echo "NOTARY_KEY=$NOTARY_KEY_PATH" >> "$GITHUB_ENV"
+          security find-identity -v -p codesigning "$KEYCHAIN"
+
       - name: Prepare artifact (macOS)
         if: runner.os == 'macOS'
+        env:
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
         run: |
           VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
           scripts/package-macos.sh \
@@ -98,7 +136,8 @@ jobs:
 
   release:
     needs: build
-    if: always() && needs.build.result != 'cancelled'
+    # No `if: always()`: a macOS job that failed to sign or notarize must
+    # fail the whole release, not ship a half-empty one.
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -111,7 +150,6 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           path: artifacts
-        continue-on-error: true
 
       - name: Display structure of downloaded files
         run: |
@@ -140,7 +178,7 @@ jobs:
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, '-') }}
           generate_release_notes: true
-          fail_on_unmatched_files: false
+          fail_on_unmatched_files: true
           files: |
             artifacts/cloudbridge-windows-x64.exe/cloudbridge-windows-x64.exe
             artifacts/cloudbridge-macos-arm64.dmg/cloudbridge-macos-arm64.dmg
