@@ -129,7 +129,26 @@ Download the latest release for your platform from the [Releases](https://github
 
 > **Note for Windows users:** Windows SmartScreen may show a warning for unsigned executables. Click "More info" → "Run anyway" to proceed. The application is safe and [open source](https://github.com/JetSquirrel/cloudbridge).
 
-> **Note for macOS users:** Open the `.dmg` and drag **CloudBridge** to Applications. The app is ad-hoc signed but not notarized, so the first launch needs a right-click → **Open** (once). If macOS still refuses, run `xattr -cr /Applications/CloudBridge.app`. Upgrading from the 0.1.x bare binary, macOS asks once more for permission to read the credentials CloudBridge stored in your keychain — it is a different application path, so choose **Always Allow**.
+> **Note for macOS users:** Open the `.dmg` and drag **CloudBridge** to
+> Applications. The app is ad-hoc signed but **not notarized**, so the first
+> launch is blocked with *"Apple could not verify CloudBridge is free of
+> malware"*. Two ways past it:
+>
+> - **System Settings.** Double-click the app, click **Done** on the
+>   warning, then open **System Settings → Privacy & Security**, scroll to
+>   Security, and click **Open Anyway** next to CloudBridge. The button only
+>   appears after a blocked attempt, and it expires after about an hour.
+> - **Terminal.** `xattr -d com.apple.quarantine /Applications/CloudBridge.app`,
+>   then open it normally.
+>
+> On **macOS 15 (Sequoia) and later — including macOS 26 — Control-click →
+> Open no longer works**: Apple removed that bypass, which is why the
+> warning offers only *Done* and *Move to Trash*. On macOS 14 and earlier,
+> Control-click → **Open** is still the quickest route.
+>
+> Upgrading from the 0.1.x bare binary, macOS asks once more for permission
+> to read the credentials CloudBridge stored in your keychain — it is a
+> different application path, so choose **Always Allow**.
 
 ### Prerequisites (for building from source)
 

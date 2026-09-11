@@ -1127,7 +1127,7 @@
                 </div>
                 <div class="download-notes">
                     <p data-i18n-html="download.notes.windows"><strong>Windows:</strong> SmartScreen may warn about unsigned executables. Click "More info" → "Run anyway" to proceed.</p>
-                    <p data-i18n-html="download.notes.macos"><strong>macOS:</strong> Open the disk image and drag CloudBridge to Applications. The app is ad-hoc signed but not notarized, so the first launch needs a right-click → Open. If Gatekeeper still refuses, run <code>xattr -cr /Applications/CloudBridge.app</code>.</p>
+                    <p data-i18n-html="download.notes.macos"><strong>macOS:</strong> Open the disk image and drag CloudBridge to Applications. The app is ad-hoc signed but <strong>not notarized</strong>, so the first launch is blocked. Click <strong>Done</strong>, then <strong>System Settings → Privacy &amp; Security → Open Anyway</strong>; or run <code>xattr -d com.apple.quarantine /Applications/CloudBridge.app</code>. On macOS 15 and later, Control-click → Open no longer works — Apple removed that bypass. See the <a href="/docs.html#installation">install guide</a>.</p>
                     <p data-i18n-html="download.notes.releases">Linux and Intel Macs build from source. Or browse <a href="https://github.com/JetSquirrel/cloudbridge/releases" target="_blank" rel="noopener noreferrer">all releases on GitHub</a>.</p>
                 </div>
             </div>
