@@ -6,7 +6,8 @@
     <meta name="description" content="CloudBridge documentation - installation, cloud account configuration, usage, data storage, and security.">
     <meta name="theme-color" content="#0E1420">
     <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/docs.html">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌉</text></svg>">
+    <link rel="icon" type="image/png" href="icon.png">
+    <link rel="apple-touch-icon" href="icon.png">
     <title>Docs - CloudBridge</title>
 
     <!-- Fonts -->
@@ -426,7 +427,7 @@
             <div class="container">
                 <span class="eyebrow" data-i18n="docs.eyebrow">Documentation</span>
                 <h1 data-i18n="docs.title">Set up CloudBridge</h1>
-                <p data-i18n="docs.sub">Install the app, connect a cloud account, and read your first bill. Everything runs locally.</p>
+                <p data-i18n="docs.sub">Install the app, connect an account or import an export, and read your first bill. Everything runs locally.</p>
             </div>
         </header>
 
@@ -436,7 +437,9 @@
                     <ul>
                         <li><a href="#installation" data-i18n="docs.side.install">Installation</a></li>
                         <li><a href="#configuration" data-i18n="docs.side.config">Configuration</a></li>
+                        <li><a href="#import" data-i18n="docs.side.import">Bill file import</a></li>
                         <li><a href="#usage" data-i18n="docs.side.usage">Usage</a></li>
+                        <li><a href="#alerts" data-i18n="docs.side.alerts">Alerts &amp; rules</a></li>
                         <li><a href="#storage" data-i18n="docs.side.storage">Data Storage</a></li>
                         <li><a href="#security" data-i18n="docs.side.security">Security</a></li>
                     </ul>
@@ -465,6 +468,20 @@ cargo run --release</code></pre>
 
                     <section id="configuration">
                         <h2 data-i18n="docs.config.title">Configuration</h2>
+                        <p data-i18n-html="docs.config.intro">A source reaches the ledger through a billing API, through the bill export its console produces, or both. Only the first kind needs credentials; for the rest, add the account and go straight to <a href="#import">Bill file import</a>.</p>
+                        <table class="docs-table">
+                            <thead>
+                                <tr><th data-i18n="docs.config.source">Source</th><th data-i18n="docs.config.channel">Channel</th><th data-i18n="docs.config.needs">What it needs</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr><td>Amazon Web Services</td><td>Billing API</td><td>Access Key ID + Secret</td></tr>
+                                <tr><td>Alibaba Cloud</td><td>Billing API + file</td><td>AccessKey ID + Secret</td></tr>
+                                <tr><td>DeepSeek</td><td>Balance API + file</td><td>API Key</td></tr>
+                                <tr><td>Volcengine (火山引擎)</td><td>File</td><td>Nothing</td></tr>
+                                <tr><td>OpenAI</td><td>File</td><td>Nothing</td></tr>
+                                <tr><td>Anthropic (Claude)</td><td>File</td><td>Nothing</td></tr>
+                            </tbody>
+                        </table>
 
                         <h3>AWS</h3>
                         <ol data-i18n-html="docs.config.aws.steps">
@@ -488,7 +505,7 @@ cargo run --release</code></pre>
         }
     ]
 }</code></pre>
-                        <p data-i18n="docs.config.aws.note">AWS Cost Explorer charges $0.01 per request. CloudBridge keeps this near zero: a billing period is re-fetched at most once every 6 hours, and one request per period carries everything.</p>
+                        <p data-i18n="docs.config.aws.note">AWS Cost Explorer charges $0.01 per request. CloudBridge keeps this near zero: a billing period is re-fetched at most once a day by default, and one request per period carries everything — the current and previous period, so roughly $0.02 a day.</p>
 
                         <h3>Alibaba Cloud</h3>
                         <ol data-i18n-html="docs.config.aliyun.steps">
@@ -504,7 +521,44 @@ cargo run --release</code></pre>
                             <li>Open <a href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer">platform.deepseek.com</a> and create an API key.</li>
                             <li>Add the account in CloudBridge using that key.</li>
                         </ol>
-                        <p data-i18n="docs.config.deepseek.note">DeepSeek reports a balance (granted and topped-up) instead of cost data. The balance API is free of charge.</p>
+                        <p data-i18n-html="docs.config.deepseek.note">DeepSeek's API reports a balance (granted and topped-up), not cost — it says how much is left, never what the money went on. For that, import its usage download as well; see <a href="#import">Bill file import</a>. The balance API is free of charge.</p>
+
+                        <h3 data-i18n="docs.config.filesources.title">Volcengine, OpenAI and Anthropic</h3>
+                        <p data-i18n-html="docs.config.filesources.p1">These three are read from a file and sign nothing, so they ask for no credentials: add the account with a name and nothing else, then import the export. Their billing APIs are planned — each already names the credential it will want (OpenAI and Anthropic need an <strong>organization or admin</strong> key, not an ordinary project key) — but nothing is stored in your keyring until there is something to use it for.</p>
+                    </section>
+
+                    <section id="import">
+                        <h2 data-i18n="docs.import.title">Bill file import</h2>
+                        <p data-i18n="docs.import.p1">A bill export downloaded from a provider's console parses into the same ledger rows a fetch produces. Downstream — totals, charts, alerts, attribution — an imported month is indistinguishable from a fetched one. It is often the finer reading: Alibaba Cloud's billing API reports Model Studio (百炼) as one figure a month, while its export reports it per model, with token counts as a real pricing unit.</p>
+                        <table class="docs-table">
+                            <thead>
+                                <tr><th data-i18n="docs.config.source">Source</th><th data-i18n="docs.import.where">Where the export comes from</th><th data-i18n="docs.import.adds">What it adds</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr><td>Alibaba Cloud</td><td>Expenses and Costs → Bill Details → Export</td><td>Model Studio (百炼) per model; instance-level detail for everything else</td></tr>
+                                <tr><td>Volcengine</td><td>Billing → Bill Details → Export</td><td>Ark (火山方舟) per endpoint and token type</td></tr>
+                                <tr><td>OpenAI</td><td>Usage → Export</td><td>Cost or token usage, per project and model</td></tr>
+                                <tr><td>Anthropic (Claude)</td><td>Usage or Cost → Export</td><td>Cost or token usage, per workspace and model</td></tr>
+                                <tr><td>DeepSeek</td><td>Usage → Download</td><td>Per-day, per-model spend — its API reports only a balance</td></tr>
+                            </tbody>
+                        </table>
+                        <h3 data-i18n="docs.import.how.title">Importing</h3>
+                        <ol data-i18n-html="docs.import.how.steps">
+                            <li>Download the export from the provider's console.</li>
+                            <li>Go to <strong>Accounts</strong> and click <strong>Import bill</strong> on the account's row.</li>
+                            <li>Pick the file. CloudBridge reports how many charges it wrote and which months it replaced.</li>
+                        </ol>
+                        <div class="note" data-i18n-html="docs.import.replace"><strong>An import replaces every month the file covers.</strong> The export is the provider's own bill, so it supersedes whatever the billing API reported for that month rather than being added to it. The corollary: a file narrowed to a single product in the console replaces that whole month with that one product — export the full bill unless that is what you mean. Re-importing a corrected export of the same month is safe.</div>
+                        <div class="note" data-i18n-html="docs.import.force">An imported month is <strong>never</strong> replaced by an automatic fetch, Force Refresh included. "Force" means "do not trust the freshness window", not "discard what I imported". To update an imported month, import a corrected export of it.</div>
+                        <h3 data-i18n="docs.import.deepseek.title">DeepSeek's zip</h3>
+                        <p data-i18n-html="docs.import.deepseek.p1">DeepSeek's console hands out a zip of two CSVs. Import it exactly as it downloaded: CloudBridge reads the <code>cost-*.csv</code> inside and leaves <code>amount-*.csv</code> alone, because that file's <code>amount</code> column is a <em>token count</em> — read as money, a day of 10,787 cached input tokens would book as ¥10,787.</p>
+                        <h3 data-i18n="docs.import.usage.title">Usage exports carry no money</h3>
+                        <p data-i18n-html="docs.import.usage.p1">A <strong>usage</strong> export has token counts and no amounts. Those rows land with no billed cost and a cost basis of <em>absent</em>: pricing them at list would put a number in the ledger that nobody was charged. A <strong>cost</strong> export keeps a quantity only where exactly one token column is filled in, since input and output tokens are priced differently and their sum is not what the amount was charged for.</p>
+                        <h3 data-i18n="docs.import.trouble.title">If the import refuses the file</h3>
+                        <ul data-i18n-html="docs.import.trouble.list">
+                            <li><strong>"not UTF-8 text"</strong> — both Chinese consoles can produce a GBK export. Re-save it as UTF-8; decoding on a guess would mangle every product name in the bill.</li>
+                            <li><strong>A column that matches nothing</strong> — none of these exports is a documented file format, so columns are matched through alias lists covering the Chinese console, the English console and each provider's API field names. The error names the columns your file actually has; open an issue with that list.</li>
+                        </ul>
                     </section>
 
                     <section id="usage">
@@ -512,15 +566,40 @@ cargo run --release</code></pre>
                         <h3 data-i18n="docs.usage.accounts.title">Adding an account</h3>
                         <ol data-i18n-html="docs.usage.accounts.steps">
                             <li>Go to <strong>Accounts</strong> in the sidebar.</li>
-                            <li>Pick the provider and enter a name and credentials.</li>
-                            <li>Click <strong>Validate &amp; Add</strong>.</li>
+                            <li>Pick the source and enter a name, plus credentials if it has a billing API. Volcengine, OpenAI and Anthropic ask for none.</li>
+                            <li>Click <strong>Save</strong>.</li>
                         </ol>
-                        <h3 data-i18n="docs.usage.dashboard.title">Reading the dashboard</h3>
-                        <p data-i18n="docs.usage.dashboard.p1">The overview cards show the current month, last month, the month-over-month change, and the active account count. Click an account card for service-level detail; the expanded card charts the daily cost trend, read from the ledger. DeepSeek reports a balance, so it has no trend.</p>
+                        <h3 data-i18n="docs.usage.overview.title">Reading the Overview</h3>
+                        <p data-i18n-html="docs.usage.overview.p1">The header carries a range control — <strong>MTD</strong>, <strong>30d</strong> or <strong>12m</strong> — and every number on the page is computed for the window you pick.</p>
+                        <ul data-i18n-html="docs.usage.overview.list">
+                            <li>The headline <strong>spend</strong> is net of credits: what you were actually charged. The gross usage and the credits that took it down are shown beside it.</li>
+                            <li>The <strong>chart</strong>, the change percent, <strong>Where it went</strong> and the <strong>biggest movers</strong> all run on gross usage. An account whose usage is fully covered by credits nets to about zero, and a trend drawn on that base is noise rather than information.</li>
+                            <li>The <strong>Unallocated</strong> figure is the share of usage that reaches no business line — the part of the bill you cannot yet explain.</li>
+                        </ul>
+                        <h3 data-i18n="docs.usage.attribution.title">Attribution</h3>
+                        <p data-i18n="docs.usage.attribution.p1">The Attribution page draws the month as a Sankey: source, then service or model, then business line, with an explicit Unallocated node. Flows are gross usage — a net flow can be negative, which means nothing in a Sankey. A charge is assigned to a line by its business_line tag; without one it lands in Unallocated.</p>
                         <h3 data-i18n="docs.usage.currency.title">Choosing a reporting currency</h3>
                         <p data-i18n-html="docs.usage.currency.p1">Go to <strong>Settings → Reporting</strong> and pick the currency totals are shown in. Charges keep the currency they were billed in — only the view they are read through changes, so switching back and forth costs nothing. A charge no rate covers is reported, never counted at par.</p>
                         <h3 data-i18n="docs.usage.refresh.title">Refreshing</h3>
-                        <p data-i18n-html="docs.usage.refresh.p1">A billing period is re-fetched at most once every 6 hours. <strong>Refresh</strong> picks up anything stale; <strong>Force Refresh</strong> re-fetches regardless, at the cost of another paid API call.</p>
+                        <p data-i18n-html="docs.usage.refresh.p1">A billing period is re-fetched at most once a day by default; <strong>Settings → Refreshing</strong> offers 6, 12, 24 or 48 hours. <strong>Refresh</strong> picks up anything stale; <strong>Force Refresh</strong> re-fetches regardless, at the cost of another paid API call. A month that arrived by import is never replaced by a fetch, Force Refresh included.</p>
+                        <h3 data-i18n="docs.usage.demo.title">Demo data</h3>
+                        <p data-i18n-html="docs.usage.demo.p1"><strong>Settings → Demo data</strong> loads three accounts and twelve months of realistically-shaped fake ledger, so you can see what the app looks like with a bill in it before connecting anything. Demo rows are keyed under a <code>demo-</code> prefix, carry no credentials, and are skipped by refresh, so none of them ever reaches a provider API. Clearing removes every one of them.</p>
+                    </section>
+
+                    <section id="alerts">
+                        <h2 data-i18n="docs.alerts.title">Alerts &amp; rules</h2>
+                        <p data-i18n="docs.alerts.p1">Rules are evaluated against the ledger when you open the app and when the Alerts page loads — a desktop app cannot watch your spend while it is closed, and CloudBridge does not pretend otherwise. Three rules ship enabled, and each can be tuned or disabled on the Rules page.</p>
+                        <table class="docs-table">
+                            <thead>
+                                <tr><th data-i18n="docs.alerts.rule">Rule</th><th data-i18n="docs.alerts.fires">Fires when</th><th data-i18n="docs.alerts.default">Default</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr><td>Model cost growth anomaly</td><td>A (source, service) pair's daily spend runs far above its own 7-day trailing baseline, for several days running</td><td>2.5× for 2 consecutive days</td></tr>
+                                <tr><td>Balance floor</td><td>A prepaid balance falls below the floor — the account's monthly budget, where it has one</td><td>200, in the account's own currency</td></tr>
+                                <tr><td>Untagged spend ratio</td><td>Too much of the month's usage reaches no business line</td><td>Above 15%</td></tr>
+                            </tbody>
+                        </table>
+                        <p data-i18n-html="docs.alerts.p2">An alert names what it saw, not just that something happened: the day's figure, the baseline it broke, how long the streak has held, and what the month ends at if it does. Each one can be <strong>resolved</strong>, <strong>snoozed</strong> or <strong>dismissed</strong>; a condition that stops holding is resolved for you the next time the page loads.</p>
                     </section>
 
                     <section id="storage">
@@ -539,7 +618,7 @@ cargo run --release</code></pre>
                         <ul data-i18n-html="docs.storage.files">
                             <li><code>billing.duckdb</code> — the ledger: every charge, in the currency it was billed in</li>
                             <li><code>cloudbridge.duckdb</code> — accounts and settings</li>
-                            <li><code>raw/</code> — provider responses as fetched, partitioned by source, account, and billing period</li>
+                            <li><code>raw/</code> — provider responses as fetched <em>and bill files as imported</em>, partitioned by source, account, and billing period, so a mapping fix replays from the copy CloudBridge kept instead of paying for another fetch</li>
                             <li><code>config.json</code> — application configuration</li>
                         </ul>
                         <p data-i18n="docs.storage.p2">Credentials are not in any of these files. They live in the OS keyring.</p>
@@ -563,7 +642,7 @@ cargo run --release</code></pre>
     <footer>
         <div class="container">
             <span data-i18n="footer.copy">&copy; 2024-2026 CloudBridge. Released under MIT License.</span>
-            <span>AWS · Alibaba Cloud · DeepSeek</span>
+            <span>AWS · Alibaba Cloud · Volcengine · OpenAI · Anthropic · DeepSeek</span>
         </div>
     </footer>
 

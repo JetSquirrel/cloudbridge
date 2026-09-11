@@ -36,7 +36,8 @@ TEMPLATE = """<!DOCTYPE html>
     <meta name="description" content="{description}">
     <meta name="theme-color" content="#0E1420">
     <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/blog/{slug}.html">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌉</text></svg>">
+    <link rel="icon" type="image/png" href="../icon.png">
+    <link rel="apple-touch-icon" href="../icon.png">
     <title>{title} - CloudBridge Blog</title>
 
     <!-- Fonts -->
@@ -364,7 +365,7 @@ TEMPLATE = """<!DOCTYPE html>
     <footer>
         <div class="container">
             <span data-i18n="footer.copy">&copy; 2024-2026 CloudBridge. Released under MIT License.</span>
-            <span>AWS · Alibaba Cloud · DeepSeek</span>
+            <span>AWS · Alibaba Cloud · Volcengine · OpenAI · Anthropic · DeepSeek</span>
         </div>
     </footer>
 

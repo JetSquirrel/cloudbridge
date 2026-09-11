@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="CloudBridge - A cross-platform desktop application for multi-cloud cost management and visualization. Securely manage AWS, Alibaba Cloud, and DeepSeek costs with intelligent caching and a modern UI.">
-    <meta name="keywords" content="cloud cost management, multi-cloud, AWS cost explorer, Alibaba Cloud billing, DeepSeek, FinOps, FOCUS, cost optimization">
+    <meta name="description" content="CloudBridge - A local-first desktop app for cloud and AI cost management. Read AWS and Alibaba Cloud billing APIs, import the bill export from Volcengine, OpenAI, Anthropic or DeepSeek, and keep every charge in one FOCUS-shaped ledger on your machine.">
+    <meta name="keywords" content="cloud cost management, multi-cloud, AWS cost explorer, Alibaba Cloud billing, bill file import, 账单明细, OpenAI cost export, Anthropic cost export, DeepSeek, LLM token cost, FinOps, FOCUS, cost optimization">
     <meta name="theme-color" content="#0E1420">
     <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/">
     <meta property="og:title" content="CloudBridge - Multi-Cloud Cost Management">
-    <meta property="og:description" content="Securely visualize and analyze costs across AWS, Alibaba Cloud, and DeepSeek. All data stays on your machine.">
+    <meta property="og:description" content="Every cloud and model-provider bill in one local ledger — from the billing API, or from the export you downloaded. All data stays on your machine.">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://cloudbridge.jetsquirrel.cloud/">
     <meta property="og:image" content="https://raw.githubusercontent.com/JetSquirrel/cloudbridge/main/images/cloudbridge.png">
@@ -16,9 +16,10 @@
     <meta property="og:image:height" content="1200">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="CloudBridge - Multi-Cloud Cost Management">
-    <meta name="twitter:description" content="Securely visualize and analyze costs across AWS, Alibaba Cloud, and DeepSeek. All data stays on your machine.">
+    <meta name="twitter:description" content="Every cloud and model-provider bill in one local ledger — from the billing API, or from the export you downloaded. All data stays on your machine.">
     <meta name="twitter:image" content="https://raw.githubusercontent.com/JetSquirrel/cloudbridge/main/images/cloudbridge.png">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌉</text></svg>">
+    <link rel="icon" type="image/png" href="icon.png">
+    <link rel="apple-touch-icon" href="icon.png">
     <title>CloudBridge - Multi-Cloud Cost Management</title>
 
     <script type="application/ld+json">
@@ -30,7 +31,7 @@
         "downloadUrl": "https://github.com/JetSquirrel/cloudbridge/releases",
         "operatingSystem": "Windows, macOS",
         "applicationCategory": "FinanceApplication",
-        "description": "A cross-platform desktop application for multi-cloud cost management and visualization. Securely manage AWS, Alibaba Cloud, and DeepSeek costs with intelligent caching and a modern UI.",
+        "description": "A local-first desktop app for cloud and AI cost management. Read AWS and Alibaba Cloud billing APIs, import the bill export from Volcengine, OpenAI, Anthropic or DeepSeek, and keep every charge in one FOCUS-shaped ledger on your machine.",
         "license": "https://opensource.org/licenses/MIT",
         "offers": {
             "@type": "Offer",
@@ -919,7 +920,7 @@
                     <div>
                         <span class="eyebrow" data-i18n="hero.eyebrow">Local-first cost console</span>
                         <h1 data-i18n-html="hero.title">Every cloud bill.<br>One machine.<br><span class="accent">Nowhere else.</span></h1>
-                        <p class="hero-sub" data-i18n="hero.sub">CloudBridge reads AWS, Alibaba Cloud, and DeepSeek billing into one local ledger, then draws the trends. No sign-up, no sync, no telemetry.</p>
+                        <p class="hero-sub" data-i18n="hero.sub">CloudBridge reads your cloud and model-provider bills into one local ledger — from the billing API, or from the export you downloaded — then draws the trends. No sign-up, no sync, no telemetry.</p>
                         <div class="hero-buttons">
                             <a href="#download" class="btn btn-primary" data-i18n="hero.download">Download</a>
                             <a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer" class="btn btn-outline" data-i18n="hero.github">View on GitHub</a>
@@ -931,7 +932,7 @@
                         </div>
                     </div>
                     <figure class="converge">
-                        <svg viewBox="0 0 660 320" role="img" aria-label="Diagram: cost data streams from AWS, Alibaba Cloud, and DeepSeek converging through a 6-hour cache into one local ledger">
+                        <svg viewBox="0 0 660 320" role="img" aria-label="Diagram: cost data streams from AWS, Alibaba Cloud, and DeepSeek converging through a 24-hour refresh window into one local ledger">
                             <!-- source labels -->
                             <text x="0" y="46" font-size="11" fill="#7A8699" letter-spacing="1.5">AWS</text>
                             <text x="0" y="66" font-size="15" fill="#E8830C" font-weight="500">$182.40</text>
@@ -950,9 +951,9 @@
                             <!-- cache stage: trims paid API calls -->
                             <g class="fade-in" style="animation-delay: 1.5s">
                                 <rect x="416" y="158" width="104" height="44" fill="none" stroke="#2FA97C" stroke-width="1.5" rx="4" />
-                                <text x="468" y="176" font-size="10" fill="#2FA97C" text-anchor="middle" letter-spacing="1">6H CACHE</text>
-                                <text x="468" y="192" font-size="9" fill="#7A8699" text-anchor="middle">≈4 CALLS/DAY</text>
-                                <text x="468" y="222" font-size="9" fill="#7A8699" text-anchor="middle" letter-spacing="1">API SPEND ≈ $0.04/DAY</text>
+                                <text x="468" y="176" font-size="10" fill="#2FA97C" text-anchor="middle" letter-spacing="1">24H WINDOW</text>
+                                <text x="468" y="192" font-size="9" fill="#7A8699" text-anchor="middle">≈2 CALLS/DAY</text>
+                                <text x="468" y="222" font-size="9" fill="#7A8699" text-anchor="middle" letter-spacing="1">API SPEND ≈ $0.02/DAY</text>
                             </g>
                             <!-- merged stream into the local ledger -->
                             <path class="stream merged merged-b" d="M 520 180 L 556 180" />
@@ -976,22 +977,35 @@
             <div class="container">
                 <div class="row">
                     <div class="ledger-cell">
-                        <div class="value">03</div>
-                        <div class="label" data-i18n="stats.providers">Cloud Providers</div>
+                        <div class="value">06</div>
+                        <div class="label" data-i18n="stats.providers">Billing Sources</div>
                     </div>
                     <div class="ledger-cell">
                         <div class="value">100%</div>
                         <div class="label" data-i18n="stats.local">Local Storage</div>
                     </div>
                     <div class="ledger-cell">
-                        <div class="value">6h</div>
-                        <div class="label" data-i18n="stats.cache">Smart Caching</div>
+                        <div class="value">24h</div>
+                        <div class="label" data-i18n="stats.cache">Refresh Window</div>
                     </div>
                     <div class="ledger-cell">
                         <div class="value">FOCUS</div>
                         <div class="label" data-i18n="stats.focus">Open Billing Schema</div>
                     </div>
                 </div>
+            </div>
+        </section>
+
+        <!-- How it works -->
+        <section class="section" style="padding-bottom: 0;">
+            <div class="container">
+                <div class="section-head">
+                    <h2 data-i18n="howitworks.title">How it works</h2>
+                    <span class="eyebrow" data-i18n="howitworks.eyebrow">local-first</span>
+                </div>
+                <figure style="margin: 0; text-align: center;">
+                    <img src="diagram.jpg" alt="Hand-drawn diagram: bills from AWS, Alibaba Cloud, DeepSeek and CSV/Parquet bill files flow across a bridge into a local desktop app with a unified cost view — credentials stay local, no cloud sync" width="1440" height="810" loading="lazy" decoding="async" style="max-width: 900px; width: 100%; height: auto; border: 1px solid var(--hairline); border-radius: 12px;">
+                </figure>
             </div>
         </section>
 
@@ -1007,9 +1021,9 @@
                         <span class="dot"></span>
                         <span class="dot"></span>
                         <span class="dot"></span>
-                        <span class="app-title">CloudBridge — Dashboard</span>
+                        <span class="app-title">CloudBridge — local bill analysis</span>
                     </div>
-                    <img src="cloudbridge.png" alt="CloudBridge dashboard showing monthly cost overview, per-service breakdown, and cost trend charts" width="1920" height="1200" loading="lazy" decoding="async">
+                    <img src="cloudbridge.png" alt="CloudBridge overview dashboard showing month-to-date cost, month-end forecast, daily spend against a 7-day baseline, and per-service breakdown" width="1920" height="1188" loading="lazy" decoding="async">
                 </figure>
             </div>
         </section>
@@ -1023,32 +1037,40 @@
                 </div>
                 <div class="ledger">
                     <div class="ledger-row">
-                        <div><span class="tag" data-i18n="features.multicloud.tag">Multi-cloud</span><h3 data-i18n="features.multicloud.title">Three providers, one place</h3></div>
-                        <p data-i18n="features.multicloud.desc">AWS, Alibaba Cloud, and DeepSeek balance tracking in a single dashboard. Azure and GCP are coming soon.</p>
+                        <div><span class="tag" data-i18n="features.multicloud.tag">Multi-cloud</span><h3 data-i18n="features.multicloud.title">Six sources, one place</h3></div>
+                        <p data-i18n="features.multicloud.desc">AWS, Alibaba Cloud and DeepSeek over their billing APIs; Alibaba Cloud, Volcengine, OpenAI, Anthropic and DeepSeek from the bill export their console produces. Azure and GCP are coming soon.</p>
+                    </div>
+                    <div class="ledger-row">
+                        <div><span class="tag" data-i18n="features.import.tag">Import</span><h3 data-i18n="features.import.title">Bring your own bill</h3></div>
+                        <p data-i18n="features.import.desc">Point CloudBridge at the export you downloaded from a provider's console and it becomes the same ledger rows a fetch produces — per model, with token counts as a real pricing unit. A month you imported is never overwritten by an automatic fetch, because the export is the finer reading.</p>
                     </div>
                     <div class="ledger-row">
                         <div><span class="tag" data-i18n="features.focus.tag">Standard</span><h3 data-i18n="features.focus.title">A real ledger, FOCUS-shaped</h3></div>
                         <p data-i18n-html="features.focus.desc">Every source normalizes into one fact table named after <a href="https://focus.finops.org/" target="_blank" rel="noopener noreferrer">FOCUS</a> columns — the FinOps Foundation's open cost and usage specification — so credits, refunds, taxes, and fees are each labelled as themselves, and a real bill export drops in with no schema change.</p>
                     </div>
                     <div class="ledger-row">
-                        <div><span class="tag" data-i18n="features.charts.tag">Charts</span><h3 data-i18n="features.charts.title">Cost visualization</h3></div>
-                        <p data-i18n="features.charts.desc">Monthly overview, per-service breakdown, and 30-day trends — readable at a glance.</p>
+                        <div><span class="tag" data-i18n="features.charts.tag">Overview</span><h3 data-i18n="features.charts.title">Usage and net, kept apart</h3></div>
+                        <p data-i18n="features.charts.desc">Month to date, the rolling 30 days, or the last 12 months — your pick, and every number follows it. The headline total is net of credits; the chart, the rankings and the movers run on gross usage, because an account whose usage is fully covered nets to about zero and a trend drawn on that is noise.</p>
                     </div>
                     <div class="ledger-row">
                         <div><span class="tag" data-i18n="features.security.tag">Security</span><h3 data-i18n="features.security.title">Credentials in the OS keyring</h3></div>
                         <p data-i18n="features.security.desc">Credentials live in the OS keyring, never in the database. Your data never leaves your machine. No cloud sync, no telemetry.</p>
                     </div>
                     <div class="ledger-row">
-                        <div><span class="tag" data-i18n="features.cache.tag">Cache</span><h3 data-i18n="features.cache.title">Frugal with paid APIs</h3></div>
-                        <p data-i18n="features.cache.desc">A billing period is re-fetched at most once every 6 hours, and Cost Explorer is asked for everything in one request per period. Force Refresh when you need it now.</p>
+                        <div><span class="tag" data-i18n="features.cache.tag">Frugal</span><h3 data-i18n="features.cache.title">Frugal with paid APIs</h3></div>
+                        <p data-i18n="features.cache.desc">A billing period is re-fetched at most once a day by default — 6, 12, 24 or 48 hours, your choice — and Cost Explorer is asked for everything in one request per period. Force Refresh when you need it now.</p>
                     </div>
                     <div class="ledger-row">
-                        <div><span class="tag" data-i18n="features.ui.tag">Interface</span><h3 data-i18n="features.ui.title">Modern UI</h3></div>
-                        <p data-i18n="features.ui.desc">Built with GPUI, Zed's GPU-accelerated framework. Native performance, light and dark themes.</p>
+                        <div><span class="tag" data-i18n="features.ui.tag">Interface</span><h3 data-i18n="features.ui.title">A native desktop tool</h3></div>
+                        <p data-i18n="features.ui.desc">Built on GPUI, Zed's GPU-accelerated framework, at desktop density rather than web scale. Native performance, light and dark themes.</p>
                     </div>
                     <div class="ledger-row">
-                        <div><span class="tag" data-i18n="features.analytics.tag">Analytics</span><h3 data-i18n="features.analytics.title">Cost analytics</h3></div>
-                        <p data-i18n="features.analytics.desc">Daily totals, averages, highs, and lows, with month-over-month comparison.</p>
+                        <div><span class="tag" data-i18n="features.alerts.tag">Alerts</span><h3 data-i18n="features.alerts.title">Rules that watch the ledger</h3></div>
+                        <p data-i18n="features.alerts.desc">A day's spend running far above its own 7-day baseline, a prepaid balance heading for the floor, a month where too much of the bill carries no tag. Each rule says what it saw and what the month ends at if it holds; you resolve, snooze or dismiss.</p>
+                    </div>
+                    <div class="ledger-row">
+                        <div><span class="tag" data-i18n="features.attribution.tag">Attribution</span><h3 data-i18n="features.attribution.title">Where the money went</h3></div>
+                        <p data-i18n="features.attribution.desc">A Sankey from source to service to business line, with an explicit Unallocated node — the share of the bill you cannot yet explain is a number on the page, not an omission from it.</p>
                     </div>
                 </div>
             </div>
@@ -1069,13 +1091,13 @@
                     </div>
                     <div class="step">
                         <span class="num">02</span>
-                        <h3 data-i18n="how.step2.title">Add cloud accounts</h3>
-                        <p data-i18n="how.step2.desc">Enter your cloud provider credentials. They go straight into your OS keyring — never into the database.</p>
+                        <h3 data-i18n="how.step2.title">Add accounts, or a bill</h3>
+                        <p data-i18n="how.step2.desc">For a source with a billing API, enter the credentials — they go straight into your OS keyring, never into the database. For a source you import from, there are no credentials to enter: add the account and hand it the file.</p>
                     </div>
                     <div class="step">
                         <span class="num">03</span>
-                        <h3 data-i18n="how.step3.title">Visualize costs</h3>
-                        <p data-i18n="how.step3.desc">Open the dashboard for monthly totals and trends. Each billing period is re-fetched at most once every 6 hours.</p>
+                        <h3 data-i18n="how.step3.title">Read the ledger</h3>
+                        <p data-i18n="how.step3.desc">Open the Overview for totals, trends and the biggest movers, over the range you pick. Each billing period is re-fetched at most once a day, and you set that window in Settings.</p>
                     </div>
                 </div>
             </div>
@@ -1121,7 +1143,7 @@
                 <div class="faq-list">
                     <details class="faq-item">
                         <summary data-i18n="faq.free.q">Is CloudBridge free to use?</summary>
-                        <div class="faq-answer" data-i18n="faq.free.a">Yes! CloudBridge is completely free and open source under the MIT license. You only pay for your cloud provider's API costs (AWS Cost Explorer charges $0.01 per request; Alibaba Cloud and DeepSeek APIs are free).</div>
+                        <div class="faq-answer" data-i18n="faq.free.a">Yes! CloudBridge is completely free and open source under the MIT license. You only pay for your cloud provider's API costs (AWS Cost Explorer charges $0.01 per request, which a once-a-day refresh keeps near $0.02/day; the Alibaba Cloud and DeepSeek APIs are free, and a bill file import costs nothing at all).</div>
                     </details>
                     <details class="faq-item">
                         <summary data-i18n="faq.security.q">How is my data secured?</summary>
@@ -1129,7 +1151,11 @@
                     </details>
                     <details class="faq-item">
                         <summary data-i18n="faq.providers.q">Which cloud providers are supported?</summary>
-                        <div class="faq-answer" data-i18n-html="faq.providers.a">AWS, Alibaba Cloud, and DeepSeek (balance tracking) are fully supported today. Azure and Google Cloud Platform support is planned — see the <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/roadmap.md" target="_blank" rel="noopener noreferrer">roadmap</a>.</div>
+                        <div class="faq-answer" data-i18n-html="faq.providers.a">Six sources today. AWS and Alibaba Cloud read their billing APIs; DeepSeek reports a balance over its API and its spend detail through a file. Volcengine (for Ark 火山方舟), OpenAI and Anthropic are read from the export their console produces, and ask for no credentials at all. Azure and Google Cloud Platform are planned — see the <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/roadmap.md" target="_blank" rel="noopener noreferrer">roadmap</a>.</div>
+                    </details>
+                    <details class="faq-item">
+                        <summary data-i18n="faq.import.q">Can I use a bill I downloaded instead of an API key?</summary>
+                        <div class="faq-answer" data-i18n-html="faq.import.a">Yes, and for some sources it is the better reading. Alibaba Cloud's billing API reports Model Studio (百炼) as one figure a month while its 账单明细 export reports it per model; DeepSeek's API reports a balance and nothing about what the money went on. Add the account, click <strong>Import bill</strong> on its row, and pick the file. An import replaces every month the file covers — the export is the provider's own bill, so adding it to an API reading of the same month would count the month twice. See the <a href="/docs.html#import">import guide</a>.</div>
                     </details>
                     <details class="faq-item">
                         <summary data-i18n="faq.focus.q">What is FOCUS, and why does it matter?</summary>
@@ -1145,11 +1171,11 @@
                     </details>
                     <details class="faq-item">
                         <summary data-i18n="faq.refresh.q">How often is cost data refreshed?</summary>
-                        <div class="faq-answer" data-i18n="faq.refresh.a">A billing period is re-fetched at most once every 6 hours, so paid API calls stay minimal. Refresh picks up anything stale; Force Refresh re-fetches regardless, at the cost of another paid API call.</div>
+                        <div class="faq-answer" data-i18n="faq.refresh.a">A billing period is re-fetched at most once a day by default — a provider's bill does not move faster than that in any way worth paying for — and you can set 6, 12, 24 or 48 hours in Settings. Refresh picks up anything stale; Force Refresh re-fetches regardless, at the cost of another paid API call. A month you imported from a file is never replaced by a fetch, Force Refresh included.</div>
                     </details>
                     <details class="faq-item">
                         <summary data-i18n="faq.export.q">Can I export my cost data?</summary>
-                        <div class="faq-answer" data-i18n-html="faq.export.a">A bill export channel (S3 / OSS + Parquet) is on the <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/roadmap.md" target="_blank" rel="noopener noreferrer">roadmap</a>. For now, the ledger is a local DuckDB database that you can query directly.</div>
+                        <div class="faq-answer" data-i18n-html="faq.export.a">The ledger is a local DuckDB database you can query directly, and every payload it was built from is kept as Parquet under <code>raw/</code>. Collecting a provider's exports automatically from S3 / OSS is on the <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/roadmap.md" target="_blank" rel="noopener noreferrer">roadmap</a>; importing one by hand works today.</div>
                     </details>
                 </div>
             </div>
@@ -1162,7 +1188,7 @@
             <div class="footer-grid">
                 <div>
                     <h3>CloudBridge</h3>
-                    <p data-i18n="footer.tagline">Multi-cloud cost management made simple. Secure, local-first, and open source.</p>
+                    <p data-i18n="footer.tagline">Cloud and AI cost management made simple. Secure, local-first, and open source.</p>
                 </div>
                 <div>
                     <h3 data-i18n="footer.resources.title">Resources</h3>
@@ -1194,7 +1220,7 @@
             </div>
             <div class="footer-bottom">
                 <span data-i18n="footer.copy">&copy; 2024-2026 CloudBridge. Released under MIT License.</span>
-                <span>AWS · Alibaba Cloud · DeepSeek</span>
+                <span>AWS · Alibaba Cloud · Volcengine · OpenAI · Anthropic · DeepSeek</span>
             </div>
         </div>
     </footer>

@@ -31,6 +31,11 @@ carry their weight for a personal ledger:
 
 ## Where we are
 
+**P0 is done, and most of P1 with it** (shipped in 0.2.0 and 0.3.0
+respectively). What is still open in P1 is the bill file *export* channel
+— collecting the same exports automatically instead of downloading them
+by hand.
+
 **P0 is done.** A source is a registry row rather than an enum variant.
 `billing.duckdb` holds `fct_charge`, `ingest_batch`,
 `fct_balance_snapshot` and `dim_fx_rate` behind a transactional
@@ -40,7 +45,7 @@ response. The dashboard reads `v_charge_normalized`, so every figure on it
 is in one currency, converted per charge at a rate dated no later than the
 charge itself.
 
-The acceptance test holds: all three sources land in one `fct_charge`
+The acceptance test holds: every source lands in one `fct_charge`
 table, `SELECT sum(billed_cost_base) FROM v_charge_normalized WHERE
 billing_period = ?` is the cross-cloud total, and a repeated ingest of an
 unchanged bill produces identical rows.
@@ -60,12 +65,20 @@ All three structural problems are closed:
    `normalize` interprets and touches nothing, so a mapping fix replays
    payloads already on disk instead of paying Cost Explorer again.
 
-What P0 did *not* do, and P1 owns: instance-level detail. Alibaba Cloud's
-bill overview is one row per product per month, so its trend chart is as
-coarse as its source data. P1's bill file import closes this for the
+What P0 did *not* do, and P1 owned: instance-level detail. Alibaba Cloud's
+bill overview is one row per product per month, so its trend chart was as
+coarse as its source data. P1's bill file import closed this for the
 sources that publish an export — importing 账单明细 gives Alibaba Cloud a
 row per instance per billing item, and Model Studio (百炼) a row per
 model.
+
+**P1 as landed**, in 0.3.0: bill file import for five sources, tag
+allocation with an explicit Unallocated node, and the Sankey. Two sources
+were added along the way that the original plan did not name — DeepSeek,
+whose API reports a balance and nothing about what the money went on, and
+a second look at Alibaba Cloud through its export. Alerts arrived early,
+out of P2: the anomaly rule, the balance floor and the untagged-ratio rule
+run against the ledger on open.
 
 ## P0 — FOCUS normalization
 
@@ -242,7 +255,8 @@ normalizes, and nothing else.
   a file the user downloaded: instance-level detail, no per-call cost, and
   for a model service the only channel that reports a model at all.
   Alibaba Cloud (账单明细, which is what makes Model Studio 百炼 legible
-  per model), Volcengine (for Ark 火山方舟), OpenAI and Anthropic.
+  per model), Volcengine (for Ark 火山方舟), OpenAI, Anthropic and
+  DeepSeek.
 
   As landed this is a parser plus a registry field, not a new `fetch`: an
   import writes through the same whole-period replacement, so an imported
@@ -257,15 +271,29 @@ normalizes, and nothing else.
     `billed_cost` NULL and `cost_basis = absent`. This is the first thing
     to use that column for what it was added for. Multiplying tokens by a
     list price would put a figure in `billed_cost` that nobody was charged.
+  - Which channel a period arrived through is recorded
+    (`ingest_batch.channel`), and an imported month is never replaced by an
+    automatic fetch — Force Refresh included. The export is the finer
+    reading, and "force" means "do not trust the freshness window", not
+    "discard what I imported".
+  - A console's download is not always a bare file. DeepSeek's is a zip of
+    a cost CSV and a token-count CSV whose count column is named `amount`;
+    the format names the member it reads, so the zip imports as it
+    downloaded and the token file is refused rather than totalled as money.
 
 - **Bill file export channel (S3 / OSS + Parquet).** The same exports
   collected automatically rather than downloaded by hand: full history, no
   per-call cost. Only a new `fetch` implementation — the parsers above are
   already in place.
-- **Tag allocation with an explicit "unallocated" node.** The unallocated
-  share is the number that matters — it tells you how much of the bill you
-  cannot yet explain.
-- **Sankey.** Funding source → provider → service → tag → unallocated.
+- **Tag allocation with an explicit "unallocated" node — landed.** The
+  unallocated share is the number that matters, and it is on the Overview
+  as its own figure: how much of the bill you cannot yet explain. The
+  untagged-ratio alert rule watches it.
+- **Sankey — landed.** Source → service or model → business line, with an
+  explicit Unallocated node. Flows are gross usage: a net flow can be
+  negative, which means nothing in a Sankey. Per provider the tail beyond
+  the top few services merges into one `Other` node, so the ribbons stay
+  legible and every column still sums to the same total.
 
 A warning to surface in the UI before it becomes a bug report: AWS cost
 allocation tags must be activated by hand in the Billing console and are
@@ -278,12 +306,22 @@ than rendering a blank chart.
 - **Three-tier anomaly detection with attribution** — period-over-period at
   the account, service and resource level, always answering "what changed"
   rather than only "something changed".
-- **Budget alerts.**
+
+  *Partly landed early, in 0.3.0:* the alerting engine runs a daily-versus-
+  7-day-trailing-baseline rule per `(source, service)`, and an alert says
+  what it saw — the day's figure, the baseline it broke, the length of the
+  streak, and the month-end figure if it holds. What is still owed is the
+  resource level and a true period-over-period attribution of the delta.
+- **Budget alerts.** *Partly landed:* the balance-floor rule fires on a
+  prepaid balance falling below an account's budget, or a default floor.
+  A budget *per service or tag* is still owed, and so is the budget UI —
+  `BudgetInfo` and its queries exist with nothing calling them.
 - **Month-end snapshot freezing**, built on `ingest_batch`.
 
 A desktop app cannot alert while it is closed. Budget alerts are scoped as
 "notify on open, plus a monthly review", or a lightweight tray resident —
-we will not promise real-time alerting in the README.
+we will not promise real-time alerting in the README. As landed, rules are
+evaluated on open and when the Alerts page loads, and the docs say so.
 
 ## P3
 

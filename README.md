@@ -12,11 +12,19 @@
 
 **A cross-platform desktop application for multi-cloud cost management and visualization.**
 
-[Features](#-features) • [Screenshot](#-screenshot) • [Installation](#-installation) • [Configuration](#️-configuration) • [Usage](#-usage) • [Roadmap](#-roadmap)
+[How It Works](#-how-it-works) • [Features](#-features) • [Screenshot](#-screenshot) • [Installation](#-installation) • [Configuration](#️-configuration) • [Usage](#-usage) • [Roadmap](#-roadmap)
 
 </div>
 
 ---
+
+## 🌉 How It Works
+
+<div align="center">
+
+![Bills from AWS, Alibaba Cloud, DeepSeek and CSV/Parquet bill files flow across a bridge into a local desktop app with a unified cost view — credentials stay local, no cloud sync](images/diagram.png)
+
+</div>
 
 ## 📸 Screenshot
 
@@ -48,11 +56,30 @@
   - The file is copied into the raw store, so a mapping fix replays it
     without asking you to find the download again
 
-- **📊 Cost Visualization**
-  - Monthly cost overview with month-over-month comparison
-  - Per-service cost breakdown
-  - Cost trend charts
-  - Daily cost statistics (total, average, max, min)
+- **📊 An Overview Over the Range You Pick**
+  - Month to date, the rolling last 30 days, or the last 12 months — every
+    number on the page follows the selection
+  - The headline total is net of credits; the gross usage and the credits
+    that took it down are shown beside it
+  - Chart, rankings, "Where it went" and the biggest movers all run on
+    gross usage — an account whose usage is fully covered by credits nets
+    to ≈ 0, and a trend drawn on that is noise
+  - The unallocated share — the part of the bill that reaches no business
+    line — is its own figure, not an omission
+
+- **🔔 Alerts and Rules**
+  - A day's spend far above its own 7-day baseline, for days running
+  - A prepaid balance heading for the floor
+  - A month where too much of the bill carries no tag
+  - Each alert says what it saw and where the month ends if it holds;
+    resolve, snooze or dismiss. Rules are evaluated on open — a desktop app
+    cannot watch your spend while it is closed
+
+- **🌊 Attribution**
+  - A Sankey from source to service or model to business line, with an
+    explicit Unallocated node
+  - Flows are gross usage: a net flow can be negative, which means nothing
+    in a Sankey
 
 - **💱 One Currency**
   - Charges are stored in the currency they were billed in and converted
@@ -74,14 +101,17 @@
   - No cloud sync, no telemetry
 
 - **⚡ Frugal with Paid APIs**
-  - A period is re-fetched at most once every 6 hours
+  - A period is re-fetched at most once a day by default — 6, 12, 24 or 48
+    hours, set in **Settings → Refreshing**
   - Cost Explorer is asked for everything in one request per period
-  - Force refresh when you need it now
+  - Force refresh when you need it now; a month you imported from a file
+    is never replaced by a fetch, Force Refresh included
 
-- **🎨 Modern UI**
-  - Built with [GPUI](https://gpui.rs/) - Zed's GPU-accelerated UI framework
-  - Native performance
-  - Light and dark themes
+- **🎨 A Native Desktop Tool**
+  - Built on [GPUI](https://gpui.rs/) — Zed's GPU-accelerated UI framework
+    — through the [gpui-kit](https://crates.io/crates/gpui-kit) crate
+  - Desktop density rather than web scale, and it zooms with the base font
+  - Native performance, light and dark themes
 
 ## 📦 Installation
 
@@ -289,16 +319,19 @@ plan and its rationale.
 - [x] AWS / Alibaba Cloud / DeepSeek mapped to FOCUS columns
 - [x] Cross-currency totals via a rate table and reporting currency
 
-### P1
+### P1 — mostly done in 0.3.0
 - [x] Bill file import from the console's own export (Alibaba Cloud,
       Volcengine, OpenAI, Anthropic, DeepSeek)
+- [x] Tag-based allocation with an explicit "unallocated" node
+- [x] Sankey cost flow
 - [ ] Bill file export channel (S3 / OSS + Parquet)
-- [ ] Tag-based allocation with an explicit "unallocated" node
-- [ ] Sankey cost flow
 
 ### P2
-- [ ] Three-tier anomaly detection with attribution
-- [ ] Budget alerts
+- [~] Anomaly detection with attribution — the daily-vs-7-day-baseline rule
+      per source and service landed early; the resource level and a true
+      period-over-period attribution of the delta are still owed
+- [~] Budget alerts — the balance floor landed; per-service budgets and the
+      budget UI are still owed
 - [ ] Month-end snapshot freezing
 
 ### P3
