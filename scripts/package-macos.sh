@@ -173,7 +173,7 @@ notarize() {
     --key "$NOTARY_KEY" \
     --key-id "$NOTARY_KEY_ID" \
     --issuer "$NOTARY_ISSUER" \
-    --wait --timeout 30m
+    --wait --timeout 90m
 }
 
 ditto -c -k --keepParent "$APP" "$APP.zip"
