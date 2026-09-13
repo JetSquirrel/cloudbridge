@@ -182,6 +182,12 @@ ln -s /Applications dmg-root/Applications
 hdiutil create -volname CloudBridge -srcfolder dmg-root -ov -format UDZO "$DMG" >/dev/null
 rm -rf dmg-root
 
+# The disk image gets its own signature too: Gatekeeper's open assessment
+# (the spctl check below) rejects a notarized, stapled dmg that carries no
+# code signature of its own. No --options runtime here — the hardened
+# runtime applies to executables, not container formats.
+codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "$DMG"
+
 echo "package-macos: notarizing $DMG"
 SUBMIT_LOG=$(mktemp -t notarytool)
 if ! xcrun notarytool submit "$DMG" \
