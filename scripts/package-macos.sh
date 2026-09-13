@@ -86,7 +86,7 @@ echo "package-macos: signing as $MACOS_SIGN_IDENTITY"
 # The bundle
 # ---------------------------------------------------------------------------
 
-rm -rf "$APP" dmg-root "$DMG" "$APP.zip"
+rm -rf "$APP" dmg-root "$DMG"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINARY" "$APP/Contents/MacOS/CloudBridge"
 chmod +x "$APP/Contents/MacOS/CloudBridge"
@@ -161,25 +161,20 @@ codesign --verify --deep --strict --verbose=2 "$APP"
 # ---------------------------------------------------------------------------
 # Notarization
 #
-# Twice, on purpose. The .dmg is what a browser downloads, so its ticket is
-# what Gatekeeper reads on open; the .app is what ends up in /Applications
-# long after the disk image is thrown away, so it carries its own ticket and
-# launches even with no network to ask Apple over.
+# One submission, not two. The notary service scans the .dmg's contents, so
+# the enclosed .app gets its ticket from the same submission. The trade-off:
+# the .app inside carries no stapled ticket of its own, so Gatekeeper's
+# first-launch check needs network. That is the shape most Mac apps ship in,
+# and it halves our exposure to the notary queue — fresh teams see hours of
+# queue latency per submission, and two sequential hour-long waits do not
+# fit in a CI job. If an offline-first-launch guarantee ever matters, add a
+# second submission for the zipped .app here.
+#
+# The wait budget is 5 hours for the same reason: a new team's first
+# submissions routinely sit In Progress for several hours. The client
+# timing out does not stop the server-side submission, but the run needs
+# the verdict to staple, so the budget has to outlast the queue.
 # ---------------------------------------------------------------------------
-
-notarize() {
-  echo "package-macos: notarizing $1"
-  xcrun notarytool submit "$1" \
-    --key "$NOTARY_KEY" \
-    --key-id "$NOTARY_KEY_ID" \
-    --issuer "$NOTARY_ISSUER" \
-    --wait --timeout 90m
-}
-
-ditto -c -k --keepParent "$APP" "$APP.zip"
-notarize "$APP.zip"
-rm -f "$APP.zip"
-xcrun stapler staple "$APP"
 
 mkdir -p dmg-root
 cp -R "$APP" dmg-root/
@@ -187,15 +182,30 @@ ln -s /Applications dmg-root/Applications
 hdiutil create -volname CloudBridge -srcfolder dmg-root -ov -format UDZO "$DMG" >/dev/null
 rm -rf dmg-root
 
-notarize "$DMG"
+echo "package-macos: notarizing $DMG"
+SUBMIT_LOG=$(mktemp -t notarytool)
+if ! xcrun notarytool submit "$DMG" \
+    --key "$NOTARY_KEY" \
+    --key-id "$NOTARY_KEY_ID" \
+    --issuer "$NOTARY_ISSUER" \
+    --wait --timeout 300m | tee "$SUBMIT_LOG"; then
+  # Rejected or timed out: Apple's log says exactly which and why.
+  SUBMISSION_ID=$(sed -n 's/^  id: //p' "$SUBMIT_LOG" | head -1)
+  if [ -n "$SUBMISSION_ID" ]; then
+    xcrun notarytool log "$SUBMISSION_ID" \
+      --key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" || true
+  fi
+  die "notarization did not complete cleanly (see log above)"
+fi
 xcrun stapler staple "$DMG"
 
 # ---------------------------------------------------------------------------
 # What a user's Mac will conclude. `spctl` here is the whole point of the
-# exercise: it is the check that rejected every build before this one.
+# exercise: it is the check that rejected every build before this one. The
+# .app assessment works only online: its ticket lives on Apple's servers,
+# not stapled to the bundle (see the notarization comment above).
 # ---------------------------------------------------------------------------
 
-xcrun stapler validate "$APP"
 xcrun stapler validate "$DMG"
 spctl --assess --type execute --verbose=2 "$APP"
 spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
