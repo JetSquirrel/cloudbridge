@@ -1136,6 +1136,33 @@ mod tests {
         conn
     }
 
+    /// The tag rollups call `json_extract_string`, and under the hardened
+    /// runtime duckdb cannot dlopen an extension it downloads: library
+    /// validation refuses to map code signed by another team. The json
+    /// extension therefore has to be compiled in (the `json` feature on the
+    /// duckdb dependency), which this asserts by turning off both autoload
+    /// and auto-install first.
+    #[test]
+    fn json_functions_are_compiled_in() {
+        let conn = Connection::open_in_memory().expect("in-memory duckdb");
+        conn.execute_batch(
+            "SET extension_directory='/tmp/cloudbridge-no-extensions';
+             SET autoinstall_known_extensions=false;
+             SET autoload_known_extensions=false;",
+        )
+        .expect("settings apply");
+
+        let value: String = conn
+            .query_row(
+                r#"SELECT json_extract_string('{"env":"prod"}', '$.env')"#,
+                [],
+                |row| row.get(0),
+            )
+            .expect("json works without a downloaded extension");
+
+        assert_eq!(value, "prod");
+    }
+
     fn at(day: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 8, day, 0, 0, 0).unwrap()
     }

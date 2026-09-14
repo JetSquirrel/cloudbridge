@@ -1,6 +1,6 @@
 [package]
 name = "cloudbridge"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 description = "A cross-platform desktop application for multi-cloud cost management"
 authors = ["JetSquirrel"]
@@ -30,8 +30,11 @@ sha2 = "0.10"
 sha1 = "0.10"  # Aliyun signing
 hex = "0.4"
 
-# Database
-duckdb = { version = "1", features = ["bundled"] }
+# Database. `json` compiles the JSON extension into the binary rather than
+# letting duckdb autoload a downloaded dylib at runtime: under the hardened
+# runtime, library validation refuses to map an extension signed by another
+# team, so autoloading fails with "different Team IDs".
+duckdb = { version = "1", features = ["bundled", "json"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
