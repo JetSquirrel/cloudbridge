@@ -30,11 +30,12 @@ sha2 = "0.10"
 sha1 = "0.10"  # Aliyun signing
 hex = "0.4"
 
-# Database. `json` compiles the JSON extension into the binary rather than
-# letting duckdb autoload a downloaded dylib at runtime: under the hardened
-# runtime, library validation refuses to map an extension signed by another
-# team, so autoloading fails with "different Team IDs".
-duckdb = { version = "1", features = ["bundled", "json"] }
+# Database. `json` and `parquet` compile those extensions into the binary
+# rather than letting duckdb autoload a downloaded dylib at runtime: under
+# the hardened runtime, library validation refuses to map an extension
+# signed by another team, so autoloading fails with "different Team IDs".
+# The tag rollups need JSON; the raw store writes and re-reads Parquet.
+duckdb = { version = "1", features = ["bundled", "json", "parquet"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

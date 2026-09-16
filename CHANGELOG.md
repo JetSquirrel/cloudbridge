@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-16
+
+### Fixed
+- The macOS build loads no DuckDB extension at runtime: the json and
+  parquet extensions are compiled into the binary instead. Signing turned
+  on the hardened runtime, whose library validation refuses to map code
+  signed by another team, so the app opened and then failed to load the
+  overview with `mapping process and mapped file (non-platform) have
+  different Team IDs`. Introduced with signing in 0.3.1 — an unsigned
+  0.3.0 had no library validation to run into
+
 ## [0.3.1] - 2026-09-12
 
 A consistency pass over the whole interface: one shared set of cards,

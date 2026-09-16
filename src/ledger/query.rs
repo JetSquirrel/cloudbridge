@@ -1136,14 +1136,15 @@ mod tests {
         conn
     }
 
-    /// The tag rollups call `json_extract_string`, and under the hardened
-    /// runtime duckdb cannot dlopen an extension it downloads: library
-    /// validation refuses to map code signed by another team. The json
-    /// extension therefore has to be compiled in (the `json` feature on the
-    /// duckdb dependency), which this asserts by turning off both autoload
-    /// and auto-install first.
+    /// The tag rollups call `json_extract_string` and the raw store writes
+    /// and re-reads its batches as Parquet, and under the hardened runtime
+    /// duckdb cannot dlopen an extension it downloads: library validation
+    /// refuses to map code signed by another team. Both extensions
+    /// therefore have to be compiled in (the `json` and `parquet` features
+    /// on the duckdb dependency), which this asserts by turning off both
+    /// autoload and auto-install first.
     #[test]
-    fn json_functions_are_compiled_in() {
+    fn extensions_are_compiled_in() {
         let conn = Connection::open_in_memory().expect("in-memory duckdb");
         conn.execute_batch(
             "SET extension_directory='/tmp/cloudbridge-no-extensions';
@@ -1161,6 +1162,20 @@ mod tests {
             .expect("json works without a downloaded extension");
 
         assert_eq!(value, "prod");
+
+        let file = std::env::temp_dir().join("cloudbridge_compiled_in.parquet");
+        let path = file.to_string_lossy().replace('\'', "''");
+        conn.execute_batch(&format!(
+            "COPY (SELECT 'prod' AS env) TO '{path}' (FORMAT PARQUET);
+             CREATE TABLE probe AS SELECT env FROM read_parquet('{path}');"
+        ))
+        .expect("parquet works without a downloaded extension");
+        let env: String = conn
+            .query_row("SELECT env FROM probe", [], |row| row.get(0))
+            .expect("the written row reads back");
+
+        assert_eq!(env, "prod");
+        std::fs::remove_file(&file).ok();
     }
 
     fn at(day: u32) -> DateTime<Utc> {
