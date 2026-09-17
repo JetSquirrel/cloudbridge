@@ -155,6 +155,16 @@ Keep the job non-blocking until the Ubuntu CI check is verified; local macOS
 validation does not establish compatibility on other platforms. Revalidate
 the minimum when updating `Cargo.lock`. The wasm build still needs nightly.
 
+The Ubuntu jobs compile the desktop application for Linux, which needs four
+system libraries installed first — see "Install Linux system libraries" in
+`ci.yml`. `libfontconfig1-dev` is the one that bites: `yeslogic-fontconfig-sys`
+probes `fontconfig` from its build script and panics instead of falling back,
+so its absence fails `cargo check` before any of this project's code is read.
+The other three cover the `freetype2` probe and the X11 backend's direct
+`-lxkbcommon`/`-lxcb` links. A dependency that links a C library on Linux has
+to be added to every job that compiles the tree — each runs on its own runner,
+and nothing here needs these libraries on macOS or Windows.
+
 Things that will bite you:
 
 - **Nightly is required for the wasm build only.** `gpui-pre-web` pulls Zed's

@@ -32,6 +32,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install Linux system libraries
+        # Only three crates in the tree reach outside Rust on Linux:
+        # `yeslogic-fontconfig-sys` probes fontconfig with pkg-config (and
+        # freetype alongside it), while the X11 backend links xkbcommon and
+        # xcb directly. Everything else is pure Rust or dlopen'd.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libfontconfig1-dev \
+            libfreetype-dev \
+            libxkbcommon-x11-dev \
+            libxcb1-dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
@@ -94,6 +106,16 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+      - name: Install Linux system libraries
+        # Same set as the `check` job — a second runner needs them installed
+        # a second time.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libfontconfig1-dev \
+            libfreetype-dev \
+            libxkbcommon-x11-dev \
+            libxcb1-dev
       - name: Read declared Rust version
         id: msrv
         shell: bash
@@ -118,6 +140,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install Linux system libraries
+        # Same set as the `check` job. `cargo geiger` compiles the tree to
+        # report on it, so without these it dies in the fontconfig build
+        # script — and the `|| true` further down would turn that into a
+        # silently empty report rather than a failure.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libfontconfig1-dev \
+            libfreetype-dev \
+            libxkbcommon-x11-dev \
+            libxcb1-dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       
