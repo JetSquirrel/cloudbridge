@@ -739,7 +739,7 @@ fn legend_dashed(cx: &App, color: Hsla, label: &'static str) -> Div {
 fn line_color(cx: &App, name: &str, index: usize) -> Hsla {
     if name == "Unallocated" {
         theme::grey(cx)
-    } else if index % 2 == 0 {
+    } else if index.is_multiple_of(2) {
         theme::accent(cx)
     } else {
         theme::olive(cx)
