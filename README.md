@@ -1,484 +1,196 @@
 # CloudBridge
 
-<div align="center">
+**Your cloud and AI costs, in one local ledger.**
 
-![CloudBridge Logo](https://img.shields.io/badge/CloudBridge-Multi--Cloud%20Cost%20Management-blue?style=for-the-badge)
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Rust](https://img.shields.io/badge/Rust-1.75+-orange.svg)](https://www.rust-lang.org/)
 [![CI](https://github.com/JetSquirrel/cloudbridge/actions/workflows/ci.yml/badge.svg)](https://github.com/JetSquirrel/cloudbridge/actions/workflows/ci.yml)
-[![Release](https://github.com/JetSquirrel/cloudbridge/actions/workflows/release.yml/badge.svg)](https://github.com/JetSquirrel/cloudbridge/actions/workflows/release.yml)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey.svg)](https://github.com/JetSquirrel/cloudbridge)
+[![Release](https://img.shields.io/github/v/release/JetSquirrel/cloudbridge)](https://github.com/JetSquirrel/cloudbridge/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**A cross-platform desktop application for multi-cloud cost management and visualization.**
+CloudBridge is an open-source desktop app for developers who want to understand
+what they spend on cloud infrastructure and model APIs. Connect billing accounts
+or import provider exports, compare costs across sources, and trace spending to
+services, models, and business lines. No CloudBridge account or hosted backend
+required.
 
-[How It Works](#-how-it-works) • [Features](#-features) • [Screenshot](#-screenshot) • [Installation](#-installation) • [Configuration](#️-configuration) • [Usage](#-usage) • [Roadmap](#-roadmap)
+[Download](#installation) · [Quick start](#quick-start) · [Documentation](https://cloudbridge.jetsquirrel.cloud/docs.html) · [Contributing](CONTRIBUTING.md)
 
-</div>
+![CloudBridge desktop dashboard with spending totals, trends, and a service breakdown](images/cloudbridge.png)
 
----
+## Why CloudBridge?
 
-## 🌉 How It Works
+- **One view across providers.** Explore month-to-date, rolling 30-day, or
+  12-month trends, with account and service breakdowns.
+- **Spend and usage kept distinct.** See net charges alongside gross usage and
+  credits. Token-only exports remain usage records, not estimated bills.
+- **Explain where costs go.** Follow a Sankey from source to service or model
+  to business line; unallocated usage stays visible.
+- **Review changes that matter.** Configurable rules flag unusual daily spend,
+  low prepaid balances, and unallocated costs. Rules run when the app opens
+  and when the Alerts page loads—not while it is closed.
+- **Report in one currency.** Original billing amounts are preserved; a dated,
+  built-in exchange-rate table converts them for display. Missing rates are
+  reported rather than silently treated as 1:1. Rates are not live market data.
+- **Keep control of your data.** A local DuckDB ledger, credentials in the OS
+  keyring, no cloud sync, and no telemetry. A native GPUI interface supports
+  light and dark themes.
 
-<div align="center">
+## Supported sources
 
-![Bills from AWS, Alibaba Cloud, DeepSeek and CSV/Parquet bill files flow across a bridge into a local desktop app with a unified cost view — credentials stay local, no cloud sync](images/diagram.png)
+| Source | Connection | Available detail |
+| --- | --- | --- |
+| Amazon Web Services | Cost Explorer API | Costs by service and charge category |
+| Alibaba Cloud (阿里云) | Billing API or bill import | Product totals; imported bill details include Model Studio (百炼) models |
+| Volcengine (火山引擎) | Bill import | Ark (火山方舟) endpoints and token types |
+| OpenAI | Cost or usage export | Project and model costs or token usage |
+| Anthropic (Claude) | Cost or usage export | Workspace and model costs or token usage |
+| DeepSeek | Balance API or bill import | Prepaid balance; imported daily, per-model spend |
 
-</div>
+File imports need no provider credentials. DeepSeek's API reports a balance,
+not a spending breakdown. Azure and Google Cloud are not currently supported.
 
-## 📸 Screenshot
+**Unreleased:** the development tree also supports AWS Data Exports (FOCUS 1.2
+with AWS columns) from an S3 bucket. This replaces Cost Explorer for accounts
+with an export URI; S3 storage and request charges can still apply. See the
+[roadmap](docs/roadmap.md) and [changelog](CHANGELOG.md) for release status.
 
-<div align="center">
+## Installation
 
-![CloudBridge Screenshot](images/cloudbridge.png)
-
-</div>
-
-## ✨ Features
-
-- **🌐 Clouds and Model Providers**
-  - Amazon Web Services (AWS) — billing API
-  - Alibaba Cloud (阿里云) — billing API, plus bill import for
-    Model Studio (百炼) model-level detail
-  - Volcengine (火山引擎) — bill import, for Ark (火山方舟)
-  - OpenAI — bill import (cost or usage export)
-  - Anthropic (Claude) — bill import (cost or usage export)
-  - DeepSeek — balance tracking, plus bill import for per-model spend
-  - Azure & GCP — coming soon
-
-- **🧾 Import the Bill You Downloaded**
-  - Point CloudBridge at a bill export from your provider's console and it
-    normalizes into the same ledger the billing APIs feed
-  - Model spend arrives per model, with `pricing_unit` holding `Tokens`
-  - A usage export that carries no amounts is recorded as usage with
-    `cost_basis = absent` — never priced at list and passed off as spend
-  - One file can cover several months; each is replaced as a whole
-  - The file is copied into the raw store, so a mapping fix replays it
-    without asking you to find the download again
-
-- **📊 An Overview Over the Range You Pick**
-  - Month to date, the rolling last 30 days, or the last 12 months — every
-    number on the page follows the selection
-  - The headline total is net of credits; the gross usage and the credits
-    that took it down are shown beside it
-  - Chart, rankings, "Where it went" and the biggest movers all run on
-    gross usage — an account whose usage is fully covered by credits nets
-    to ≈ 0, and a trend drawn on that is noise
-  - The unallocated share — the part of the bill that reaches no business
-    line — is its own figure, not an omission
-
-- **🔔 Alerts and Rules**
-  - A day's spend far above its own 7-day baseline, for days running
-  - A prepaid balance heading for the floor
-  - A month where too much of the bill carries no tag
-  - Each alert says what it saw and where the month ends if it holds;
-    resolve, snooze or dismiss. Rules are evaluated on open — a desktop app
-    cannot watch your spend while it is closed
-
-- **🌊 Attribution**
-  - A Sankey from source to service or model to business line, with an
-    explicit Unallocated node
-  - Flows are gross usage: a net flow can be negative, which means nothing
-    in a Sankey
-
-- **💱 One Currency**
-  - Charges are stored in the currency they were billed in and converted
-    for display, each at a rate dated no later than the charge itself
-  - Pick your reporting currency in Settings; nothing is rewritten
-  - A charge no rate covers is reported, never counted at par
-
-- **🧾 A Real Ledger**
-  - Every source normalizes into one fact table named after
-    [FOCUS](https://focus.finops.org/) columns, so credits, refunds, taxes
-    and fees are each labelled as themselves
-  - Raw provider responses are kept as Parquet, so a mapping fix replays
-    what is on disk instead of paying for another fetch
-  - Re-ingesting an unchanged bill produces identical rows
-
-- **🔒 Security First**
-  - Credentials live in your OS keyring, never in the database
-  - Credentials never leave your local machine
-  - No cloud sync, no telemetry
-
-- **⚡ Frugal with Paid APIs**
-  - A period is re-fetched at most once a day by default — 6, 12, 24 or 48
-    hours, set in **Settings → Refreshing**
-  - Cost Explorer is asked for everything in one request per period
-  - Force refresh when you need it now; a month you imported from a file
-    is never replaced by a fetch, Force Refresh included
-
-- **🎨 A Native Desktop Tool**
-  - Built on [GPUI](https://gpui.rs/) — Zed's GPU-accelerated UI framework
-    — through the [gpui-kit](https://crates.io/crates/gpui-kit) crate
-  - Desktop density rather than web scale, and it zooms with the base font
-  - Native performance, light and dark themes
-
-## 📦 Installation
-
-### Download Pre-built Binaries
-
-Download the latest release for your platform from the [Releases](https://github.com/JetSquirrel/cloudbridge/releases) page:
+Download from the official [GitHub Releases](https://github.com/JetSquirrel/cloudbridge/releases/latest) page:
 
 | Platform | Download |
-|----------|----------|
-| Windows (x64) | `cloudbridge-windows-x64.exe` |
-| macOS (Apple Silicon) | `cloudbridge-macos-arm64.dmg` |
+| --- | --- |
+| macOS · Apple Silicon | [cloudbridge-macos-arm64.dmg](https://github.com/JetSquirrel/cloudbridge/releases/latest/download/cloudbridge-macos-arm64.dmg) |
+| Windows · x64 | [cloudbridge-windows-x64.exe](https://github.com/JetSquirrel/cloudbridge/releases/latest/download/cloudbridge-windows-x64.exe) |
 
-> Intel Macs and Linux are not published as binaries; both build from
-> source.
+**macOS:** Open the disk image and drag **CloudBridge** to **Applications**.
+Current official macOS releases are Developer ID signed and notarized. If macOS
+blocks a current release, report the exact warning; do not remove quarantine
+protection as a routine installation step.
 
-> **Note for Windows users:** Windows SmartScreen may show a warning for unsigned executables. Click "More info" → "Run anyway" to proceed. The application is safe and [open source](https://github.com/JetSquirrel/cloudbridge).
+**Windows:** Run the executable. SmartScreen may warn about an unsigned or
+unrecognized download. Verify that it came from the official release page
+before deciding whether to continue.
 
-> **Note for macOS users:** Open the `.dmg` and drag **CloudBridge** to
-> Applications. The app is ad-hoc signed but **not notarized**, so the first
-> launch is blocked with *"Apple could not verify CloudBridge is free of
-> malware"*. Two ways past it:
->
-> - **System Settings.** Double-click the app, click **Done** on the
->   warning, then open **System Settings → Privacy & Security**, scroll to
->   Security, and click **Open Anyway** next to CloudBridge. The button only
->   appears after a blocked attempt, and it expires after about an hour.
-> - **Terminal.** `xattr -d com.apple.quarantine /Applications/CloudBridge.app`,
->   then open it normally.
->
-> On **macOS 15 (Sequoia) and later — including macOS 26 — Control-click →
-> Open no longer works**: Apple removed that bypass, which is why the
-> warning offers only *Done* and *Move to Trash*. On macOS 14 and earlier,
-> Control-click → **Open** is still the quickest route.
->
-> Upgrading from the 0.1.x bare binary, macOS asks once more for permission
-> to read the credentials CloudBridge stored in your keychain — it is a
-> different application path, so choose **Always Allow**.
+Linux and Intel Mac binaries are not published. Source builds on those platforms
+are not guaranteed to work; see [development setup](CONTRIBUTING.md#development-setup)
+for prerequisites and validation guidance.
 
-### Prerequisites (for building from source)
+## Quick start
 
-- **Rust** 1.75 or later
-- **Windows SDK** (Windows only, for shader compilation)
-  - The `fxc.exe` shader compiler must be in PATH
-  - Usually located at: `C:\Program Files (x86)\Windows Kits\10\bin\10.0.xxxxx.0\x64\`
+### Explore without credentials
 
-### Build from Source
+Launch the app and open **Settings → Demo data** to load sample accounts and
+billing history. Demo accounts have no credentials and are skipped by provider
+refreshes. Clear the demo data from the same page when you are ready.
+
+### Connect your own data
+
+1. Open **Accounts**, choose a source, and enter an account name.
+2. For API access, configure credentials using the
+   [account setup guide](https://cloudbridge.jetsquirrel.cloud/docs.html#configuration)
+   and [permission templates](docs/policies.md). Use least-privilege credentials.
+3. Save the account. Use **Refresh** for API data, or **Import bill** on the
+   account row for a downloaded export.
+4. Open **Overview** and select **MTD**, **30d**, or **12m**. Choose your reporting
+   currency under **Settings → Reporting**.
+
+### Before importing a bill
+
+- **Imports replace whole months for the selected account.** Export the full
+  bill: a product-filtered file replaces that month's existing data with only
+  that product. Re-import a corrected export to update a month.
+- **Refresh never overwrites an imported month**, including **Force Refresh**.
+- **Usage is not spend.** An export with token counts but no monetary amounts
+  does not contribute billed costs.
+- **Text exports must be UTF-8.** Re-save GBK files as CSV UTF-8 before importing.
+- **Import DeepSeek's ZIP as downloaded.** CloudBridge reads `cost-*.csv`;
+  `amount-*.csv` contains token counts, not money.
+
+The [import guide](https://cloudbridge.jetsquirrel.cloud/docs.html#import)
+lists export locations, supported details, and troubleshooting steps.
+
+Refresh uses a **24-hour freshness window** by default, configurable to
+6, 12, 24, or 48 hours in **Settings → Refreshing**. **Force Refresh** bypasses
+that window for API-backed periods and can incur additional provider charges.
+CloudBridge itself is free; provider API fees are separate.
+
+## How it works
+
+![Billing APIs and provider exports feed a local CloudBridge ledger and unified cost view](images/diagram.png)
+
+Provider responses and imported files are retained locally. A normalization
+layer maps them into a shared ledger using column names from
+[FOCUS](https://focus.finops.org/), the open cost and usage specification.
+CloudBridge uses this vocabulary; it does not implement the full specification.
+
+Ingestion replaces an account's billing period transactionally, avoiding duplicate
+charges on re-import. Raw data can be reprocessed after a mapping correction
+without another provider fetch. Charts, attribution, and alerts read the ledger
+rather than making their own billing API calls.
+
+## Privacy and local storage
+
+- Saved provider credentials are held in the OS keyring, separate from the
+  billing databases. The app uses them to authenticate requests directly to
+  configured providers.
+- Billing records and raw exports stay in the local application-data directory.
+  There is no CloudBridge sync service or telemetry.
+- **Local does not mean encrypted.** CloudBridge does not encrypt the ledger or
+  raw billing files. Use OS disk encryption and protect your backups.
+- Bills can contain account identifiers, resource names, and tags. Redact these
+  as well as credentials before sharing logs, screenshots, or sample exports.
+
+See [storage and backups](https://cloudbridge.jetsquirrel.cloud/docs.html#storage)
+and [security notes](https://cloudbridge.jetsquirrel.cloud/docs.html#security).
+
+## Documentation
+
+| I want to… | Read |
+| --- | --- |
+| Install and configure an account | [Setup guide](https://cloudbridge.jetsquirrel.cloud/docs.html#installation) |
+| Import a provider bill | [Bill file import](https://cloudbridge.jetsquirrel.cloud/docs.html#import) |
+| Understand totals, attribution, and currency conversion | [User guide](https://cloudbridge.jetsquirrel.cloud/docs.html#usage) |
+| Configure alerts | [Alerts and rules](https://cloudbridge.jetsquirrel.cloud/docs.html#alerts) |
+| Set up provider permissions | [IAM and API access](docs/policies.md) |
+| See what changed or what is planned | [Changelog](CHANGELOG.md) · [Roadmap](docs/roadmap.md) |
+| Build the app or add a billing source | [Contributing guide](CONTRIBUTING.md) |
+
+## Development
+
+Use **Rust 1.95 or newer** (current stable recommended) and the platform
+prerequisites in [CONTRIBUTING.md](CONTRIBUTING.md). macOS builds need Xcode Command Line Tools
+and CMake; Windows builds need the C++ build tools and Windows SDK, including
+`fxc.exe` on `PATH`.
 
 ```bash
-# Clone the repository
 git clone https://github.com/JetSquirrel/cloudbridge.git
 cd cloudbridge
-
-# Build release version
 cargo build --release
-
-# Run the application
 cargo run --release
 ```
 
-The compiled binary will be at:
-- Windows: `target/release/cloudbridge.exe`
-- macOS/Linux: `target/release/cloudbridge`
-
-## ⚙️ Configuration
-
-### AWS Configuration
-
-1. Create an IAM user with Cost Explorer access
-2. Attach the following IAM policy:
-
-```json
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "ce:GetCostAndUsage",
-                "ce:GetCostForecast",
-                "ce:GetDimensionValues",
-                "ce:GetTags"
-            ],
-            "Resource": "*"
-        }
-    ]
-}
-```
-
-3. Generate Access Key ID and Secret Access Key
-4. Add the account in CloudBridge
-
-> **Note:** AWS Cost Explorer API costs $0.01 per request. CloudBridge minimizes API calls through intelligent caching.
-
-### Alibaba Cloud Configuration
-
-1. Log in to [Alibaba Cloud Console](https://ram.console.aliyun.com/)
-2. Create a RAM user for API access
-3. Attach the `AliyunBSSReadOnlyAccess` policy
-4. Create an AccessKey for the RAM user
-5. Add the account in CloudBridge
-
-> **Note:** Alibaba Cloud billing API is free of charge.
-
-### DeepSeek Configuration
-
-1. Log in to [DeepSeek Platform](https://platform.deepseek.com/)
-2. Navigate to **API Keys** section
-3. Create a new API key
-4. Add the account in CloudBridge using the API key
-
-> **Note:** DeepSeek displays your account balance (including granted and topped-up balances) instead of cost data. The balance query API is free of charge.
-
-### Bill File Import
-
-Volcengine, OpenAI and Anthropic are read from the bill export their
-console produces rather than from a billing API, so they need no
-credentials at all: add the account, then use **Import bill** on its row.
-Alibaba Cloud and DeepSeek accept both, and the export is the finer of
-the two: the Alibaba Cloud billing API reports Model Studio (百炼) as one
-figure a month where the export reports it per model, and the DeepSeek API
-reports a balance and nothing about what the spend was for.
-
-DeepSeek's console hands out a zip of two CSVs. Import the zip as it
-downloaded — CloudBridge reads the `cost-*.csv` inside it and leaves
-`amount-*.csv` alone, because that file's `amount` column is a token count,
-not money.
-
-| Source | Where the export comes from | What it adds |
-|--------|-----------------------------|--------------|
-| Alibaba Cloud | Expenses and Costs → Bill Details → Export | Model Studio (百炼) per model; instance-level detail for everything else |
-| Volcengine | Billing → Bill Details → Export | Ark (火山方舟) per endpoint and token type |
-| OpenAI | Usage → Export | Cost or token usage, per project and model |
-| Anthropic (Claude) | Usage or Cost → Export | Cost or token usage, per workspace and model |
-| DeepSeek | Usage → Download | Per-day, per-model spend — its API reports only a balance |
-
-Two things to know before importing:
-
-- **An import replaces every month the file covers.** The export is the
-  provider's own bill, so it supersedes whatever the billing API reported
-  for the same month rather than being added to it. The corollary: a file
-  narrowed to a single product in the console replaces that whole month
-  with that one product, so export the full bill unless one product is
-  genuinely all you want.
-- **The file must be UTF-8.** Both Chinese consoles can produce a GBK
-  export. CloudBridge refuses one rather than guessing, because a guessed
-  encoding would quietly mangle every product name in the bill — re-export
-  as UTF-8, or open it and save it again as CSV UTF-8.
-
-Column names are matched through a list of aliases covering the Chinese
-console, the English console and each provider's own API field names.
-None of these exports is a documented file format, so if yours uses a name
-CloudBridge does not know, the import names the column it could not find
-and lists the ones your file does have.
-
-## 🚀 Usage
-
-### Adding a Cloud Account
-
-1. Launch CloudBridge
-2. Navigate to **Accounts** in the sidebar
-3. Select your source
-4. Enter an account name, and credentials if the source uses a billing API
-   (Volcengine, OpenAI and Anthropic are read from a file, so they ask for
-   none)
-5. Click **Save**
-
-### Importing a Bill File
-
-1. Download the bill export from your provider's console — see
-   [Bill File Import](#bill-file-import) for where each one lives
-2. Go to **Accounts** and click **Import bill** on the account's row
-3. Pick the file
-
-CloudBridge reports how many charges it wrote and which months it
-replaced. Re-importing a corrected export of the same month is safe: the
-month is replaced, not added to.
-
-### Reading the Overview
-
-Pick a range in the header — **MTD**, **30d** or **12m** — and every number
-on the page is computed for that window.
-
-- **Spend** is net of credits: what you were actually charged. The gross
-  usage and the credits that took it down sit beside it
-- The **chart**, the change percent, **Where it went** and the **biggest
-  movers** all run on gross usage. An account whose usage is fully covered
-  by credits nets to ≈ 0, and a trend drawn on that base is noise
-- **Unallocated** is the share of usage reaching no business line — the
-  part of the bill you cannot yet explain
-
-Hovering a trend chart snaps to the nearest point and draws a guide line, a
-dot and a tooltip with that bucket's date and amount.
-
-### One Account at a Time
-
-Click an account's name on the **Accounts** page to drill into it: the same
-**MTD / 30d / 12m** range control, a net / gross / credits stat row, that
-one account's daily or monthly usage trend, and a per-service table showing
-each service's share of the window and its change against the comparison
-window.
-
-A balance-only source such as DeepSeek has no API-reported usage — its
-service rows arrive through bill file import, so the page is empty until
-you import one.
-
-### Alerts and Rules
-
-Three rules ship enabled, and each is tunable on the **Rules** page:
-
-| Rule | Fires when | Default |
-|------|------------|---------|
-| Model cost growth anomaly | A source's service runs far above its own 7-day trailing baseline for days running | 2.5× for 2 consecutive days |
-| Balance floor | A prepaid balance falls below the account's budget, or a default floor | 200, in the reporting currency |
-| Untagged spend ratio | Too much of the month's usage reaches no business line | Above 15% |
-
-An alert names what it saw: the day's figure, the baseline it broke, how
-long the streak has held, and where the month ends if it does. Resolve,
-snooze or dismiss it; a condition that stops holding is resolved for you
-the next time the page loads. Rules are evaluated when the app opens and
-when the Alerts page loads — a desktop app cannot watch your spend while
-it is closed, and CloudBridge does not pretend otherwise.
-
-### Attribution
-
-The **Attribution** page draws the month as a Sankey: source → service or
-model → business line, with an explicit **Unallocated** node. Flows are
-gross usage, because a net flow can be negative and that means nothing in a
-Sankey. A charge reaches a line through its `business_line` tag; without
-one it lands in Unallocated.
-
-### Trying It Without a Bill
-
-**Settings → Demo data** loads three accounts and twelve months of
-realistically-shaped fake ledger, so you can see the app with a bill in it
-before connecting anything. Demo rows are keyed under a `demo-` prefix,
-carry no credentials and are skipped by refresh, so none of them ever
-reaches a provider API. Clearing removes every one of them.
-
-### Choosing a Reporting Currency
-
-Go to **Settings → Reporting** and pick the currency totals are shown in.
-Charges keep the currency they were billed in; only the view they are read
-through changes, so switching back and forth costs nothing.
-
-### Refreshing Data
-
-- **Automatic:** A billing period is re-fetched at most once per refresh
-  interval — **24 hours by default**. Change it in
-  **Settings → Refreshing** (6, 12, 24 or 48 hours). Longer is cheaper:
-  AWS Cost Explorer bills per request, and a provider's bill does not move
-  faster than a day in any way worth paying for
-- **Manual:** **Refresh** picks up anything past the interval;
-  **Force Refresh** re-fetches regardless, at the cost of another paid API
-  call
-- **An imported month is never re-fetched**, by either. The export you
-  imported is the finer of the two readings — for Model Studio (百炼) it is
-  the only one that reports a model at all — so a refresh would coarsen a
-  bill you went and downloaded. To update an imported month, import a
-  corrected export of it.
-
-## 🗺️ Roadmap
-
-CloudBridge is becoming a personal finance platform for everything an
-individual developer spends on infrastructure and AI — public cloud, model
-provider APIs, token plans and subscriptions — in one ledger, one currency,
-on one machine. See **[docs/roadmap.md](docs/roadmap.md)** for the detailed
-plan and its rationale.
-
-### P0 — FOCUS normalization (done in 0.2.0)
-- [x] Source registry replacing the hardcoded provider enum
-- [x] `fct_charge` fact table, batch-tracked transactional ingest
-- [x] Split fetch from normalize, raw Parquet layer
-- [x] AWS / Alibaba Cloud / DeepSeek mapped to FOCUS columns
-- [x] Cross-currency totals via a rate table and reporting currency
-
-### P1 — mostly done in 0.3.0
-- [x] Bill file import from the console's own export (Alibaba Cloud,
-      Volcengine, OpenAI, Anthropic, DeepSeek)
-- [x] Tag-based allocation with an explicit "unallocated" node
-- [x] Sankey cost flow
-- [ ] Bill file export channel (S3 / OSS + Parquet)
-
-### P2
-- [~] Anomaly detection with attribution — the daily-vs-7-day-baseline rule
-      per source and service landed early; the resource level and a true
-      period-over-period attribution of the delta are still owed
-- [~] Budget alerts — the balance floor landed; per-service budgets and the
-      budget UI are still owed
-- [ ] Month-end snapshot freezing
-
-### P3
-- [ ] Linux native builds
-- [ ] Pluggable source adapters
-- [ ] Local coding-agent token usage (reserved extension point)
-
-Explicitly **out of scope**: multi-user or shared deployments, invoice
-reconciliation, a general chargeback rule engine, team collaboration.
-
-## 📁 Data Storage
-
-CloudBridge stores all data locally:
-
-| Platform | Location |
-|----------|----------|
-| Windows | `%APPDATA%\CloudBridge\data\` |
-| macOS | `~/Library/Application Support/CloudBridge/` |
-| Linux | `~/.local/share/CloudBridge/` |
-
-Files:
-- `billing.duckdb` - The ledger: every charge, in the currency it was billed in
-- `cloudbridge.duckdb` - Accounts and settings
-- `raw/` - Provider responses as fetched, and bill files as imported,
-  partitioned by source, account and billing period
-- `config.json` - Application configuration, including the reporting
-  currency and the refresh interval
-
-Credentials are not in any of them: they are stored in the OS keyring
-(Windows Credential Manager, macOS Keychain, Linux Secret Service).
-
-Either database can be copied, backed up or inspected without carrying
-your keys with it.
-
-## 🔐 Security
-
-- Credentials live in the OS keyring only — Windows Credential Manager,
-  macOS Keychain, Linux Secret Service. Never in a database, never in
-  `config.json`
-- One keyring item per account, read once per session. On macOS a keyring
-  read can raise a password prompt, so a refresh does not go back to it per
-  billing period
-- No data is transmitted except direct API calls to your providers. A bill
-  file import touches the network not at all
-- Raw billing payloads are written to a local directory and nowhere else
-- The executable contains no embedded credentials
-
-Versions before 0.2.0 kept credentials in the database, encrypted with
-AES-256-GCM under a key in `config.json`. The v1 migration moves those into
-the keyring on first launch and drops the columns that held them; the
-decryption path exists for that migration and nothing else.
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- [GPUI](https://gpui.rs/) - The GPU-accelerated UI framework from Zed
-- [GPUI Kit](https://crates.io/crates/gpui-kit) - GPUI plus the styled
-  component library this app is built from
-- [DuckDB](https://duckdb.org/) - Embedded analytical database
-- [FOCUS](https://focus.finops.org/) - The FinOps Foundation's open cost
-  and usage specification, which the ledger's columns are named after
-
----
-
-<div align="center">
-
-**[⬆ Back to Top](#cloudbridge)**
-
-</div>
+The executable is written to `target/release/cloudbridge` on macOS or
+`target/release/cloudbridge.exe` on Windows. The browser demo is a separate
+WebAssembly target with an in-memory demo backend; it requires nightly Rust
+and a matching `wasm-bindgen` CLI. See the contributing guide before building it.
+
+## Contributing
+
+Bug reports, documentation improvements, and billing-source contributions are
+welcome. Start with the [contributing guide](CONTRIBUTING.md) for setup,
+validation commands, and guidance on sharing sanitized billing fixtures.
+For larger changes, open an [issue](https://github.com/JetSquirrel/cloudbridge/issues)
+to discuss scope first.
+
+CloudBridge focuses on single-machine cost analysis. Shared deployments, team
+collaboration, invoice reconciliation, and a general chargeback engine are
+outside the current scope.
+
+## License and acknowledgments
+
+CloudBridge is licensed under [MIT](LICENSE).
+
+Built with [GPUI](https://gpui.rs/) and
+[GPUI Kit](https://crates.io/crates/gpui-kit) for the native interface,
+[DuckDB](https://duckdb.org/) for local analytics, and
+[FOCUS](https://focus.finops.org/) terminology for the billing ledger.

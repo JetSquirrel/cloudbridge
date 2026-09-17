@@ -5,6 +5,10 @@ on:
     branches: [main, master]
     paths:
       - 'src/**'
+      - 'web/**'
+      - 'www/**'
+      - 'scripts/**'
+      - 'rust-toolchain*'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
@@ -12,6 +16,10 @@ on:
     branches: [main, master]
     paths:
       - 'src/**'
+      - 'web/**'
+      - 'www/**'
+      - 'scripts/**'
+      - 'rust-toolchain*'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
@@ -34,6 +42,77 @@ jobs:
         run: cargo check
       - name: Tests
         run: cargo test
+
+  wasm:
+    name: Web demo (advisory until web sources are tracked)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check web build prerequisites
+        id: web
+        shell: bash
+        run: |
+          if [[ -f web/smol-bridge/Cargo.toml && -f scripts/build-web.sh && -d www/fonts ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping web build: web demo sources or fonts are not present in this checkout."
+            echo "Web build skipped: commit the web demo sources, build script and fonts to enable it." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: dtolnay/rust-toolchain@nightly
+        if: steps.web.outputs.available == 'true'
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        if: steps.web.outputs.available == 'true'
+        with:
+          key: wasm
+      - name: Install matching wasm-bindgen CLI
+        if: steps.web.outputs.available == 'true'
+        shell: bash
+        run: |
+          version=$(python3 - <<'PY'
+          import pathlib
+          import tomllib
+
+          lock = tomllib.loads(pathlib.Path("Cargo.lock").read_text())
+          versions = {p["version"] for p in lock["package"] if p["name"] == "wasm-bindgen"}
+          if len(versions) != 1:
+              raise SystemExit("Expected exactly one wasm-bindgen version in Cargo.lock")
+          print(versions.pop())
+          PY
+          )
+          cargo install wasm-bindgen-cli --version "$version" --locked
+      - name: Build web demo
+        if: steps.web.outputs.available == 'true'
+        run: ./scripts/build-web.sh
+
+  msrv:
+    name: Minimum supported Rust version (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read declared Rust version
+        id: msrv
+        shell: bash
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import pathlib
+          import tomllib
+
+          manifest = tomllib.loads(pathlib.Path("Cargo.toml").read_text())
+          print(f"version={manifest['package']['rust-version']}")
+          PY
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+      - name: Check compilation on declared MSRV
+        run: cargo check --locked
 
   security:
     runs-on: ubuntu-latest

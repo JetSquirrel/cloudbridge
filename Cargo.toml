@@ -9,7 +9,7 @@ repository = "https://github.com/JetSquirrel/cloudbridge"
 readme = "README.md"
 keywords = ["cloud", "cost-management", "aws", "aliyun", "finops"]
 categories = ["gui", "finance"]
-rust-version = "1.75"
+rust-version = "1.95"
 
 [dependencies]
 # GPUI Kit: the single dependency for GPUI, gpui-base, the styled

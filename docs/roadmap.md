@@ -11,84 +11,86 @@ what looks wrong (anomaly detection).
 
 ## Scope
 
-**In scope.** Single-machine desktop app. Individual developers and very
-small teams. Local-first: credentials and billing data never leave the
-machine.
+**In scope.** Single-machine desktop app for individual developers and
+very small teams. Credentials are stored in the OS keyring and used to
+authenticate requests to the configured providers. The desktop app has no
+CloudBridge sync service or telemetry. Billing databases and raw payload
+files stay local, but are not encrypted by the app; protect the device,
+its backups and exported files accordingly.
 
-**Out of scope**, and we will close issues asking for them:
-multi-user or shared deployments, invoice reconciliation, a general
-chargeback/showback rule engine, a separate collector daemon, team
-collaboration features.
+**Out of scope:** multi-user or shared deployments, invoice reconciliation,
+a general chargeback/showback rule engine, a separate collector daemon,
+and team collaboration features.
 
-**FOCUS.** We follow the [FOCUS](https://focus.finops.org/) column naming
-so that a future ingest of a real CUR / Alibaba Cloud bill export needs no
-schema change. We do *not* implement the full specification. Three concepts
-carry their weight for a personal ledger:
+**FOCUS.** We use [FOCUS](https://focus.finops.org/) terminology to give
+API responses and bill exports a common ledger representation. We do
+*not* implement the full specification. Three central concepts are:
 
 - `BilledCost` — what was actually charged
 - `EffectiveCost` — after amortization of commitments
 - `ChargeCategory` — `Usage` / `Purchase` / `Credit` / `Tax` / `Adjustment`
 
-## Where we are
+## Current status
 
-**P0 is done, and most of P1 with it** (shipped in 0.2.0 and 0.3.0
-respectively). What is still open in P1 is the bill file *export* channel
-— collecting the same exports automatically instead of downloading them
-by hand.
+**Released:** P0's normalized ledger shipped in 0.2.0. P1's local bill
+imports, tag allocation and Sankey shipped in 0.3.0, together with initial
+alert rules from P2. Version 0.3.1 brought interface consistency improvements
+and signed, notarized macOS releases. See the [changelog](../CHANGELOG.md)
+for release boundaries.
 
-**P0 is done.** A source is a registry row rather than an enum variant.
-`billing.duckdb` holds `fct_charge`, `ingest_batch`,
-`fct_balance_snapshot` and `dim_fx_rate` behind a transactional
-whole-period write. Every source fetches raw payloads to Parquet and
-normalizes them through a pure function, tested against a recorded
-response. The dashboard reads `v_charge_normalized`, so every figure on it
-is in one currency, converted per charge at a rate dated no later than the
-charge itself.
+**Working tree / unreleased:** AWS Data Exports (CUR 2.0, FOCUS 1.2 with
+AWS columns) can be read from S3. This extends P1's export channel; it is
+not part of 0.3.1. OSS collection remains future work. S3 reads avoid Cost
+Explorer request charges, but S3 storage and request fees still apply.
 
-The acceptance test holds: every source lands in one `fct_charge`
-table, `SELECT sum(billed_cost_base) FROM v_charge_normalized WHERE
-billing_period = ?` is the cross-cloud total, and a repeated ingest of an
-unchanged bill produces identical rows.
+A source is a `SourceDescriptor` registry entry rather than an enum
+variant. API-backed sources implement `BillingSource`; file-only sources
+provide a bill parser without an API client. The ingest pipeline persists
+raw payloads and normalizes them into ledger rows. Charges go to
+`fct_charge`, balances to `fct_balance_snapshot`, with provenance in
+`ingest_batch` and conversion rates in `dim_fx_rate`.
 
-All three structural problems are closed:
+Writes replace a whole billing period transactionally for a source and
+account. Converted charge totals read `v_charge_normalized`, using a rate
+dated no later than the charge. Missing exchange rates exclude the
+unconvertible charges from converted totals and are surfaced separately;
+usage records without an authoritative amount are not counted as spend.
+Re-ingesting an unchanged bill should preserve its charge values, even
+though batch identifiers and ingestion timestamps change.
 
-1. ~~**`CloudProvider` is a compile-time enum**~~ — replaced by the source
-   registry in PR1. An unrecognized source id is skipped with a warning
-   instead of being silently read as AWS.
-2. ~~**Amounts are summed across currencies.**~~ — fixed in PR6. Charges
-   are stored in the currency they were billed in and converted in a view,
-   so a rate correction or a change of reporting currency costs nothing.
-   A charge in a currency no rate covers is counted nowhere and reported
-   on the dashboard rather than quietly folded in at par.
-3. ~~**`fetch` and `normalize` are fused.**~~ — split in PR3. `fetch`
-   persists what the provider returned and interprets nothing;
-   `normalize` interprets and touches nothing, so a mapping fix replays
-   payloads already on disk instead of paying Cost Explorer again.
+The three structural problems addressed by P0 are closed:
 
-What P0 did *not* do, and P1 owned: instance-level detail. Alibaba Cloud's
-bill overview is one row per product per month, so its trend chart was as
-coarse as its source data. P1's bill file import closed this for the
-sources that publish an export — importing 账单明细 gives Alibaba Cloud a
-row per instance per billing item, and Model Studio (百炼) a row per
-model.
+1. **Provider enum:** replaced by a source registry. Unknown source IDs
+   are skipped with a warning rather than silently treated as AWS.
+2. **Mixed-currency totals:** original amounts remain in the ledger and
+   conversion happens in a view, without refetching the bill.
+3. **Coupled fetch and normalization:** raw payloads can be replayed after
+   a mapping fix without another provider request.
 
-**P1 as landed**, in 0.3.0: bill file import for five sources, tag
-allocation with an explicit Unallocated node, and the Sankey. Two sources
-were added along the way that the original plan did not name — DeepSeek,
-whose API reports a balance and nothing about what the money went on, and
-a second look at Alibaba Cloud through its export. Alerts arrived early,
-out of P2: the anomaly rule, the balance floor and the untagged-ratio rule
-run against the ledger on open.
+Local bill import supports Alibaba Cloud, Volcengine, OpenAI, Anthropic
+and DeepSeek. Alibaba Cloud's detail export adds instance and billing-item
+rows, including model-level detail for Model Studio (百炼). DeepSeek's
+API provides balances; its cost export supplies spend detail. The anomaly,
+balance-floor and untagged-ratio rules evaluate the ledger on open and
+when the Alerts page loads, not while the app is closed.
 
-## P0 — FOCUS normalization
+## P0 — FOCUS normalization (historical implementation notes)
 
-The one-sentence acceptance test for the whole phase:
+The PR1–PR6 notes below preserve the original design sequence and the
+intermediate states at each landing. References to "currently", "not yet"
+and a later PR describe that historical stage, **not the current app**.
+Names such as `Capabilities`, `SnapshotOnly` and `CloudService` belong to
+that design history; the current contracts are `SourceDescriptor`,
+`Reporting` and `BillingSource` in the source tree.
+
+The original phase acceptance target was:
 
 > All three providers land in a single `fct_charge` table; one SQL query
 > returns a cross-cloud, cross-currency monthly total; and running ingest
 > twice produces identical results.
 
-The six changes are a dependency chain — land them in order.
+Balances are stored separately from charges in the implemented design.
+The six changes formed a dependency chain and landed in order.
 
 ### PR1 · Source registry — landed
 
@@ -260,8 +262,15 @@ normalizes, and nothing else.
 
   As landed this is a parser plus a registry field, not a new `fetch`: an
   import writes through the same whole-period replacement, so an imported
-  month supersedes a fetched one instead of being added to it. Two
-  decisions worth recording:
+  month supersedes a fetched one instead of being added to it. Important
+  contracts:
+
+  - Replacement covers the **entire month for the selected source and
+    account**, not just matching rows. Use complete, unfiltered exports:
+    a file narrowed to one product or a partial month replaces that month's
+    existing charges with only the supplied rows.
+  - Text exports must be UTF-8. Re-export or save as CSV UTF-8 if a console
+    produces GBK or another encoding; the importer does not guess.
 
   - A source need not have a billing API. `SourceDescriptor::build` is
     optional, and Volcengine, OpenAI and Anthropic ask for no credentials
@@ -281,10 +290,16 @@ normalizes, and nothing else.
     the format names the member it reads, so the zip imports as it
     downloaded and the token file is refused rather than totalled as money.
 
-- **Bill file export channel (S3 / OSS + Parquet).** The same exports
-  collected automatically rather than downloaded by hand: full history, no
-  per-call cost. Only a new `fetch` implementation — the parsers above are
-  already in place.
+- **Bill export collection (S3 / OSS + Parquet) — AWS landed in the
+  working tree, unreleased.** An AWS account can point at its Data Exports
+  (CUR 2.0, FOCUS 1.2 with AWS columns) bucket using an
+  `s3://bucket/prefix` URI. Refresh reads resource-level Parquet rows with
+  tags rather than calling Cost Explorer. This avoids Cost Explorer
+  request charges; S3 storage and request fees still apply, with other AWS
+  charges possible depending on the bucket configuration. Downloaded
+  objects are retained in the raw store for offline normalization. Accounts
+  without an export URI continue to use Cost Explorer. OSS and other
+  cloud export collection remain future work.
 - **Tag allocation with an explicit "unallocated" node — landed.** The
   unallocated share is the number that matters, and it is on the Overview
   as its own figure: how much of the bill you cannot yet explain. The
@@ -347,8 +362,8 @@ registry entry. No schema change, nothing downstream to touch.
 Two things to get right when it does happen. **Privacy:** session files
 contain full prompts and source code. A parser must extract only
 timestamps, model, token counts and tool names, and discard message bodies
-— that guarantee belongs in the README next to "credentials never leave
-your machine". **Subscriptions:** under a flat monthly plan the marginal
+— document that boundary alongside the local storage and provider
+authentication model. **Subscriptions:** under a flat monthly plan the marginal
 cost of a session is near zero, so multiplying tokens by list price is not
 what was spent. Model it as a commitment drawdown and report the shadow
 cost — what the same usage would have cost on demand — against the actual

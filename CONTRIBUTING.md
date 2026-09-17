@@ -1,153 +1,255 @@
 # Contributing to CloudBridge
 
-First off, thank you for considering contributing to CloudBridge! It's people like you that make CloudBridge such a great tool.
+Thank you for considering contributing. This guide covers setting up a
+working build, the checks your change has to pass, and where things live in
+the source tree.
 
-## Code of Conduct
+## Code of conduct
 
-By participating in this project, you are expected to uphold our Code of Conduct: be respectful, inclusive, and constructive in all interactions.
+Be respectful, inclusive and constructive in all interactions.
 
-## How Can I Contribute?
+## Reporting bugs and suggesting enhancements
 
-### Reporting Bugs
+Both are tracked as GitHub issues. Before opening one, check whether it
+already exists. A good bug report has:
 
-Before creating bug reports, please check the existing issues as you might find out that you don't need to create one. When you are creating a bug report, please include as many details as possible:
+- a clear, descriptive title
+- exact steps that reproduce the problem, and what you expected instead
+- your environment: OS, and how you installed CloudBridge (official dmg,
+  CI build, or your own build)
+- screenshots where the issue is visual
 
-- **Use a clear and descriptive title**
-- **Describe the exact steps which reproduce the problem**
-- **Provide specific examples to demonstrate the steps**
-- **Describe the behavior you observed after following the steps**
-- **Explain which behavior you expected to see instead and why**
-- **Include screenshots if possible**
-- **Include your environment details** (OS, Rust version, etc.)
+An enhancement suggestion should describe the current behavior, the
+behavior you want, and why it would be useful.
 
-### Suggesting Enhancements
+Redact credentials, account identifiers and sensitive billing details from
+logs, screenshots and fixtures. Never post real API keys, signing keys or
+unredacted billing exports in public issues or pull requests.
 
-Enhancement suggestions are tracked as GitHub issues. When creating an enhancement suggestion, please include:
+Official macOS releases are signed and notarized. Open the official dmg,
+copy CloudBridge to Applications and launch it normally. If macOS blocks
+it, report the exact warning, macOS version and release artifact; do not
+remove quarantine attributes or disable Gatekeeper as a troubleshooting step.
 
-- **Use a clear and descriptive title**
-- **Provide a step-by-step description of the suggested enhancement**
-- **Provide specific examples to demonstrate the steps**
-- **Describe the current behavior and explain which behavior you expected**
-- **Explain why this enhancement would be useful**
-
-### Pull Requests
-
-1. Fork the repo and create your branch from `main`
-2. If you've added code that should be tested, add tests
-3. If you've changed APIs, update the documentation
-4. Ensure the code compiles without warnings
-5. Make sure your code follows the existing style
-6. Issue that pull request!
-
-## Development Setup
+## Development setup
 
 ### Prerequisites
 
-- Rust 1.75 or later
-- Windows SDK (for Windows builds)
+- **Rust 1.95 or newer**, with `rustfmt` and `clippy`; current stable is
+  recommended for development. The locked GPUI dependencies use
+  `std::hint::cold_path`, which requires Rust 1.95. CI uses `stable` for its
+  main checks and reads `Cargo.toml` for a separate, non-blocking MSRV check.
+  The minimum-version check on Ubuntu does not validate Windows or macOS
+  runtime compatibility.
+- **macOS:** Xcode Command Line Tools for the C/C++ toolchain and SDK, plus
+  CMake (`brew install cmake`). Native dependencies include bundled DuckDB.
+- **Windows:** Visual Studio Build Tools with C++ support and the Windows
+  SDK. The shader compiler (`fxc.exe`) from the SDK's `bin/<version>/x64`
+  directory must be on `PATH`; the release workflow locates it explicitly.
 
-### Building
+The release matrix builds macOS Apple Silicon and Windows x64. The check
+workflow runs on Ubuntu, but it is not a Linux desktop release or runtime
+test. Linux and Intel Mac builds are not validated release targets.
+
+### Building and testing
 
 ```bash
-# Clone your fork
 git clone https://github.com/YOUR_USERNAME/cloudbridge.git
 cd cloudbridge
 
-# Set up pre-commit hooks (recommended)
+# Set up the pre-commit hook (formatting and clippy, see below)
 git config core.hooksPath .githooks
 
-# Build
-cargo build
-
-# Run tests
+cargo build          # desktop application; this is what a plain build means
 cargo test
-
-# Check for warnings
-cargo clippy
 ```
 
-### Code Style
+Note that `cargo build` at the repository root always means the desktop
+application: the workspace's `default-members` is the root crate only.
 
-- Follow Rust's official style guidelines
-- Run `cargo fmt` before committing (enforced by pre-commit hook)
-- Run `cargo clippy` to catch common mistakes (enforced by pre-commit hook)
-- Write documentation for public APIs
-- Use meaningful variable and function names
+### The checks
 
-### Dependency Management
+CI (`.github/workflows/ci.yml`) runs, on `stable`:
 
-This project uses [Dependabot](https://docs.github.com/en/code-security/dependabot) to automatically keep dependencies up to date:
+```bash
+cargo fmt --check
+cargo clippy -- -D warnings
+cargo check
+cargo test
+```
 
-- Dependabot checks for updates to Cargo dependencies **weekly** (every Monday at 09:00 UTC)
-- GPUI-related packages (`gpui`, `gpui-component`, `gpui-component-assets`) are grouped together in PRs
-- Dependabot also monitors GitHub Actions for updates
-- All dependency update PRs are labeled with `dependencies` and `rust` or `github-actions`
-- Major version updates for `gpui` are currently ignored to avoid breaking changes
+and a separate security job runs `cargo audit`, plus `cargo outdated` and
+`cargo geiger` as report-only. The pre-commit hook (`.githooks/pre-commit`)
+runs the `fmt --check` and `clippy -- -D warnings` steps locally, so
+formatting and warning-free clippy are enforced before anything reaches
+CI.
 
-When reviewing Dependabot PRs:
-- Check the changelog/release notes for breaking changes
-- Verify that the application builds successfully
-- Test critical functionality before merging
+### The web (wasm32) build
 
-### Commit Messages
+The same crate also compiles to a browser demo, but this path has
+constraints the desktop build does not:
 
-- Use the present tense ("Add feature" not "Added feature")
-- Use the imperative mood ("Move cursor to..." not "Moves cursor to...")
-- Limit the first line to 72 characters or less
-- Reference issues and pull requests liberally after the first line
+- **Nightly is required for the wasm build only** — `gpui-pre-web` pulls a
+  dependency that uses a `stdarch_wasm_atomic_wait` feature stable does not
+  have. The desktop build stays on stable.
+- **`wasm-bindgen` CLI must match the `wasm-bindgen` crate version.** Read
+  the version out of `Cargo.lock` and install the matching
+  `wasm-bindgen-cli`.
+- **Fonts are embedded:** the four fonts in `www/fonts/` are
+  `include_bytes!`d from `src/wasm_entry.rs` and must exist to compile.
+- **Icons are fetched, not embedded** — the build script copies the icon
+  catalog out of the resolved `gpui-kit-assets` crate into `www/assets/`
+  (gitignored), and the running app requests SVGs from the served
+  directory at runtime.
 
-### Project Structure
+Install the wasm toolchain and target once:
+
+```bash
+rustup toolchain install nightly
+rustup target add wasm32-unknown-unknown --toolchain nightly
+```
+
+Install `wasm-bindgen-cli` with `cargo install wasm-bindgen-cli --version
+<VERSION> --locked`, substituting the `wasm-bindgen` version in `Cargo.lock`.
+Then build and serve:
+
+```bash
+./scripts/build-web.sh              # debug; use --release for an optimized build
+python3 -m http.server 8000 --directory www
+```
+
+Open `http://localhost:8000/`. The script runs `cargo +nightly build --lib
+--target wasm32-unknown-unknown`, generates web bindings, and replaces the
+generated `www/assets/` directory. Do not keep hand-authored assets there.
+The browser backend uses in-memory demo data, not real provider credentials.
+
+A change to anything under `src/ui/`, `app.rs`, `alerts.rs` or `model.rs`
+is shared by both targets, so it must keep building for wasm, not just for
+the desktop.
+
+## Project structure
 
 ```
 cloudbridge/
 ├── src/
-│   ├── main.rs          # Application entry point
-│   ├── app.rs           # Main application logic
-│   ├── config.rs        # Configuration management
-│   ├── crypto.rs        # Encryption utilities
-│   ├── db.rs            # Database operations
-│   ├── cloud/           # Cloud provider implementations
-│   │   ├── mod.rs       # Cloud traits and types
-│   │   ├── aws.rs       # AWS implementation
-│   │   └── aliyun.rs    # Alibaba Cloud implementation
-│   └── ui/              # User interface components
-│       ├── mod.rs       # UI module exports
-│       ├── dashboard.rs # Dashboard view
-│       ├── accounts.rs  # Account management view
-│       ├── settings.rs  # Settings view
-│       └── chart.rs     # Chart components
-├── Cargo.toml           # Dependencies
-└── README.md            # Documentation
+│   ├── main.rs            # Desktop entry point
+│   ├── lib.rs             # Library root; selects the backend per target (cfg)
+│   ├── app.rs             # Application state and actions
+│   ├── model.rs           # Domain types shared by both targets
+│   ├── config.rs          # Application configuration
+│   ├── db.rs              # Desktop: application database (accounts, rules, events)
+│   ├── store.rs           # Handle to the backend the UI talks to
+│   ├── ingest.rs          # Fetch / import / renormalize pipeline
+│   ├── alerts.rs          # Alerting rules, evaluated against the ledger
+│   ├── desktop.rs         # Desktop wiring
+│   ├── secret_store.rs    # OS keyring credentials
+│   ├── cloud/             # Billing sources (desktop only)
+│   │   ├── mod.rs         # BillingSource trait, SourceContext, Normalized
+│   │   ├── registry.rs    # SourceDescriptor table: every registered source
+│   │   ├── aws.rs         # AWS Cost Explorer channel
+│   │   ├── aws_focus.rs   # AWS Data Exports (FOCUS) channel
+│   │   ├── s3.rs          # Standalone S3 client used by the export channel
+│   │   ├── aliyun.rs      # Alibaba Cloud
+│   │   ├── deepseek.rs    # DeepSeek balance API
+│   │   ├── billfile/      # Bill export import: one parser per provider
+│   │   ├── raw.rs         # Raw payload batches, persisted to Parquet
+│   │   └── testdata/      # Recorded responses the normalizers are tested against
+│   ├── ledger/            # DuckDB ledger: fct_charge, views, fx rates, schema
+│   ├── ui/                # Pages: overview, accounts, account detail,
+│   │                      # attribution, alerts, rules, settings, charting
+│   └── web/               # wasm backends: in-memory ledger, no keyring
+├── scripts/
+│   └── build-web.sh       # wasm build + wasm-bindgen + icon catalog
+├── www/                   # Static shell for the browser demo
+└── themes/                # Theme files
 ```
 
-## Adding a New Cloud Provider
+## How billing data gets in
 
-To add support for a new cloud provider:
+Both channels normalize into the same ledger: charges in `fct_charge`,
+and balances in `fct_balance_snapshot` rather than in spend totals.
 
-1. Create a new file in `src/cloud/` (e.g., `azure.rs`)
-2. Implement the `CloudService` trait
-3. Add the provider to `CloudProvider` enum in `src/cloud/mod.rs`
-4. Update the UI in `src/ui/accounts.rs` to support the new provider
-5. Add documentation in README.md
-6. Test thoroughly with real credentials
+1. **Network fetch.** A source implements `BillingSource`
+   (`src/cloud/mod.rs`):
 
-### CloudService Trait
+   ```rust
+   pub trait BillingSource: Send + Sync {
+       fn validate_credentials(&self) -> Result<bool>;
+       fn fetch(&self, period: &BillingPeriod) -> Result<Fetched>;
+       fn normalize(&self, batch: &RawBatch) -> Result<Normalized>;
+   }
+   ```
 
-```rust
-pub trait CloudService {
-    /// Validate that the credentials are correct
-    fn validate_credentials(&self) -> Result<bool>;
-    
-    /// Get cost summary for the account
-    fn get_cost_summary(&self) -> Result<CostSummary>;
-    
-    /// Get daily cost trend data
-    fn get_cost_trend(&self) -> Result<CostTrend>;
-}
-```
+   `fetch` retrieves raw payloads unchanged; `src/ingest.rs` persists them
+   before calling `normalize`. Normalization is a pure function from a
+   raw batch to charges and balances, with no clock, network or database.
+   Test it against sanitized fixtures in `src/cloud/testdata/`.
 
-## Questions?
+   The AWS S3 export implementation also uses this trait. Its code is in
+   the working tree but remains **unreleased**; see `CHANGELOG.md`.
 
-Feel free to open an issue with the tag "question" if you have any questions about contributing.
+2. **Bill file import.** A source opts in through a `BillFileFormat` on
+   its descriptor. The parser is a pure function over a raw batch.
+   Volcengine, OpenAI and Anthropic have only this channel and require no
+   credentials.
 
-Thank you for your contribution! 🎉
+Preserve these import contracts when changing parsers or ingestion:
+
+- An import replaces the **entire month for the selected source and
+  account**, not matching rows. A filtered or partial-month export can
+  remove existing charges omitted from the file; use complete exports.
+- Automatic fetch and Force Refresh preserve imported months.
+- Usage-only rows keep `billed_cost` NULL and `cost_basis = absent`;
+  token counts multiplied by a list price are not authoritative spend.
+- Text imports require UTF-8; unsupported encodings must produce an
+  actionable error rather than guessed text.
+- DeepSeek's zip is accepted directly. Select its cost CSV, not the
+  token-count CSV whose `amount` column is usage, not money.
+
+## Adding a source
+
+A desktop source is a `SourceDescriptor` in the `SOURCES` table in
+`src/cloud/registry.rs`. Keep shared UI behavior capability-driven rather
+than adding provider-name branches. To add one:
+
+1. Add a descriptor with a unique, stable `id` (persisted in the accounts
+   database), display names, credential labels and `Reporting` mode.
+2. For a network channel, implement `BillingSource` in `src/cloud/` and
+   register the module. Set `build` to a constructor using `SourceContext`.
+   Otherwise leave `build` as `None`; the UI must not request unused keys.
+3. For an optional file channel, add and register a parser under
+   `src/cloud/billfile/`. Provide a `BillFileFormat` with period detection
+   and normalization functions, then set the descriptor's `bill_file`.
+4. Add sanitized fixture tests for normalization, period boundaries,
+   credits, currencies, missing amounts and malformed inputs. The existing
+   registry tests check unique IDs, at least one channel, optional
+   credentials for file-capable sources, and credential lookup behavior.
+5. Keep the browser's metadata registry in `src/web/cloud/mod.rs` aligned
+   where relevant. Do not introduce native provider clients into wasm.
+   Build both targets and document supported formats and permissions.
+
+The registry module's tests document these contracts precisely — read them
+before adding a row.
+
+## Pull requests
+
+1. Fork the repo and create your branch from `main`.
+2. Add tests for code that should be tested; billing normalizers are
+   always tested against recorded fixtures.
+3. Update documentation if you changed behavior the docs describe.
+4. `cargo fmt`, and keep `cargo clippy -- -D warnings` clean — the
+   pre-commit hook and CI both enforce this.
+5. If you touched shared code (`src/ui/`, `app.rs`, `alerts.rs`,
+   `model.rs`), confirm the wasm build still compiles
+   (`./scripts/build-web.sh`).
+6. Open the pull request.
+
+### Commit messages
+
+- Present tense, imperative mood: "Add feature", not "Added feature".
+- First line 72 characters or less.
+- Reference issues and pull requests after the first line.
+
+## Questions
+
+Open an issue tagged `question`.

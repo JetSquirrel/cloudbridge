@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="CloudBridge - A local-first desktop app for cloud and AI cost management. Read AWS and Alibaba Cloud billing APIs, import the bill export from Volcengine, OpenAI, Anthropic or DeepSeek, and keep every charge in one FOCUS-shaped ledger on your machine.">
+    <meta name="description" content="CloudBridge - A local-first desktop app for cloud and AI cost management. Read AWS and Alibaba Cloud billing APIs, import the bill export from Volcengine, OpenAI, Anthropic or DeepSeek, and keep every charge in one ledger named after FOCUS columns, on your machine.">
     <meta name="keywords" content="cloud cost management, multi-cloud, AWS cost explorer, Alibaba Cloud billing, bill file import, 账单明细, OpenAI cost export, Anthropic cost export, DeepSeek, LLM token cost, FinOps, FOCUS, cost optimization">
     <meta name="theme-color" content="#0E1420">
     <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/">
     <meta property="og:title" content="CloudBridge - Multi-Cloud Cost Management">
-    <meta property="og:description" content="Every cloud and model-provider bill in one local ledger — from the billing API, or from the export you downloaded. All data stays on your machine.">
+    <meta property="og:description" content="Analyze supported cloud and AI bills in a local ledger. Connect provider APIs or import exports, with no CloudBridge sync service or telemetry.">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://cloudbridge.jetsquirrel.cloud/">
     <meta property="og:image" content="https://raw.githubusercontent.com/JetSquirrel/cloudbridge/main/images/cloudbridge.png">
@@ -16,7 +16,7 @@
     <meta property="og:image:height" content="1200">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="CloudBridge - Multi-Cloud Cost Management">
-    <meta name="twitter:description" content="Every cloud and model-provider bill in one local ledger — from the billing API, or from the export you downloaded. All data stays on your machine.">
+    <meta name="twitter:description" content="Analyze supported cloud and AI bills in a local ledger. Connect provider APIs or import exports, with no CloudBridge sync service or telemetry.">
     <meta name="twitter:image" content="https://raw.githubusercontent.com/JetSquirrel/cloudbridge/main/images/cloudbridge.png">
     <link rel="icon" type="image/png" href="icon.png">
     <link rel="apple-touch-icon" href="icon.png">
@@ -31,7 +31,7 @@
         "downloadUrl": "https://github.com/JetSquirrel/cloudbridge/releases",
         "operatingSystem": "Windows, macOS",
         "applicationCategory": "FinanceApplication",
-        "description": "A local-first desktop app for cloud and AI cost management. Read AWS and Alibaba Cloud billing APIs, import the bill export from Volcengine, OpenAI, Anthropic or DeepSeek, and keep every charge in one FOCUS-shaped ledger on your machine.",
+        "description": "A local-first desktop app for cloud and AI cost management. Read AWS and Alibaba Cloud billing APIs, import the bill export from Volcengine, OpenAI, Anthropic or DeepSeek, and keep every charge in one ledger shaped after FOCUS columns on your machine.",
         "license": "https://opensource.org/licenses/MIT",
         "offers": {
             "@type": "Offer",
@@ -954,7 +954,7 @@
                 <div class="hero-grid">
                     <div>
                         <span class="eyebrow" data-i18n="hero.eyebrow">Local-first cost console</span>
-                        <h1 data-i18n-html="hero.title">Every cloud bill.<br>One machine.<br><span class="accent">Nowhere else.</span></h1>
+                        <h1 data-i18n-html="hero.title">Cloud and AI costs.<br>One ledger.<br><span class="accent">On your machine.</span></h1>
                         <p class="hero-sub" data-i18n="hero.sub">CloudBridge reads your cloud and model-provider bills into one local ledger — from the billing API, or from the export you downloaded — then draws the trends. No sign-up, no sync, no telemetry.</p>
                         <div class="hero-buttons">
                             <a href="#download" class="btn btn-primary" data-i18n="hero.download">Download</a>
@@ -1014,16 +1014,16 @@
                         <div class="label" data-i18n="stats.providers">Billing Sources</div>
                     </div>
                     <div class="ledger-cell">
-                        <div class="value">100%</div>
-                        <div class="label" data-i18n="stats.local">Local Storage</div>
+                        <div class="value">DuckDB</div>
+                        <div class="label" data-i18n="stats.local">Local Billing Storage</div>
                     </div>
                     <div class="ledger-cell">
                         <div class="value">24h</div>
-                        <div class="label" data-i18n="stats.cache">Refresh Window</div>
+                        <div class="label" data-i18n="stats.cache">Default Freshness Window</div>
                     </div>
                     <div class="ledger-cell">
                         <div class="value">FOCUS</div>
-                        <div class="label" data-i18n="stats.focus">Open Billing Schema</div>
+                        <div class="label" data-i18n="stats.focus">Column Vocabulary</div>
                     </div>
                 </div>
             </div>
@@ -1037,7 +1037,7 @@
                     <span class="eyebrow" data-i18n="howitworks.eyebrow">local-first</span>
                 </div>
                 <figure class="diagram-frame">
-                    <img src="diagram.jpg" alt="Hand-drawn diagram: bills from AWS, Alibaba Cloud, DeepSeek and CSV/Parquet bill files flow across a bridge into a local desktop app with a unified cost view — credentials stay local, no cloud sync" width="1440" height="810" loading="lazy" decoding="async">
+                    <img src="diagram.jpg" alt="Hand-drawn diagram: bills from AWS, Alibaba Cloud, DeepSeek and bill files flow across a bridge into a local desktop app with a unified cost view" width="1440" height="810" loading="lazy" decoding="async">
                 </figure>
             </div>
         </section>
@@ -1071,35 +1071,35 @@
                 <div class="ledger">
                     <div class="ledger-row">
                         <div><span class="tag" data-i18n="features.multicloud.tag">Multi-cloud</span><h3 data-i18n="features.multicloud.title">Six sources, one place</h3></div>
-                        <p data-i18n="features.multicloud.desc">AWS, Alibaba Cloud and DeepSeek over their billing APIs; Alibaba Cloud, Volcengine, OpenAI, Anthropic and DeepSeek from the bill export their console produces. Azure and GCP are coming soon.</p>
+                        <p data-i18n="features.multicloud.desc">AWS and Alibaba Cloud provide billing APIs; DeepSeek provides a balance API. Import bill exports from Alibaba Cloud, Volcengine, OpenAI, Anthropic and DeepSeek for spending detail. Azure and Google Cloud are not currently supported.</p>
                     </div>
                     <div class="ledger-row">
                         <div><span class="tag" data-i18n="features.import.tag">Import</span><h3 data-i18n="features.import.title">Bring your own bill</h3></div>
-                        <p data-i18n="features.import.desc">Point CloudBridge at the export you downloaded from a provider's console and it becomes the same ledger rows a fetch produces — per model, with token counts as a real pricing unit. A month you imported is never overwritten by an automatic fetch, because the export is the finer reading.</p>
+                        <p data-i18n="features.import.desc">Import a provider export into the same ledger used by API data, including model and token detail where available. Imports replace whole months for the selected account; Refresh and Force Refresh preserve them. Token-only exports remain usage records, not estimated bills.</p>
                     </div>
                     <div class="ledger-row">
-                        <div><span class="tag" data-i18n="features.focus.tag">Standard</span><h3 data-i18n="features.focus.title">A real ledger, FOCUS-shaped</h3></div>
-                        <p data-i18n-html="features.focus.desc">Every source normalizes into one fact table named after <a href="https://focus.finops.org/" target="_blank" rel="noopener noreferrer">FOCUS</a> columns — the FinOps Foundation's open cost and usage specification — so credits, refunds, taxes, and fees are each labelled as themselves, and a real bill export drops in with no schema change.</p>
+                        <div><span class="tag" data-i18n="features.focus.tag">Schema</span><h3 data-i18n="features.focus.title">A shared billing vocabulary</h3></div>
+                        <p data-i18n-html="features.focus.desc">Sources normalize into a fact table named after <a href="https://focus.finops.org/" target="_blank" rel="noopener noreferrer">FOCUS</a> columns, with separate categories for usage, credits, refunds, taxes and fees. CloudBridge uses this vocabulary; it does not implement the full FOCUS specification.</p>
                     </div>
                     <div class="ledger-row">
                         <div><span class="tag" data-i18n="features.charts.tag">Overview</span><h3 data-i18n="features.charts.title">Usage and net, kept apart</h3></div>
-                        <p data-i18n="features.charts.desc">Month to date, the rolling 30 days, or the last 12 months — your pick, and every number follows it. The headline total is net of credits; the chart, the rankings and the movers run on gross usage, because an account whose usage is fully covered nets to about zero and a trend drawn on that is noise.</p>
+                        <p data-i18n="features.charts.desc">Explore month-to-date, rolling 30-day or 12-month trends. The headline total is net of credits, while charts, rankings and biggest movers show gross usage so credits do not hide changes in consumption.</p>
                     </div>
                     <div class="ledger-row">
                         <div><span class="tag" data-i18n="features.security.tag">Security</span><h3 data-i18n="features.security.title">Credentials in the OS keyring</h3></div>
-                        <p data-i18n="features.security.desc">Credentials live in the OS keyring, never in the database. Your data never leaves your machine. No cloud sync, no telemetry.</p>
+                        <p data-i18n="features.security.desc">Saved credentials live in the OS keyring, separate from the billing databases, and authenticate direct provider requests. There is no CloudBridge sync service or telemetry. Billing and raw files are local, but not encrypted by the app.</p>
                     </div>
                     <div class="ledger-row">
-                        <div><span class="tag" data-i18n="features.cache.tag">Frugal</span><h3 data-i18n="features.cache.title">Frugal with paid APIs</h3></div>
-                        <p data-i18n="features.cache.desc">A billing period is re-fetched at most once a day by default — 6, 12, 24 or 48 hours, your choice — and Cost Explorer is asked for everything in one request per period. Force Refresh when you need it now.</p>
+                        <div><span class="tag" data-i18n="features.cache.tag">Refresh</span><h3 data-i18n="features.cache.title">Reduce repeated API calls</h3></div>
+                        <p data-i18n="features.cache.desc">A 24-hour freshness window avoids repeatedly fetching the same billing period; choose 6, 12, 24 or 48 hours in Settings. Each Cost Explorer query covers one period, so a refresh that needs several periods sends several requests. Force Refresh bypasses the window and can add provider charges.</p>
                     </div>
                     <div class="ledger-row">
                         <div><span class="tag" data-i18n="features.ui.tag">Interface</span><h3 data-i18n="features.ui.title">A native desktop tool</h3></div>
-                        <p data-i18n="features.ui.desc">Built on GPUI, Zed's GPU-accelerated framework, at desktop density rather than web scale. Native performance, light and dark themes.</p>
+                        <p data-i18n="features.ui.desc">Built on GPUI, Zed's GPU-accelerated framework, with a compact desktop interface and light and dark themes.</p>
                     </div>
                     <div class="ledger-row">
                         <div><span class="tag" data-i18n="features.alerts.tag">Alerts</span><h3 data-i18n="features.alerts.title">Rules that watch the ledger</h3></div>
-                        <p data-i18n="features.alerts.desc">A day's spend running far above its own 7-day baseline, a prepaid balance heading for the floor, a month where too much of the bill carries no tag. Each rule says what it saw and what the month ends at if it holds; you resolve, snooze or dismiss.</p>
+                        <p data-i18n="features.alerts.desc">Review unusual daily spend, low prepaid balances and a growing share of unallocated usage. Alerts include the figures behind each condition and projections where available. Rules do not run while the app is closed.</p>
                     </div>
                     <div class="ledger-row">
                         <div><span class="tag" data-i18n="features.attribution.tag">Attribution</span><h3 data-i18n="features.attribution.title">Where the money went</h3></div>
@@ -1120,7 +1120,7 @@
                     <div class="step">
                         <span class="num">01</span>
                         <h3 data-i18n="how.step1.title">Download &amp; install</h3>
-                        <p data-i18n="how.step1.desc">Download the build for your platform and run it. No installer.</p>
+                        <p data-i18n="how.step1.desc">Download the official release for Windows x64 or macOS Apple Silicon. On macOS, drag the app from the disk image to Applications; on Windows, run the executable.</p>
                     </div>
                     <div class="step">
                         <span class="num">02</span>
@@ -1159,9 +1159,9 @@
                     </div>
                 </div>
                 <div class="download-notes">
-                    <p data-i18n-html="download.notes.windows"><strong>Windows:</strong> SmartScreen may warn about unsigned executables. Click "More info" → "Run anyway" to proceed.</p>
-                    <p data-i18n-html="download.notes.macos"><strong>macOS:</strong> Open the disk image and drag CloudBridge to Applications. The app is ad-hoc signed but <strong>not notarized</strong>, so the first launch is blocked. Click <strong>Done</strong>, then <strong>System Settings → Privacy &amp; Security → Open Anyway</strong>; or run <code>xattr -d com.apple.quarantine /Applications/CloudBridge.app</code>. On macOS 15 and later, Control-click → Open no longer works — Apple removed that bypass. See the <a href="/docs.html#installation">install guide</a>.</p>
-                    <p data-i18n-html="download.notes.releases">Linux and Intel Macs build from source. Or browse <a href="https://github.com/JetSquirrel/cloudbridge/releases" target="_blank" rel="noopener noreferrer">all releases on GitHub</a>.</p>
+                    <p data-i18n-html="download.notes.windows"><strong>Windows:</strong> SmartScreen may warn about an unsigned or unrecognized download. Verify the file came from the official Releases page before deciding whether to continue; see the <a href="/docs.html#installation">install guide</a>.</p>
+                    <p data-i18n-html="download.notes.macos"><strong>macOS:</strong> Open the disk image and drag CloudBridge to Applications. Current official macOS releases are Developer ID signed and notarized. If macOS blocks a current release, report the exact warning instead of removing quarantine protection as a routine step. See the <a href="/docs.html#installation">install guide</a>.</p>
+                    <p data-i18n-html="download.notes.releases">Linux and Intel Mac builds are not published; source builds on those platforms are not guaranteed to work — see <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">the contributing guide</a> for prerequisites. Or browse <a href="https://github.com/JetSquirrel/cloudbridge/releases" target="_blank" rel="noopener noreferrer">all releases on GitHub</a>.</p>
                 </div>
             </div>
         </section>
@@ -1176,39 +1176,39 @@
                 <div class="faq-list">
                     <details class="faq-item">
                         <summary data-i18n="faq.free.q">Is CloudBridge free to use?</summary>
-                        <div class="faq-answer" data-i18n="faq.free.a">Yes! CloudBridge is completely free and open source under the MIT license. You only pay for your cloud provider's API costs (AWS Cost Explorer charges $0.01 per request, which a once-a-day refresh keeps near $0.02/day; the Alibaba Cloud and DeepSeek APIs are free, and a bill file import costs nothing at all).</div>
+                        <div class="faq-answer" data-i18n="faq.free.a">Yes. CloudBridge is free and open source under the MIT license. Provider fees are separate: AWS Cost Explorer charges per API request, and total cost depends on accounts, periods and refreshes. There is no fixed daily cost guarantee. Local file imports do not call billing APIs.</div>
                     </details>
                     <details class="faq-item">
                         <summary data-i18n="faq.security.q">How is my data secured?</summary>
-                        <div class="faq-answer" data-i18n="faq.security.a">Credentials live in your OS keyring (Windows Credential Manager, macOS Keychain) — never in the database. Cost data stays in a local DuckDB ledger, and nothing leaves your machine except direct API calls to your cloud providers.</div>
+                        <div class="faq-answer" data-i18n="faq.security.a">Saved credentials are held in the OS keyring and authenticate requests directly to configured providers. There is no CloudBridge sync service or telemetry. The app does not encrypt the local ledger or raw billing files: use OS disk encryption, protect backups, and redact credentials and billing identifiers before sharing data.</div>
                     </details>
                     <details class="faq-item">
                         <summary data-i18n="faq.providers.q">Which cloud providers are supported?</summary>
-                        <div class="faq-answer" data-i18n-html="faq.providers.a">Six sources today. AWS and Alibaba Cloud read their billing APIs; DeepSeek reports a balance over its API and its spend detail through a file. Volcengine (for Ark 火山方舟), OpenAI and Anthropic are read from the export their console produces, and ask for no credentials at all. Azure and Google Cloud Platform are planned — see the <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/roadmap.md" target="_blank" rel="noopener noreferrer">roadmap</a>.</div>
+                        <div class="faq-answer" data-i18n-html="faq.providers.a">AWS and Alibaba Cloud provide billing APIs. DeepSeek provides a balance API and file imports for spending detail. Alibaba Cloud, Volcengine, OpenAI and Anthropic also support bill imports. Azure and Google Cloud are not currently supported. <strong>Unreleased:</strong> the development tree supports AWS Data Exports from S3; see the <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">changelog</a> for release status.</div>
                     </details>
                     <details class="faq-item">
                         <summary data-i18n="faq.import.q">Can I use a bill I downloaded instead of an API key?</summary>
-                        <div class="faq-answer" data-i18n-html="faq.import.a">Yes, and for some sources it is the better reading. Alibaba Cloud's billing API reports Model Studio (百炼) as one figure a month while its 账单明细 export reports it per model; DeepSeek's API reports a balance and nothing about what the money went on. Add the account, click <strong>Import bill</strong> on its row, and pick the file. An import replaces every month the file covers — the export is the provider's own bill, so adding it to an API reading of the same month would count the month twice. See the <a href="/docs.html#import">import guide</a>.</div>
+                        <div class="faq-answer" data-i18n-html="faq.import.a">Yes. File imports need no credentials and can provide more detail than the billing API. Add an account, select <strong>Import bill</strong> on its row, and choose a supported export. An import replaces every month it covers for that account, so export the full bill rather than a product-filtered subset. Refresh and Force Refresh preserve imported months. See the <a href="/docs.html#import">import guide</a>.</div>
                     </details>
                     <details class="faq-item">
                         <summary data-i18n="faq.focus.q">What is FOCUS, and why does it matter?</summary>
-                        <div class="faq-answer" data-i18n-html="faq.focus.a"><a href="https://focus.finops.org/" target="_blank" rel="noopener noreferrer">FOCUS</a> is the FinOps Foundation's open specification for cost and usage data — one shared column vocabulary (billed cost, effective cost, charge category) across every cloud vendor. CloudBridge stores every charge in FOCUS terms, so provider quirks live in one normalization layer and a real AWS CUR or Alibaba Cloud bill export drops in with no schema change. The Foundation's <a href="https://www.finops.org/wg/adopting-focus-the-finops-open-cost-and-usage-specification/" target="_blank" rel="noopener noreferrer">adoption guide</a> explains the benefits in detail.</div>
+                        <div class="faq-answer" data-i18n-html="faq.focus.a"><a href="https://focus.finops.org/" target="_blank" rel="noopener noreferrer">FOCUS</a> is an open specification for cost and usage data. CloudBridge's ledger is named after FOCUS columns, giving provider data a shared vocabulary for billed cost, effective cost and charge categories. This is not a full implementation of the specification, and each supported export needs its own parser. The Foundation's <a href="https://www.finops.org/wg/adopting-focus-the-finops-open-cost-and-usage-specification/" target="_blank" rel="noopener noreferrer">adoption guide</a> explains the specification.</div>
                     </details>
                     <details class="faq-item">
                         <summary data-i18n="faq.iam.q">What IAM permissions does CloudBridge need?</summary>
-                        <div class="faq-answer" data-i18n-html="faq.iam.a">CloudBridge only needs read-only billing access. For AWS, attach a policy with the four Cost Explorer read actions; for Alibaba Cloud, attach the built-in <code>AliyunBSSReadOnlyAccess</code> policy. Ready-to-use templates and step-by-step instructions are in <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/policies.md" target="_blank" rel="noopener noreferrer">docs/policies.md</a>.</div>
+                        <div class="faq-answer" data-i18n-html="faq.iam.a">Use least-privilege credentials for provider reads. The AWS Cost Explorer policy grants only <code>ce:GetCostAndUsage</code>; STS account validation requires no additional permission grant. S3 exports require separate bucket permissions. Alibaba Cloud uses <code>AliyunBSSReadOnlyAccess</code>. An API key's permissions depend on its provider and configuration; using it for balance queries does not make it read-only. See <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/policies.md" target="_blank" rel="noopener noreferrer">permission templates</a>.</div>
                     </details>
                     <details class="faq-item">
                         <summary data-i18n="faq.linux.q">Does CloudBridge work on Linux?</summary>
-                        <div class="faq-answer" data-i18n="faq.linux.a">Linux and Intel Macs are not published as binaries yet — both build from source with a single cargo command (see the README). Published builds cover Windows (x64) and macOS (Apple Silicon).</div>
+                        <div class="faq-answer" data-i18n="faq.linux.a">Published builds cover Windows x64 and macOS Apple Silicon. Linux and Intel Mac binaries are not published, and source builds on those platforms are not guaranteed to work. Consult the contributing guide linked above for development prerequisites and validation guidance.</div>
                     </details>
                     <details class="faq-item">
                         <summary data-i18n="faq.refresh.q">How often is cost data refreshed?</summary>
-                        <div class="faq-answer" data-i18n="faq.refresh.a">A billing period is re-fetched at most once a day by default — a provider's bill does not move faster than that in any way worth paying for — and you can set 6, 12, 24 or 48 hours in Settings. Refresh picks up anything stale; Force Refresh re-fetches regardless, at the cost of another paid API call. A month you imported from a file is never replaced by a fetch, Force Refresh included.</div>
+                        <div class="faq-answer" data-i18n="faq.refresh.a">Refresh uses a 24-hour freshness window by default; Settings offers 6, 12, 24 or 48 hours. Refresh fetches stale API-backed periods, while Force Refresh bypasses the window and can incur additional provider charges. Neither replaces an imported month; re-import a corrected export to update it. Provider reporting delays still apply.</div>
                     </details>
                     <details class="faq-item">
                         <summary data-i18n="faq.export.q">Can I export my cost data?</summary>
-                        <div class="faq-answer" data-i18n-html="faq.export.a">The ledger is a local DuckDB database you can query directly, and every payload it was built from is kept as Parquet under <code>raw/</code>. Collecting a provider's exports automatically from S3 / OSS is on the <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/roadmap.md" target="_blank" rel="noopener noreferrer">roadmap</a>; importing one by hand works today.</div>
+                        <div class="faq-answer" data-i18n-html="faq.export.a">You can query the local DuckDB ledger directly. Provider responses and imported files are retained under <code>raw/</code>; see <a href="/docs.html#storage">storage and backups</a> before copying or sharing them. Reading provider exports is a separate feature: AWS Data Exports from S3 is <strong>Unreleased</strong>, and OSS collection remains on the <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/roadmap.md" target="_blank" rel="noopener noreferrer">roadmap</a>.</div>
                     </details>
                 </div>
             </div>

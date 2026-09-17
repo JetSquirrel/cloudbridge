@@ -3,6 +3,10 @@
 debug/
 release/
 
+# Web demo build output (scripts/build-web.sh writes these into www/)
+/www/src/wasm/
+/www/assets/
+
 # macOS packaging output (scripts/package-macos.sh writes these into the
 # repository root; CI uploads them as release assets)
 /CloudBridge.app/
