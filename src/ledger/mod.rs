@@ -19,6 +19,7 @@
 
 pub mod demo;
 pub mod query;
+pub mod rollup;
 pub mod schema;
 
 use anyhow::{anyhow, Result};

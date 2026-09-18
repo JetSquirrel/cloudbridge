@@ -21,7 +21,12 @@ use duckdb::{params, Connection};
 /// are not interchangeable — an export is the same month at instance
 /// level — so a refresh has to be able to tell that a month was imported
 /// and leave it alone.
-pub const SCHEMA_VERSION: i32 = 2;
+///
+/// v3 adds `daily_cost_rollup`, the derived day-grain read-model
+/// [`crate::ledger::rollup`] maintains. A new table needs no `ALTER`: the
+/// `CREATE TABLE IF NOT EXISTS` below is the whole migration, for a fresh
+/// file and an upgraded one alike.
+pub const SCHEMA_VERSION: i32 = 3;
 
 /// The view the application reads: every charge with its amount also
 /// expressed in the reporting currency.
@@ -144,6 +149,35 @@ pub fn apply(conn: &Connection) -> Result<()> {
             source    VARCHAR NOT NULL,
             PRIMARY KEY (from_ccy, to_ccy, rate_date)
         );
+
+        -- The derived day-grain read-model `ledger::rollup` maintains:
+        -- sums of fct_charge per (provider, account, day, service, region,
+        -- currency), so the hot analytics reads do not rescan raw line
+        -- items. Amounts are stored twice, as the reading view exposes
+        -- them: in the currency the provider billed, and converted to the
+        -- reporting currency `reporting_currency` records — a change of
+        -- that currency is what invalidates the table. No PRIMARY KEY:
+        -- the grain holds NULLable columns, and uniqueness comes from the
+        -- delete-then-aggregate write, not from a constraint.
+        CREATE TABLE IF NOT EXISTS daily_cost_rollup (
+            provider            VARCHAR NOT NULL,
+            account_id          VARCHAR NOT NULL,
+            day                 DATE NOT NULL,
+            service_name        VARCHAR,
+            region_id           VARCHAR,
+            billing_currency    VARCHAR NOT NULL,
+            billed_cost         DOUBLE,
+            effective_cost      DOUBLE,
+            list_cost           DOUBLE,
+            billed_cost_base    DOUBLE,
+            effective_cost_base DOUBLE,
+            charge_count        BIGINT NOT NULL,
+            reporting_currency  VARCHAR NOT NULL,
+            built_at            TIMESTAMP NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_rollup_day
+            ON daily_cost_rollup (provider, account_id, day);
         "#,
     )?;
 
@@ -214,6 +248,11 @@ fn seed_builtin_rates(conn: &Connection) -> Result<()> {
 /// currency needs no rate at all, and one for which no rate exists keeps a
 /// NULL `billed_cost_base` — it is left out of a converted total rather
 /// than silently counted at par.
+///
+/// The rollup is rebuilt when it does not match the new currency: every
+/// `*_base` amount it stores was converted at the old one. The check is
+/// cheap when nothing changed, which is the common case — this runs on
+/// every start.
 pub fn apply_reporting_currency(conn: &Connection, currency: &str) -> Result<()> {
     if !currency.chars().all(|c| c.is_ascii_alphabetic()) || currency.is_empty() {
         return Err(anyhow::anyhow!("Not a currency code: {:?}", currency));
@@ -239,6 +278,10 @@ pub fn apply_reporting_currency(conn: &Connection, currency: &str) -> Result<()>
          AND f.rate_date <= c.charge_period_start::DATE;
         "#
     ))?;
+
+    // After the view: the rebuild aggregates through it, so it converts at
+    // the currency just applied.
+    crate::ledger::rollup::rebuild_if_stale(conn, currency)?;
 
     Ok(())
 }
@@ -295,6 +338,34 @@ mod tests {
             crate::ledger::Channel::from_stored(channel.as_deref()),
             crate::ledger::Channel::Api
         );
+    }
+
+    fn has_table(conn: &Connection, table: &str) -> Result<bool> {
+        let count: i64 = conn.query_row(
+            "SELECT count(*) FROM duckdb_tables() WHERE table_name = ?",
+            params![table],
+            |row| row.get(0),
+        )?;
+
+        Ok(count > 0)
+    }
+
+    /// A ledger written before v3 gains the rollup table the same way a
+    /// fresh file does: the CREATE is the migration.
+    #[test]
+    fn an_existing_ledger_gains_the_rollup_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(V1_INGEST_BATCH).unwrap();
+
+        apply(&conn).unwrap();
+
+        assert!(has_table(&conn, "daily_cost_rollup").unwrap());
+        let version: i32 = conn
+            .query_row("SELECT max(version) FROM schema_version", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
     }
 
     /// `apply` runs on every start.

@@ -576,6 +576,19 @@ fn record(
         channel,
     )?;
 
+    // The rollup recomputes just this period's day range. A failure must
+    // not fail the ingest that triggered it: the rollup reads as stale and
+    // is rebuilt on the next start.
+    if let Err(e) = ledger::rollup::refresh_for_period(&key) {
+        tracing::warn!(
+            "Daily rollup refresh failed for {}/{} {}: {}",
+            key.provider,
+            key.account_id,
+            key.billing_period,
+            e
+        );
+    }
+
     tracing::info!(
         "Ingested {} {}: {} charge(s), {} balance(s)",
         batch.provider,

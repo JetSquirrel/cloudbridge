@@ -389,15 +389,17 @@ fn sum_total(conn: &Connection, scope: &Scope) -> Result<f64> {
     Ok(total.unwrap_or(0.0))
 }
 
-/// Usage totals per billing period since an instant, as `(YYYY-MM,
-/// amount)` ordered by period label — the 12-month Overview chart's
-/// series. Grouped by `billing_period` rather than by charge-time month
-/// so the buckets are the same months the rest of the app reasons about.
-pub fn monthly_usage(since: DateTime<Utc>) -> Result<Vec<(String, f64)>> {
-    with_connection_ref(|conn| monthly_usage_all_of(conn, since))
-}
+/// Daily totals over a scope, oldest first.
+///
+/// Served from the day-grain rollup when that answers the scope exactly —
+/// net semantics over a day-aligned window — and the rollup is current;
+/// anything else reads the view, as before. The rollup has no
+/// `charge_category` column, so a usage-only scope can never come from it.
+fn sum_by_day(conn: &Connection, scope: &Scope) -> Result<Vec<DailyTotal>> {
+    if let Some(rows) = sum_by_day_rolled_up(conn, scope)? {
+        return Ok(rows);
+    }
 
-fn monthly_usage_all_of(conn: &Connection, since: DateTime<Utc>) -> Result<Vec<(String, f64)>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT strftime(charge_period_start, '%Y-%m-%d') AS day, sum(billed_cost_base) AS amount
          FROM {NORMALIZED_VIEW}
@@ -419,33 +421,96 @@ fn monthly_usage_all_of(conn: &Connection, since: DateTime<Utc>) -> Result<Vec<(
         .collect())
 }
 
-/// Daily usage totals across every provider and account since an instant,
-/// oldest first — like [`daily_totals_all`], but Usage rows only, so a
-/// credit landing on one day does not dip the series below what was
-/// actually consumed.
-pub fn daily_usage_all(since: DateTime<Utc>) -> Result<Vec<DailyTotal>> {
-    with_connection_ref(|conn| daily_usage_all_of(conn, since))
-}
+/// The rollup-backed [`sum_by_day`]: `None` when the view path must answer
+/// instead — a usage-only scope, a period or service filter, a window edge
+/// inside a day (the day grain cannot exclude part of it), or a stale
+/// rollup.
+fn sum_by_day_rolled_up(conn: &Connection, scope: &Scope) -> Result<Option<Vec<DailyTotal>>> {
+    let day_aligned = |instant: DateTime<Utc>| instant.time() == chrono::NaiveTime::MIN;
+    if scope.usage_only
+        || scope.billing_period.is_some()
+        || scope.service.is_some()
+        || scope.until.is_some()
+        || scope.since.is_some_and(|since| !day_aligned(since))
+    {
+        return Ok(None);
+    }
+    if !rollup_is_current(conn)? {
+        return Ok(None);
+    }
 
-fn daily_usage_all_of(conn: &Connection, since: DateTime<Utc>) -> Result<Vec<DailyTotal>> {
+    let mut clauses = vec!["TRUE".to_string()];
+    let mut bound: Vec<String> = Vec::new();
+    if let Some(provider) = scope.provider {
+        clauses.push("provider = ?".to_string());
+        bound.push(provider.to_string());
+    }
+    if let Some(account_id) = scope.account_id {
+        clauses.push("account_id = ?".to_string());
+        bound.push(account_id.to_string());
+    }
+    if let Some(since) = scope.since {
+        clauses.push("day >= CAST(? AS DATE)".to_string());
+        bound.push(since.format(TIMESTAMP_FORMAT).to_string());
+    }
+
     let mut stmt = conn.prepare(&format!(
-        "SELECT strftime(charge_period_start, '%Y-%m-%d') AS day, sum(billed_cost_base) AS amount
-         FROM {NORMALIZED_VIEW}
-         WHERE charge_period_start >= CAST(? AS TIMESTAMP)
-           AND charge_category = 'Usage'
+        "SELECT CAST(day AS VARCHAR) AS day, sum(billed_cost_base) AS amount
+         FROM daily_cost_rollup
+         WHERE {}
          GROUP BY day
-         ORDER BY day"
+         ORDER BY day",
+        clauses.join(" AND ")
     ))?;
 
     let rows = stmt
-        .query_map(params![since.format(TIMESTAMP_FORMAT).to_string()], |row| {
+        .query_map(duckdb::params_from_iter(bound), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<f64>>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(Some(
+        rows.into_iter()
+            .map(|(day, amount)| (day, amount.unwrap_or(0.0)))
+            .collect(),
+    ))
+}
+
+/// [`super::rollup::is_current_of`] against the currency the reading view
+/// converts to, probed from the view itself. An empty ledger has no row to
+/// probe — and nothing for either path to return.
+fn rollup_is_current(conn: &Connection) -> Result<bool> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT reporting_currency FROM {NORMALIZED_VIEW} LIMIT 1"
+    ))?;
+    let currency: Option<String> = stmt.query_map([], |row| row.get(0))?.next().transpose()?;
+    match currency {
+        Some(currency) => super::rollup::is_current_of(conn, &currency),
+        None => Ok(true),
+    }
+}
+
+/// Totals per billing period over a scope, ordered by period label — the
+/// 12-month Overview chart's series shape.
+fn sum_by_period(conn: &Connection, scope: &Scope) -> Result<Vec<(String, f64)>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT billing_period, sum(billed_cost_base) AS amount
+         FROM {NORMALIZED_VIEW}
+         WHERE {}
+         GROUP BY billing_period
+         ORDER BY billing_period",
+        scope.where_sql()
+    ))?;
+
+    let rows = stmt
+        .query_map(duckdb::params_from_iter(scope.params()), |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, Option<f64>>(1)?))
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(rows
         .into_iter()
-        .map(|(day, amount)| (day, amount.unwrap_or(0.0)))
+        .map(|(period, amount)| (period, amount.unwrap_or(0.0)))
         .collect())
 }
 

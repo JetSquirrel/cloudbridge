@@ -56,12 +56,14 @@ pub fn seed_demo() -> Result<String> {
         db::mark_account_synced(account_id, now)?;
     }
 
-    Ok(format!(
-        "{} accounts, {} periods, {} charges",
-        DEMO_SOURCES.len(),
-        DEMO_SOURCES.len() * periods.len(),
-        charge_count
-    ))
+    // `replace_period` bypasses the ingest hook that refreshes the rollup, so
+    // recompute it in full once the seed is in. As in ingest, a failure reads
+    // as stale and self-repairs on the next start.
+    if let Err(e) = rollup::rebuild_all() {
+        tracing::warn!("Daily rollup rebuild failed after demo seed: {}", e);
+    }
+
+    Ok(demo_data::summary(periods.len(), charge_count))
 }
 
 /// Remove every demo row and demo account. Blocking. Returns a one-line
@@ -88,70 +90,10 @@ pub fn clear_demo() -> Result<String> {
         Ok(())
     })?;
 
-    Ok(format!("Removed {removed} demo account(s) and their data"))
-}
-
-/// One period's charges for one source: a monthly row per service for
-/// settled periods, daily rows for the current and previous period so the
-/// 30-day and MTD charts have points to draw.
-fn period_charges(
-    provider: &str,
-    services: &[(&str, f64, Option<&str>)],
-    currency: &str,
-    period: BillingPeriod,
-    index: usize,
-    now: DateTime<Utc>,
-) -> Vec<Charge> {
-    let current = BillingPeriod::containing(now);
-    let recent = period.label() == current.label() || period.label() == current.previous().label();
-
-    // Growth over the year, then a spike month for the model services.
-    let growth = 0.62 + 0.08 * index as f64;
-    let mut charges = Vec::new();
-
-    for (service, base, line) in services {
-        let mut amount = base * growth;
-        if index == SPIKE_MONTH && matches!(*service, "Bedrock" | "deepseek-reasoner") {
-            amount *= 2.6;
-        }
-
-        if recent {
-            let mut day = period.start();
-            while day < period.end_exclusive() {
-                let start = day_start(day);
-                if start > now {
-                    break;
-                }
-                let mut daily = amount / 30.0 * (1.0 + jitter(service, day));
-                // Three consecutive hot days right before now, so the
-                // cost-anomaly rule (daily > 7-day baseline × 2.5) fires
-                // against the demo data.
-                if *service == "deepseek-reasoner" && (now - start).num_days() < 3 {
-                    daily *= 3.4;
-                }
-                let Some(next) = day.succ_opt() else { break };
-                charges.push(usage_charge(
-                    provider,
-                    service,
-                    *line,
-                    currency,
-                    daily,
-                    start,
-                    day_start(next),
-                ));
-                day = next;
-            }
-        } else {
-            charges.push(usage_charge(
-                provider,
-                service,
-                *line,
-                currency,
-                amount,
-                day_start(period.start()),
-                day_start(period.end_exclusive()),
-            ));
-        }
+    // The raw deletes above bypass the ingest hook, so the rollup still holds
+    // the demo rows; rebuild it from what is left.
+    if let Err(e) = rollup::rebuild_all() {
+        tracing::warn!("Daily rollup rebuild failed after demo clear: {}", e);
     }
 
     Ok(format!("Removed {removed} demo account(s) and their data"))
