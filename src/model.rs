@@ -634,3 +634,16 @@ pub struct ServiceTagUsage {
     pub amount: f64,
 }
 
+/// The result of an ad-hoc query, with every value already rendered as
+/// text — the query page shows it without touching duckdb types.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdhocResult {
+    pub columns: Vec<String>,
+    /// Per column: whether to right-align, decided by the first non-NULL
+    /// value seen — a column of nothing but NULLs left-aligns.
+    pub numeric: Vec<bool>,
+    /// A NULL stays `None`, so the UI can grey it rather than print "NULL".
+    pub rows: Vec<Vec<Option<String>>>,
+    pub truncated: bool,
+    pub elapsed_ms: u64,
+}

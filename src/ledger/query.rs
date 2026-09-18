@@ -1491,6 +1491,925 @@ fn data_quality_issues_of(
     }))
 }
 
+// ==================== Ad-hoc queries ====================
+
+/// How much one ad-hoc result may hold, in rows and in cells — a wide
+/// result hits the cell budget long before the row one.
+const MAX_ROWS: usize = 100_000;
+const MAX_CELLS: usize = 2_000_000;
+
+/// Run a read-only query against the ledger and render the result.
+///
+/// Unlike every other read in this file, this does not take the shared
+/// connection: an ad-hoc query can run for seconds, and holding the global
+/// lock would stall every page behind it. The connection is opened
+/// read-only, so a statement that slips past the guard still cannot write.
+pub fn run_adhoc(sql: &str) -> Result<AdhocResult> {
+    let path = crate::config::get_ledger_database_path()?;
+    let conn =
+        Connection::open_with_flags(path, Config::default().access_mode(AccessMode::ReadOnly)?)?;
+    run_adhoc_of(&conn, sql)
+}
+
+fn run_adhoc_of(conn: &Connection, sql: &str) -> Result<AdhocResult> {
+    run_adhoc_within(conn, sql, MAX_ROWS, MAX_CELLS)
+}
+
+fn run_adhoc_within(
+    conn: &Connection,
+    sql: &str,
+    max_rows: usize,
+    max_cells: usize,
+) -> Result<AdhocResult> {
+    if !is_read_only(sql) {
+        anyhow::bail!("only read-only queries are allowed");
+    }
+
+    let started = std::time::Instant::now();
+    let mut stmt = conn.prepare(sql)?;
+    let mut rows = stmt.query([])?;
+    // Names are only known once the statement has been executed — asking
+    // the Statement for them before `query` panics.
+    let columns = rows
+        .as_ref()
+        .map(|statement| statement.column_names())
+        .unwrap_or_default();
+    let row_budget = max_rows.min(max_cells / columns.len().max(1));
+
+    let mut numeric: Vec<Option<bool>> = vec![None; columns.len()];
+    let mut out: Vec<Vec<Option<String>>> = Vec::new();
+    let mut truncated = false;
+
+    while let Some(row) = rows.next()? {
+        if out.len() >= row_budget {
+            truncated = true;
+            break;
+        }
+        let mut cells = Vec::with_capacity(columns.len());
+        for (index, slot) in numeric.iter_mut().enumerate() {
+            let value = row.get_ref(index)?;
+            if slot.is_none() {
+                *slot = match value {
+                    ValueRef::Null => None,
+                    _ => Some(is_numeric(&value)),
+                };
+            }
+            cells.push(format_cell(&value));
+        }
+        out.push(cells);
+    }
+
+    Ok(AdhocResult {
+        columns,
+        numeric: numeric
+            .into_iter()
+            .map(|slot| slot.unwrap_or(false))
+            .collect(),
+        rows: out,
+        truncated,
+        elapsed_ms: started.elapsed().as_millis() as u64,
+    })
+}
+
+/// Statements that must never reach the ledger from the query page.
+const MUTATING_KEYWORDS: &[&str] = &[
+    "insert",
+    "update",
+    "delete",
+    "drop",
+    "create",
+    "alter",
+    "attach",
+    "detach",
+    "copy",
+    "export",
+    "import",
+    "install",
+    "load",
+    "pragma",
+    "set",
+    "use",
+    "call",
+    "vacuum",
+    "checkpoint",
+    "replace",
+    "merge",
+    "truncate",
+    "grant",
+    "revoke",
+];
+
+/// What an ad-hoc query may start with.
+const READ_ONLY_STARTERS: &[&str] = &[
+    "select",
+    "with",
+    "explain",
+    "describe",
+    "show",
+    "summarize",
+    "values",
+];
+
+/// Whether `sql` is safe to run from the query page.
+///
+/// Word-wise rather than trusting the leading keyword, so `SELECT 1; DROP
+/// TABLE t` and an INSERT inside a CTE are both caught — and erring toward
+/// `false`: a false hit costs the user a rephrased query, a miss costs the
+/// ledger. Comments and string literals are blanked first, so a `-- drop`
+/// note or a `'DROP TABLE'` value does not count as a statement.
+fn is_read_only(sql: &str) -> bool {
+    let code = code_without_literals(sql);
+    let mut words = code
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|word| !word.is_empty());
+
+    let Some(first) = words.next() else {
+        return false;
+    };
+    if !READ_ONLY_STARTERS
+        .iter()
+        .any(|starter| first.eq_ignore_ascii_case(starter))
+    {
+        return false;
+    }
+
+    !words.any(|word| {
+        MUTATING_KEYWORDS
+            .iter()
+            .any(|keyword| word.eq_ignore_ascii_case(keyword))
+    })
+}
+
+/// `sql` with `--` and `/* */` comments and single-quoted string literals
+/// blanked to spaces, so keyword scanning sees only code. A `''` inside a
+/// literal is an escaped quote, not the end of it.
+fn code_without_literals(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let mut chars = sql.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => {
+                out.push(' ');
+                loop {
+                    match chars.next() {
+                        Some('\'') if chars.peek() == Some(&'\'') => {
+                            chars.next();
+                        }
+                        Some('\'') | None => break,
+                        _ => {}
+                    }
+                }
+            }
+            '-' if chars.peek() == Some(&'-') => {
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        break;
+                    }
+                }
+                out.push(' ');
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut previous = '\0';
+                for c in chars.by_ref() {
+                    if previous == '*' && c == '/' {
+                        break;
+                    }
+                    previous = c;
+                }
+                out.push(' ');
+            }
+            _ => out.push(c),
+        }
+    }
+
+    out
+}
+
+/// Whether a value is one the UI should right-align.
+fn is_numeric(value: &ValueRef) -> bool {
+    matches!(
+        value,
+        ValueRef::TinyInt(_)
+            | ValueRef::SmallInt(_)
+            | ValueRef::Int(_)
+            | ValueRef::BigInt(_)
+            | ValueRef::HugeInt(_)
+            | ValueRef::UTinyInt(_)
+            | ValueRef::USmallInt(_)
+            | ValueRef::UInt(_)
+            | ValueRef::UBigInt(_)
+            | ValueRef::Float(_)
+            | ValueRef::Double(_)
+            | ValueRef::Decimal(_)
+    )
+}
+
+/// A cell as the UI shows it: NULL stays `None`, everything else is text.
+fn format_cell(value: &ValueRef) -> Option<String> {
+    match value {
+        ValueRef::Null => None,
+        // Text and Blob are read straight from the borrow: `to_owned` on
+        // Text expects valid UTF-8 and would panic on the rare value that
+        // is not.
+        ValueRef::Text(bytes) => Some(String::from_utf8_lossy(bytes).into_owned()),
+        ValueRef::Blob(bytes) => Some(format!("<{} bytes>", bytes.len())),
+        other => Some(format_value(&other.to_owned())),
+    }
+}
+
+fn format_value(value: &Value) -> String {
+    match value {
+        Value::Null => "NULL".to_string(),
+        Value::Boolean(v) => v.to_string(),
+        Value::TinyInt(v) => v.to_string(),
+        Value::SmallInt(v) => v.to_string(),
+        Value::Int(v) => v.to_string(),
+        Value::BigInt(v) => v.to_string(),
+        Value::HugeInt(v) => v.to_string(),
+        Value::UTinyInt(v) => v.to_string(),
+        Value::USmallInt(v) => v.to_string(),
+        Value::UInt(v) => v.to_string(),
+        Value::UBigInt(v) => v.to_string(),
+        // Rust's Display for floats never switches to scientific notation.
+        Value::Float(v) => v.to_string(),
+        Value::Double(v) => v.to_string(),
+        Value::Decimal(v) => v.to_string(),
+        Value::Timestamp(unit, v) => format_timestamp(*unit, *v),
+        Value::Text(v) | Value::Enum(v) => v.clone(),
+        Value::Blob(v) => format!("<{} bytes>", v.len()),
+        Value::Date32(days) => format_date(*days),
+        Value::Time64(unit, v) => format_time(*unit, *v),
+        Value::Interval {
+            months,
+            days,
+            nanos,
+        } => format_interval(*months, *days, *nanos),
+        Value::List(items) | Value::Array(items) => format!(
+            "[{}]",
+            items
+                .iter()
+                .map(format_value)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Struct(entries) => format!(
+            "{{{}}}",
+            entries
+                .iter()
+                .map(|(key, value)| format!("{key}: {}", format_value(value)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Map(entries) => format!(
+            "{{{}}}",
+            entries
+                .iter()
+                .map(|(key, value)| format!("{}: {}", format_value(key), format_value(value)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Union(inner) => format_value(inner),
+    }
+}
+
+/// Microseconds since the epoch as `YYYY-MM-DD HH:MM:SS`, with fractional
+/// seconds only when they are not zero — the way DuckDB itself renders one.
+fn format_timestamp(unit: TimeUnit, value: i64) -> String {
+    let micros = unit.to_micros(value);
+    match chrono::DateTime::from_timestamp_micros(micros) {
+        Some(stamp) => {
+            let base = stamp.format(TIMESTAMP_FORMAT).to_string();
+            let fraction = stamp.timestamp_subsec_micros();
+            if fraction == 0 {
+                base
+            } else {
+                format!("{base}.{}", format!("{fraction:06}").trim_end_matches('0'))
+            }
+        }
+        None => micros.to_string(),
+    }
+}
+
+/// Days since the epoch as `YYYY-MM-DD`.
+fn format_date(days: i32) -> String {
+    let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("the epoch exists");
+    match epoch.checked_add_signed(chrono::Duration::days(days as i64)) {
+        Some(date) => date.format("%Y-%m-%d").to_string(),
+        None => days.to_string(),
+    }
+}
+
+/// Time of day as `HH:MM:SS`, with fractional seconds only when they are
+/// not zero.
+fn format_time(unit: TimeUnit, value: i64) -> String {
+    let micros = unit.to_micros(value);
+    let seconds = micros.div_euclid(1_000_000);
+    let nanos = micros.rem_euclid(1_000_000) as u32 * 1000;
+    match chrono::NaiveTime::from_num_seconds_from_midnight_opt(seconds as u32, nanos) {
+        Some(time) => {
+            let base = time.format("%H:%M:%S").to_string();
+            let fraction = micros.rem_euclid(1_000_000);
+            if fraction == 0 {
+                base
+            } else {
+                format!("{base}.{}", format!("{fraction:06}").trim_end_matches('0'))
+            }
+        }
+        None => value.to_string(),
+    }
+}
+
+fn format_interval(months: i32, days: i32, nanos: i64) -> String {
+    let mut parts = Vec::new();
+    if months != 0 {
+        parts.push(format!("{months} months"));
+    }
+    if days != 0 {
+        parts.push(format!("{days} days"));
+    }
+    if nanos != 0 {
+        parts.push(format!("{} seconds", nanos as f64 / 1e9));
+    }
+    if parts.is_empty() {
+        "0 seconds".to_string()
+    } else {
+        parts.join(" ")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cloud::BillingPeriod;
+    use crate::ledger::schema;
+    use crate::ledger::{BalanceSnapshot, Channel, Charge, ChargeCategory};
+    use chrono::TimeZone;
+
+    fn conn(reporting_currency: &str) -> Connection {
+        let conn = Connection::open_in_memory().expect("in-memory duckdb");
+        schema::apply(&conn).expect("schema applies");
+        schema::apply_reporting_currency(&conn, reporting_currency).expect("view applies");
+        conn
+    }
+
+    fn at(day: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 8, day, 0, 0, 0).unwrap()
+    }
+
+    fn charge(service: &str, amount: f64, currency: &str, day: u32) -> Charge {
+        Charge {
+            service_name: Some(service.to_string()),
+            billed_cost: Some(amount),
+            ..Charge::new(at(day), at(day + 1), currency)
+        }
+    }
+
+    /// A charge starting at an arbitrary instant, for windows that span
+    /// months — `charge` only builds August days.
+    fn charge_on(service: &str, amount: f64, currency: &str, start: DateTime<Utc>) -> Charge {
+        Charge {
+            service_name: Some(service.to_string()),
+            billed_cost: Some(amount),
+            ..Charge::new(start, start + chrono::Duration::days(1), currency)
+        }
+    }
+
+    fn aws() -> PeriodKey {
+        PeriodKey::new("AWS", "acct-1", "2026-08")
+    }
+
+    fn aliyun() -> PeriodKey {
+        PeriodKey::new("Aliyun", "acct-2", "2026-08")
+    }
+
+    fn last_channel_of(conn: &Connection, key: &PeriodKey) -> Result<Option<Channel>> {
+        // Only one batch per period is 'complete' — `write_period` supersedes
+        // the rest — so this is the batch whose rows are in `fct_charge`.
+        let mut stmt = conn.prepare(
+            "SELECT channel FROM ingest_batch
+             WHERE provider = ? AND account_id = ? AND billing_period = ? AND status = 'complete'
+             LIMIT 1",
+        )?;
+
+        let mut rows = stmt.query(params![key.provider, key.account_id, key.billing_period])?;
+
+        match rows.next()? {
+            Some(row) => Ok(Some(Channel::from_stored(
+                row.get::<_, Option<String>>(0)?.as_deref(),
+            ))),
+            None => Ok(None),
+        }
+    }
+
+    fn write(conn: &mut Connection, key: &PeriodKey, charges: &[Charge]) {
+        write_through(conn, key, charges, Channel::Api);
+    }
+
+    fn write_through(conn: &mut Connection, key: &PeriodKey, charges: &[Charge], channel: Channel) {
+        let batch_id = crate::ledger::new_batch_id();
+        crate::ledger::write_period(conn, key, &batch_id, charges, None, channel).unwrap();
+    }
+
+    /// A refresh has to be able to tell that a month was imported by hand,
+    /// so that an automatic fetch does not replace the provider's own bill
+    /// with a coarser reading of the same month.
+    #[test]
+    fn a_period_remembers_which_channel_it_arrived_through() {
+        let mut conn = conn("USD");
+
+        write_through(
+            &mut conn,
+            &aliyun(),
+            &[charge("Model Studio", 12.34, "CNY", 9)],
+            Channel::File,
+        );
+        write(&mut conn, &aws(), &[charge("EC2", 12.5, "USD", 1)]);
+
+        assert_eq!(
+            last_channel_of(&conn, &aliyun()).unwrap(),
+            Some(Channel::File)
+        );
+        assert_eq!(last_channel_of(&conn, &aws()).unwrap(), Some(Channel::Api));
+    }
+
+    /// Re-importing, or fetching over an imported month, replaces the
+    /// channel along with the rows: only the batch holding the rows counts.
+    #[test]
+    fn replacing_a_period_replaces_the_channel_it_is_credited_to() {
+        let mut conn = conn("USD");
+
+        write_through(
+            &mut conn,
+            &aliyun(),
+            &[charge("Model Studio", 12.34, "CNY", 9)],
+            Channel::File,
+        );
+        write_through(
+            &mut conn,
+            &aliyun(),
+            &[charge("Model Studio", 12.34, "CNY", 9)],
+            Channel::Api,
+        );
+
+        assert_eq!(
+            last_channel_of(&conn, &aliyun()).unwrap(),
+            Some(Channel::Api)
+        );
+    }
+
+    #[test]
+    fn a_period_that_was_never_ingested_has_no_channel() {
+        let conn = conn("USD");
+        assert_eq!(last_channel_of(&conn, &aws()).unwrap(), None);
+    }
+
+    #[test]
+    fn a_cross_cloud_total_is_one_query_in_one_currency() {
+        let mut conn = conn("USD");
+        write(&mut conn, &aws(), &[charge("EC2", 12.5, "USD", 1)]);
+        write(&mut conn, &aliyun(), &[charge("ECS", 710.0, "CNY", 1)]);
+
+        // 710 CNY at the built-in 0.1408 is 99.968 USD.
+        let total = total_for_period_of(&conn, "2026-08").unwrap();
+        assert!((total - 112.468).abs() < 1e-6, "got {total}");
+
+        // Each account still reports in the same currency as the total.
+        assert!((period_total_of(&conn, &aws()).unwrap() - 12.5).abs() < 1e-9);
+        assert!((period_total_of(&conn, &aliyun()).unwrap() - 99.968).abs() < 1e-6);
+    }
+
+    #[test]
+    fn changing_the_reporting_currency_rereads_the_same_rows() {
+        let mut conn = conn("USD");
+        write(&mut conn, &aliyun(), &[charge("ECS", 710.0, "CNY", 1)]);
+
+        assert!((period_total_of(&conn, &aliyun()).unwrap() - 99.968).abs() < 1e-6);
+
+        // No rewrite of the fact table: only the view changes.
+        schema::apply_reporting_currency(&conn, "CNY").unwrap();
+        assert!((period_total_of(&conn, &aliyun()).unwrap() - 710.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_charge_in_a_currency_no_rate_covers_is_reported_rather_than_counted() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                charge("EC2", 12.5, "USD", 1),
+                charge("Something", 100.0, "JPY", 1),
+            ],
+        );
+
+        // The unconvertible row is left out of the total...
+        let total = total_for_period_of(&conn, "2026-08").unwrap();
+        assert!((total - 12.5).abs() < 1e-9, "got {total}");
+        // ...and is countable, so the UI can say so.
+        assert_eq!(unconverted_charges_of(&conn, "2026-08").unwrap(), 1);
+    }
+
+    #[test]
+    fn a_rate_is_taken_from_the_charges_own_time() {
+        let mut conn = conn("USD");
+        conn.execute_batch(
+            "INSERT OR REPLACE INTO dim_fx_rate VALUES ('CNY', 'USD', DATE '2026-08-15', 0.2, 'test')",
+        )
+        .unwrap();
+
+        write(
+            &mut conn,
+            &aliyun(),
+            &[
+                charge("ECS", 100.0, "CNY", 1),
+                charge("ECS", 100.0, "CNY", 20),
+            ],
+        );
+
+        // The 1 August charge predates the new rate and keeps the old one;
+        // the 20 August charge takes the newer.
+        let daily = daily_totals_of(&conn, "Aliyun", "acct-2", at(1)).unwrap();
+        assert_eq!(daily.len(), 2);
+        assert!((daily[0].1 - 14.08).abs() < 1e-9, "got {:?}", daily[0]);
+        assert!((daily[1].1 - 20.0).abs() < 1e-9, "got {:?}", daily[1]);
+    }
+
+    #[test]
+    fn a_breakdown_is_by_service_largest_first() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                charge("S3", 0.75, "USD", 1),
+                charge("EC2", 12.5, "USD", 1),
+                charge("EC2", 4.0, "USD", 2),
+                Charge {
+                    charge_category: ChargeCategory::Credit,
+                    billed_cost: Some(-2.0),
+                    ..charge("EC2", -2.0, "USD", 2)
+                },
+            ],
+        );
+
+        let breakdown = service_breakdown_of(&conn, &aws()).unwrap();
+        assert_eq!(
+            breakdown,
+            vec![("EC2".to_string(), 14.5), ("S3".to_string(), 0.75)]
+        );
+    }
+
+    #[test]
+    fn a_period_that_was_never_ingested_has_no_ingest_time() {
+        let mut conn = conn("USD");
+        assert!(last_ingest_of(&conn, &aws()).unwrap().is_none());
+
+        write(&mut conn, &aws(), &[charge("EC2", 1.0, "USD", 1)]);
+        assert!(last_ingest_of(&conn, &aws()).unwrap().is_some());
+    }
+
+    #[test]
+    fn the_newest_balance_is_the_one_reported() {
+        let mut conn = conn("USD");
+        for (day, amount) in [(1, 50.0), (3, 30.0), (2, 40.0)] {
+            crate::ledger::write_balance(
+                &mut conn,
+                &BalanceSnapshot {
+                    provider: "DeepSeek".to_string(),
+                    account_id: "acct-3".to_string(),
+                    observed_at: at(day),
+                    balance: amount,
+                    granted_balance: Some(5.0),
+                    topped_up_balance: Some(amount - 5.0),
+                    currency: "CNY".to_string(),
+                },
+            )
+            .unwrap();
+        }
+
+        let balance = latest_balance_of(&conn, "DeepSeek", "acct-3")
+            .unwrap()
+            .expect("a balance was recorded");
+        assert_eq!(balance.balance, 30.0);
+        assert_eq!(balance.observed_at, at(3));
+        // Not converted: a balance is what is left, not what was spent.
+        assert_eq!(balance.currency, "CNY");
+
+        assert!(latest_balance_of(&conn, "DeepSeek", "unknown")
+            .unwrap()
+            .is_none());
+    }
+
+    fn tagged_charge(service: &str, amount: f64, day: u32, tags: Option<&str>) -> Charge {
+        Charge {
+            tags: tags.map(str::to_string),
+            ..charge(service, amount, "USD", day)
+        }
+    }
+
+    #[test]
+    fn daily_totals_all_spans_providers_oldest_first() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[charge("EC2", 12.5, "USD", 1), charge("EC2", 4.0, "USD", 2)],
+        );
+        write(&mut conn, &aliyun(), &[charge("ECS", 710.0, "CNY", 2)]);
+
+        let daily = daily_totals_all_of(&conn, at(1)).unwrap();
+        assert_eq!(daily.len(), 2);
+        assert_eq!(daily[0].0, "2026-08-01");
+        assert!((daily[0].1 - 12.5).abs() < 1e-9);
+        // 4.0 USD + 710 CNY at 0.1408.
+        assert!((daily[1].1 - 103.968).abs() < 1e-6, "got {:?}", daily[1]);
+
+        assert!(daily_totals_all_of(&conn, at(10)).unwrap().is_empty());
+    }
+
+    #[test]
+    fn daily_totals_come_from_the_rollup_when_it_is_current() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[charge("EC2", 12.5, "USD", 1), charge("EC2", 4.0, "USD", 2)],
+        );
+        write(&mut conn, &aliyun(), &[charge("ECS", 710.0, "CNY", 2)]);
+        crate::ledger::rollup::rebuild_all_of(&conn).unwrap();
+
+        // The same numbers the view path computes, off the day-grain table.
+        let daily = daily_totals_all_of(&conn, at(1)).unwrap();
+        assert_eq!(daily.len(), 2);
+        assert_eq!(daily[0].0, "2026-08-01");
+        assert!((daily[0].1 - 12.5).abs() < 1e-9);
+        assert!((daily[1].1 - 103.968).abs() < 1e-6, "got {:?}", daily[1]);
+
+        let per_account = daily_totals_of(&conn, "Aliyun", "acct-2", at(1)).unwrap();
+        assert_eq!(per_account.len(), 1);
+        assert!((per_account[0].1 - 99.968).abs() < 1e-6);
+
+        // Proof of the source: with the fact table emptied the rollup still
+        // answers, where the view path would see nothing.
+        conn.execute("DELETE FROM fct_charge", []).unwrap();
+        assert_eq!(daily_totals_all_of(&conn, at(1)).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_sub_day_window_edge_reads_the_view_not_the_rollup() {
+        let mut conn = conn("USD");
+        write(&mut conn, &aws(), &[charge("EC2", 12.5, "USD", 1)]);
+        crate::ledger::rollup::rebuild_all_of(&conn).unwrap();
+
+        // Noon: the day grain cannot exclude the morning of a day, so the
+        // view answers — and the midnight charge falls outside the window.
+        let since = at(1) + chrono::Duration::hours(12);
+        assert!(daily_totals_of(&conn, "AWS", "acct-1", since)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn provider_service_totals_group_and_order() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                charge("EC2", 12.5, "USD", 1),
+                charge("S3", 0.75, "USD", 1),
+                Charge {
+                    service_name: None,
+                    billed_cost: Some(2.0),
+                    ..charge("ignored", 2.0, "USD", 1)
+                },
+                Charge {
+                    charge_category: ChargeCategory::Credit,
+                    billed_cost: Some(-5.0),
+                    ..charge("Refunded", -5.0, "USD", 1)
+                },
+            ],
+        );
+        write(&mut conn, &aliyun(), &[charge("ECS", 710.0, "CNY", 1)]);
+
+        let totals = provider_service_totals_of(&conn, "2026-08").unwrap();
+        assert_eq!(totals[0].0, "Aliyun");
+        assert_eq!(totals[0].1, "ECS");
+        assert!((totals[0].2 - 99.968).abs() < 1e-6);
+        // A NULL service reads as 'Other'; a net-negative group is dropped.
+        let names: Vec<&str> = totals.iter().map(|(_, s, _)| s.as_str()).collect();
+        assert!(names.contains(&"Other"));
+        assert!(!names.contains(&"Refunded"));
+        assert!(!names.contains(&"ignored"));
+    }
+
+    #[test]
+    fn a_tag_breakdown_buckets_everything_without_the_key_as_unallocated() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                tagged_charge("EC2", 10.0, 1, Some(r#"{"business_line":"etl"}"#)),
+                tagged_charge("S3", 3.0, 1, Some(r#"{"other":"x"}"#)),
+                tagged_charge("NAT", 2.0, 1, None),
+                tagged_charge("RDS", 1.0, 1, Some(r#"{"business_line":""}"#)),
+                tagged_charge("EC2", 5.0, 2, Some(r#"{"business_line":"etl"}"#)),
+            ],
+        );
+
+        let breakdown = tag_breakdown_of(&conn, "2026-08", "business_line", None).unwrap();
+        assert_eq!(
+            breakdown,
+            vec![("etl".to_string(), 15.0), ("Unallocated".to_string(), 6.0),]
+        );
+    }
+
+    #[test]
+    fn a_service_tag_breakdown_sees_only_that_service() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                tagged_charge("EC2", 10.0, 1, Some(r#"{"business_line":"etl"}"#)),
+                tagged_charge("EC2", 4.0, 1, None),
+                tagged_charge("S3", 3.0, 1, Some(r#"{"business_line":"search"}"#)),
+            ],
+        );
+
+        let breakdown =
+            tag_breakdown_of(&conn, "2026-08", "business_line", Some(("AWS", "EC2"))).unwrap();
+        assert_eq!(
+            breakdown,
+            vec![("etl".to_string(), 10.0), ("Unallocated".to_string(), 4.0),]
+        );
+    }
+
+    #[test]
+    fn untagged_detail_is_the_largest_unattributed_charges() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                Charge {
+                    charge_description: Some("NAT gateway".to_string()),
+                    ..tagged_charge("VPC", 24.0, 1, None)
+                },
+                tagged_charge("S3", 17.0, 1, Some(r#"{"business_line":"etl"}"#)),
+                tagged_charge("EC2", 12.5, 1, None),
+                Charge {
+                    charge_category: ChargeCategory::Credit,
+                    ..tagged_charge("EC2", -9.0, 1, None)
+                },
+            ],
+        );
+        write(&mut conn, &aliyun(), &[tagged_charge("ECS", 30.0, 1, None)]);
+
+        let detail = untagged_detail_of(&conn, "2026-08", "business_line", 1).unwrap();
+        assert_eq!(detail.len(), 1);
+        // Largest first, across providers; credits are not "untagged spend".
+        assert_eq!(detail[0].provider, "Aliyun");
+        assert_eq!(detail[0].service.as_deref(), Some("ECS"));
+        assert!((detail[0].amount - 30.0).abs() < 1e-9);
+
+        let all = untagged_detail_of(&conn, "2026-08", "business_line", 10).unwrap();
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[1].description.as_deref(), Some("NAT gateway"));
+
+        // "Every row" as usize::MAX must not wrap to a negative LIMIT.
+        let every = untagged_detail_of(&conn, "2026-08", "business_line", usize::MAX).unwrap();
+        assert_eq!(every.len(), 3);
+    }
+
+    #[test]
+    fn usage_and_credits_splits_gross_usage_from_credits() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                charge("EC2", 12.5, "USD", 1),
+                charge("S3", 2.5, "USD", 1),
+                Charge {
+                    charge_category: ChargeCategory::Credit,
+                    billed_cost: Some(-10.0),
+                    ..charge("EC2", -10.0, "USD", 2)
+                },
+                Charge {
+                    charge_category: ChargeCategory::Tax,
+                    billed_cost: Some(1.25),
+                    ..charge("Tax", 1.25, "USD", 2)
+                },
+            ],
+        );
+
+        let (usage, credits) = usage_and_credits_of(&conn, "2026-08").unwrap();
+        assert!((usage - 15.0).abs() < 1e-9, "got {usage}");
+        assert!((credits - -10.0).abs() < 1e-9, "got {credits}");
+
+        // The Tax row is in neither bucket but stays in the net total.
+        let net = total_for_period_of(&conn, "2026-08").unwrap();
+        assert!((net - 6.25).abs() < 1e-9, "got {net}");
+    }
+
+    #[test]
+    fn untagged_usage_by_service_rolls_charges_up_to_one_row_per_service() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                tagged_charge("EC2", 12.5, 1, None),
+                tagged_charge("EC2", 4.0, 2, None),
+                tagged_charge("EC2", 1.0, 3, None),
+                tagged_charge("S3", 20.0, 1, Some(r#"{"business_line":"etl"}"#)),
+                tagged_charge("S3", 2.0, 1, None),
+                Charge {
+                    charge_category: ChargeCategory::Credit,
+                    ..tagged_charge("EC2", -9.0, 1, None)
+                },
+            ],
+        );
+
+        let rows = untagged_usage_by_service_of(&conn, "2026-08", "business_line", 10).unwrap();
+        assert_eq!(rows.len(), 2);
+        // Three EC2 charges read as one row; a credit is not usage.
+        assert_eq!(rows[0].provider, "AWS");
+        assert_eq!(rows[0].service.as_deref(), Some("EC2"));
+        assert!((rows[0].amount - 17.5).abs() < 1e-9);
+        assert_eq!(rows[1].service.as_deref(), Some("S3"));
+        assert!((rows[1].amount - 2.0).abs() < 1e-9);
+
+        // The limit applies to rolled-up rows, not to charges.
+        let top = untagged_usage_by_service_of(&conn, "2026-08", "business_line", 1).unwrap();
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0].service.as_deref(), Some("EC2"));
+    }
+
+    #[test]
+    fn a_tag_usage_breakdown_counts_usage_only() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                tagged_charge("EC2", 10.0, 1, Some(r#"{"business_line":"etl"}"#)),
+                Charge {
+                    charge_category: ChargeCategory::Credit,
+                    ..tagged_charge("EC2", -4.0, 1, Some(r#"{"business_line":"etl"}"#))
+                },
+                tagged_charge("NAT", 2.0, 1, None),
+            ],
+        );
+
+        let breakdown = tag_usage_breakdown_of(&conn, "2026-08", "business_line", None).unwrap();
+        assert_eq!(
+            breakdown,
+            vec![("etl".to_string(), 10.0), ("Unallocated".to_string(), 2.0),]
+        );
+    }
+
+    #[test]
+    fn a_windowed_usage_and_credits_is_half_open_on_charge_time() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                charge("EC2", 1.0, "USD", 9),  // before the window
+                charge("EC2", 2.0, "USD", 10), // in
+                charge("S3", 4.0, "USD", 15),  // in
+                charge("EC2", 8.0, "USD", 20), // at `until`: out
+                Charge {
+                    charge_category: ChargeCategory::Credit,
+                    billed_cost: Some(-1.5),
+                    ..charge("EC2", -1.5, "USD", 12)
+                },
+                Charge {
+                    charge_category: ChargeCategory::Tax,
+                    billed_cost: Some(0.5),
+                    ..charge("Tax", 0.5, "USD", 12)
+                },
+            ],
+        );
+
+        let (usage, credits) = usage_and_credits_between_of(&conn, at(10), at(20)).unwrap();
+        assert!((usage - 6.0).abs() < 1e-9, "got {usage}");
+        assert!((credits - -1.5).abs() < 1e-9, "got {credits}");
+
+        // An empty window reads as zeros, not an error.
+        assert_eq!(
+            usage_and_credits_between_of(&conn, at(25), at(26)).unwrap(),
+            (0.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn a_windowed_total_is_net_of_every_category_in_the_window() {
         let mut conn = conn("USD");
         write(
             &mut conn,
@@ -1744,67 +2663,71 @@ fn data_quality_issues_of(
         assert!(!is_read_only("   -- just a comment"));
     }
 
-        // The unconvertible row is left out of the total...
-        let total = total_for_period_of(&conn, "2026-08").unwrap();
-        assert!((total - 12.5).abs() < 1e-9, "got {total}");
-        // ...and is countable, so the UI can say so.
-        assert_eq!(unconverted_charges_of(&conn, "2026-08").unwrap(), 1);
+    #[test]
+    fn the_guard_error_is_explicit() {
+        let conn = conn("USD");
+        let error = run_adhoc_of(&conn, "DROP TABLE fct_charge").unwrap_err();
+        assert!(error.to_string().contains("read-only"), "got {error}");
     }
 
     #[test]
-    fn a_rate_is_taken_from_the_charges_own_time() {
-        let mut conn = conn("USD");
-        conn.execute_batch(
-            "INSERT OR REPLACE INTO dim_fx_rate VALUES ('CNY', 'USD', DATE '2026-08-15', 0.2, 'test')",
+    fn the_row_budget_is_rows_or_cells_whichever_bites_first() {
+        let conn = conn("USD");
+
+        // 10 rows available; a row budget of 3 stops at 3 and says so.
+        let result = run_adhoc_within(&conn, "SELECT * FROM range(10)", 3, usize::MAX / 2).unwrap();
+        assert_eq!(result.rows.len(), 3);
+        assert!(result.truncated);
+
+        // A wide query hits the cell budget: 4 cells/row out of a 9-cell
+        // budget allows 2 rows.
+        let wide = run_adhoc_within(
+            &conn,
+            "SELECT i, i, i, i FROM (SELECT * FROM range(10)) AS t(i)",
+            usize::MAX / 2,
+            9,
+        )
+        .unwrap();
+        assert_eq!(wide.rows.len(), 2);
+        assert!(wide.truncated);
+
+        // Exactly budget-many rows is not truncated.
+        let exact = run_adhoc_within(&conn, "SELECT * FROM range(3)", 3, usize::MAX / 2).unwrap();
+        assert_eq!(exact.rows.len(), 3);
+        assert!(!exact.truncated);
+    }
+
+    #[test]
+    fn an_adhoc_result_is_typed_and_rendered() {
+        let conn = conn("USD");
+
+        let result = run_adhoc_of(
+            &conn,
+            "SELECT 42 AS n, 'x' AS s, NULL AS missing, 1.5 AS f, DATE '2026-08-01' AS d",
         )
         .unwrap();
 
-        write(
-            &mut conn,
-            &aliyun(),
-            &[
-                charge("ECS", 100.0, "CNY", 1),
-                charge("ECS", 100.0, "CNY", 20),
-            ],
-        );
-
-        // The 1 August charge predates the new rate and keeps the old one;
-        // the 20 August charge takes the newer.
-        let daily = daily_totals_of(&conn, "Aliyun", "acct-2", at(1)).unwrap();
-        assert_eq!(daily.len(), 2);
-        assert!((daily[0].1 - 14.08).abs() < 1e-9, "got {:?}", daily[0]);
-        assert!((daily[1].1 - 20.0).abs() < 1e-9, "got {:?}", daily[1]);
-    }
-
-    #[test]
-    fn a_breakdown_is_by_service_largest_first() {
-        let mut conn = conn("USD");
-        write(
-            &mut conn,
-            &aws(),
-            &[
-                charge("S3", 0.75, "USD", 1),
-                charge("EC2", 12.5, "USD", 1),
-                charge("EC2", 4.0, "USD", 2),
-                Charge {
-                    charge_category: ChargeCategory::Credit,
-                    billed_cost: Some(-2.0),
-                    ..charge("EC2", -2.0, "USD", 2)
-                },
-            ],
-        );
-
-        let breakdown = service_breakdown_of(&conn, &aws()).unwrap();
+        assert_eq!(result.columns, vec!["n", "s", "missing", "f", "d"]);
+        // `missing` has no non-NULL value, so nothing to right-align by.
+        assert_eq!(result.numeric, vec![true, false, false, true, false]);
         assert_eq!(
-            breakdown,
-            vec![("EC2".to_string(), 14.5), ("S3".to_string(), 0.75)]
+            result.rows,
+            vec![vec![
+                Some("42".to_string()),
+                Some("x".to_string()),
+                None,
+                Some("1.5".to_string()),
+                Some("2026-08-01".to_string()),
+            ]]
         );
-    }
+        assert!(!result.truncated);
 
-    #[test]
-    fn a_period_that_was_never_ingested_has_no_ingest_time() {
-        let mut conn = conn("USD");
-        assert!(last_ingest_of(&conn, &aws()).unwrap().is_none());
+        // The column keeps the type of its first non-NULL value.
+        let mixed = run_adhoc_of(&conn, "SELECT * FROM (VALUES (NULL), (7)) AS t(v)").unwrap();
+        assert_eq!(mixed.numeric, vec![true]);
+        assert_eq!(mixed.rows[0], vec![None]);
+        assert_eq!(mixed.rows[1], vec![Some("7".to_string())]);
+    }
 
     fn midday(day: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 8, day, 12, 0, 0).unwrap()

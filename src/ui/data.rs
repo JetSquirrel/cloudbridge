@@ -1871,27 +1871,253 @@ fn account_monthly_chart(
     }
     periods.reverse();
 
-    let since = periods[0]
-        .start()
-        .and_hms_opt(0, 0, 0)
-        .expect("midnight exists")
-        .and_utc();
-    let by_period: BTreeMap<String, f64> = query::monthly_usage_of(provider, account_id, since)?
-        .into_iter()
-        .collect();
-    let actual = periods
-        .into_iter()
-        .map(|period| {
-            let label = period.label();
-            let amount = by_period.get(&label).copied().unwrap_or(0.0);
-            ChartPoint { label, amount }
-        })
-        .collect();
+// ==================== Query ====================
 
-    Ok(SpendChart {
-        actual,
-        baseline: Vec::new(),
-    })
+/// One starter query of the Query page's template picker. The SQL is what
+/// runs; the category, title, and description only organize the picker.
+pub struct QueryTemplate {
+    pub category: &'static str,
+    pub title: &'static str,
+    pub description: &'static str,
+    pub sql: &'static str,
+}
+
+/// The built-in starter queries. Every amount query reads
+/// `v_charge_normalized`, so amounts come out in the reporting currency —
+/// noted in the description or as a `currency` column, since the query
+/// page has no other place that says what the numbers mean.
+const QUERY_TEMPLATES: [QueryTemplate; 14] = [
+    QueryTemplate {
+        category: "Spend overview",
+        title: "Monthly spend",
+        description: "Total billed spend per billing month, in reporting currency.",
+        sql: "SELECT billing_period,
+       reporting_currency AS currency,
+       ROUND(SUM(billed_cost_base), 2) AS spend
+FROM v_charge_normalized
+GROUP BY billing_period, reporting_currency
+ORDER BY billing_period",
+    },
+    QueryTemplate {
+        category: "Spend overview",
+        title: "Spend by provider × month",
+        description: "How each month's spend splits across providers, in reporting currency.",
+        sql: "SELECT billing_period,
+       provider,
+       reporting_currency AS currency,
+       ROUND(SUM(billed_cost_base), 2) AS spend
+FROM v_charge_normalized
+GROUP BY billing_period, provider, reporting_currency
+ORDER BY billing_period, spend DESC",
+    },
+    QueryTemplate {
+        category: "Spend overview",
+        title: "Daily spend, last 30 days",
+        description: "Day-by-day spend over the last 30 days, in reporting currency.",
+        sql: "SELECT CAST(charge_period_start AS DATE) AS day,
+       reporting_currency AS currency,
+       ROUND(SUM(billed_cost_base), 2) AS spend
+FROM v_charge_normalized
+WHERE charge_period_start >= CURRENT_DATE - INTERVAL 30 DAY
+GROUP BY day, reporting_currency
+ORDER BY day",
+    },
+    QueryTemplate {
+        category: "Composition",
+        title: "Top 20 services this month",
+        description: "Which services cost the most this billing month, in reporting currency.",
+        sql: "SELECT provider,
+       service_name,
+       reporting_currency AS currency,
+       ROUND(SUM(billed_cost_base), 2) AS spend
+FROM v_charge_normalized
+WHERE billing_period = strftime(CURRENT_DATE, '%Y-%m')
+GROUP BY provider, service_name, reporting_currency
+ORDER BY spend DESC
+LIMIT 20",
+    },
+    QueryTemplate {
+        category: "Composition",
+        title: "Spend by business line",
+        description: "How spend splits across business lines, in reporting currency; charges without the business_line tag count as Unallocated.",
+        sql: "SELECT coalesce(nullif(json_extract_string(tags, 'business_line'), ''), 'Unallocated') AS business_line,
+       reporting_currency AS currency,
+       ROUND(SUM(billed_cost_base), 2) AS spend
+FROM v_charge_normalized
+GROUP BY business_line, reporting_currency
+ORDER BY spend DESC",
+    },
+    QueryTemplate {
+        category: "Composition",
+        title: "Unallocated spend by service",
+        description: "Which services carry no business_line tag, and what they cost, in reporting currency.",
+        sql: "SELECT provider,
+       service_name,
+       reporting_currency AS currency,
+       ROUND(SUM(billed_cost_base), 2) AS spend
+FROM v_charge_normalized
+WHERE coalesce(nullif(json_extract_string(tags, 'business_line'), ''), '') = ''
+GROUP BY provider, service_name, reporting_currency
+ORDER BY spend DESC
+LIMIT 20",
+    },
+    QueryTemplate {
+        category: "Forecast & trends",
+        title: "Month-end forecast",
+        description: "This month's spend to date, the daily run rate since the first charge, and the projected month-end total, in reporting currency.",
+        sql: "WITH mtd AS (
+    SELECT SUM(billed_cost_base) AS cost,
+           MIN(charge_period_start::DATE) AS first_day
+    FROM v_charge_normalized
+    WHERE billing_period = strftime(CURRENT_DATE, '%Y-%m')
+)
+SELECT ROUND(cost, 2) AS month_to_date,
+       ROUND(cost / (CURRENT_DATE - greatest(date_trunc('month', CURRENT_DATE)::DATE, first_day) + 1), 2) AS daily_rate,
+       ROUND(cost + cost / (CURRENT_DATE - greatest(date_trunc('month', CURRENT_DATE)::DATE, first_day) + 1)
+             * date_diff('day', CURRENT_DATE, last_day(CURRENT_DATE)), 2) AS month_end_forecast
+FROM mtd",
+    },
+    QueryTemplate {
+        category: "Forecast & trends",
+        title: "Month over month by service",
+        description: "This month vs last month per service, in reporting currency, biggest movers first.",
+        sql: "SELECT service_name,
+       reporting_currency AS currency,
+       ROUND(SUM(CASE WHEN billing_period = strftime(CURRENT_DATE, '%Y-%m') THEN billed_cost_base END), 2) AS this_month,
+       ROUND(SUM(CASE WHEN billing_period = strftime(CURRENT_DATE - INTERVAL 1 MONTH, '%Y-%m') THEN billed_cost_base END), 2) AS last_month,
+       ROUND(coalesce(this_month, 0) - coalesce(last_month, 0), 2) AS change
+FROM v_charge_normalized
+WHERE billing_period IN (strftime(CURRENT_DATE, '%Y-%m'),
+                         strftime(CURRENT_DATE - INTERVAL 1 MONTH, '%Y-%m'))
+GROUP BY service_name, reporting_currency
+ORDER BY greatest(coalesce(this_month, 0), coalesce(last_month, 0)) DESC
+LIMIT 20",
+    },
+    QueryTemplate {
+        category: "Composition",
+        title: "Spend by region this month",
+        description: "How this billing month's spend splits across regions, in reporting currency; charges with no region count as Other.",
+        sql: "SELECT coalesce(region_id, 'Other') AS region,
+       reporting_currency AS currency,
+       ROUND(SUM(billed_cost_base), 2) AS spend
+FROM v_charge_normalized
+WHERE billing_period = strftime(CURRENT_DATE, '%Y-%m')
+GROUP BY region, reporting_currency
+ORDER BY spend DESC",
+    },
+    QueryTemplate {
+        category: "Composition",
+        title: "Spend by service category this month",
+        description: "How this billing month's spend splits across service categories, in reporting currency; charges with no category count as Other.",
+        sql: "SELECT coalesce(service_category, 'Other') AS category,
+       reporting_currency AS currency,
+       ROUND(SUM(billed_cost_base), 2) AS spend
+FROM v_charge_normalized
+WHERE billing_period = strftime(CURRENT_DATE, '%Y-%m')
+GROUP BY category, reporting_currency
+ORDER BY spend DESC",
+    },
+    QueryTemplate {
+        category: "Composition",
+        title: "Top 20 resources this month",
+        description: "The individual resources costing the most this billing month, in reporting currency.",
+        sql: "SELECT provider,
+       service_name,
+       coalesce(resource_name, resource_id) AS resource,
+       reporting_currency AS currency,
+       ROUND(SUM(billed_cost_base), 2) AS spend
+FROM v_charge_normalized
+WHERE billing_period = strftime(CURRENT_DATE, '%Y-%m')
+  AND resource_id IS NOT NULL
+GROUP BY provider, service_name, resource, reporting_currency
+ORDER BY spend DESC
+LIMIT 20",
+    },
+    QueryTemplate {
+        category: "Composition",
+        title: "Discount vs list price",
+        description: "List-price spend vs actually billed spend per service this month, in reporting currency — how much discounts and credits shave off.",
+        sql: "SELECT provider,
+       service_name,
+       reporting_currency AS currency,
+       ROUND(SUM(list_cost * fx_rate), 2) AS list_spend,
+       ROUND(SUM(billed_cost_base), 2) AS billed_spend,
+       ROUND(SUM(list_cost * fx_rate) - SUM(billed_cost_base), 2) AS discount
+FROM v_charge_normalized
+WHERE billing_period = strftime(CURRENT_DATE, '%Y-%m')
+  AND list_cost IS NOT NULL
+  AND fx_rate IS NOT NULL
+GROUP BY provider, service_name, reporting_currency
+HAVING SUM(list_cost * fx_rate) > 0
+ORDER BY discount DESC
+LIMIT 20",
+    },
+    QueryTemplate {
+        category: "Data health",
+        title: "Recent ingest batches",
+        description: "The 20 most recent ingest runs, with their channel, status, and row count.",
+        sql: "SELECT provider,
+       account_id,
+       billing_period,
+       channel,
+       status,
+       row_count,
+       started_at
+FROM ingest_batch
+ORDER BY started_at DESC
+LIMIT 20",
+    },
+    QueryTemplate {
+        category: "Data health",
+        title: "Latest balance snapshots",
+        description: "Each account's most recently observed balance, one row per currency at that instant.",
+        sql: "SELECT s.provider,
+       s.account_id,
+       s.observed_at,
+       s.balance,
+       s.currency
+FROM fct_balance_snapshot s
+JOIN (
+    SELECT provider, account_id, MAX(observed_at) AS observed_at
+    FROM fct_balance_snapshot
+    GROUP BY provider, account_id
+) latest
+  ON s.provider = latest.provider
+ AND s.account_id = latest.account_id
+ AND s.observed_at = latest.observed_at
+ORDER BY s.provider, s.account_id",
+    },
+];
+
+/// The starter queries the Query page's template picker lists.
+pub fn query_templates() -> &'static [QueryTemplate] {
+    &QUERY_TEMPLATES
+}
+
+/// One ad-hoc query's result, ready to render: column names, which columns
+/// are numeric (right-aligned), the rows as display strings, and whether
+/// the row cap cut the tail off.
+pub struct QueryResultData {
+    pub columns: Vec<String>,
+    pub numeric: Vec<bool>,
+    pub rows: Vec<Vec<Option<String>>>,
+    pub truncated: bool,
+    pub elapsed_ms: u64,
+}
+
+/// Run an ad-hoc SQL query against the ledger. Blocking; wrap in
+/// `smol::unblock`. The error arrives as text because the page renders it
+/// verbatim in the result pane.
+pub fn run_adhoc_query(sql: String) -> std::result::Result<QueryResultData, String> {
+    query::run_adhoc(&sql)
+        .map(|result| QueryResultData {
+            columns: result.columns,
+            numeric: result.numeric,
+            rows: result.rows,
+            truncated: result.truncated,
+            elapsed_ms: result.elapsed_ms,
+        })
+        .map_err(|e| e.to_string())
 }
 
 // ==================== Sidebar ====================
@@ -2223,3 +2449,37 @@ mod tests {
         "Data health",
     ];
 
+    #[test]
+    fn templates_exist() {
+        assert!(!query_templates().is_empty());
+    }
+
+    #[test]
+    fn templates_are_selects() {
+        for template in query_templates() {
+            let sql = template.sql.trim_start();
+            assert!(!sql.is_empty(), "{}: SQL must not be empty", template.title);
+            let starts_select = sql
+                .get(..7)
+                .is_some_and(|s| s.eq_ignore_ascii_case("select "));
+            let starts_with = sql.get(..4).is_some_and(|s| s.eq_ignore_ascii_case("with"));
+            assert!(
+                starts_select || starts_with,
+                "{}: SQL must start with SELECT or WITH",
+                template.title
+            );
+        }
+    }
+
+    #[test]
+    fn template_categories_are_known() {
+        for template in query_templates() {
+            assert!(
+                TEMPLATE_CATEGORIES.contains(&template.category),
+                "{}: unknown category {:?}",
+                template.title,
+                template.category
+            );
+        }
+    }
+}

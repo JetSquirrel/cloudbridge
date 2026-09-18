@@ -8,7 +8,8 @@ use gpui_kit::*;
 use crate::ui::data::SyncStatus;
 use crate::ui::{
     account_detail::AccountDetailView, accounts::AccountsView, alerts::AlertsView,
-    attribution::AttributionView, overview::OverviewView, rules::RulesView, settings::SettingsView,
+    attribution::AttributionView, overview::OverviewView, query::QueryView, rules::RulesView,
+    settings::SettingsView,
 };
 use crate::ui::{fmt, theme};
 
@@ -103,6 +104,8 @@ pub struct CloudBridgeApp {
     alerts_view: Entity<AlertsView>,
     /// Attribution view
     attribution_view: Entity<AttributionView>,
+    /// Query view
+    query_view: Entity<QueryView>,
     /// Accounts view
     accounts_view: Entity<AccountsView>,
     /// Account detail view (opened from an Accounts row)
@@ -121,6 +124,7 @@ pub enum CurrentView {
     Overview,
     Alerts,
     Attribution,
+    Query,
     Accounts,
     /// Per-account drill-down; not a sidebar entry — the Accounts nav item
     /// stays highlighted while it shows.
@@ -138,6 +142,7 @@ impl CloudBridgeApp {
         let overview_view = cx.new(|cx| OverviewView::new(window, cx));
         let alerts_view = cx.new(|cx| AlertsView::new(window, cx));
         let attribution_view = cx.new(|cx| AttributionView::new(window, cx));
+        let query_view = cx.new(|cx| QueryView::new(window, cx));
         let accounts_view = cx.new(|cx| AccountsView::new(window, cx));
         let account_detail_view = cx.new(|cx| AccountDetailView::new(window, cx));
         let rules_view = cx.new(|cx| RulesView::new(window, cx));
@@ -180,6 +185,7 @@ impl CloudBridgeApp {
             overview_view,
             alerts_view,
             attribution_view,
+            query_view,
             accounts_view,
             account_detail_view,
             rules_view,
@@ -199,6 +205,7 @@ impl CloudBridgeApp {
             CurrentView::Overview => self.overview_view.update(cx, |v, cx| v.reload(cx)),
             CurrentView::Alerts => self.alerts_view.update(cx, |v, cx| v.reload(cx)),
             CurrentView::Attribution => self.attribution_view.update(cx, |v, cx| v.reload(cx)),
+            CurrentView::Query => self.query_view.update(cx, |v, cx| v.reload(cx)),
             CurrentView::Accounts => self.accounts_view.update(cx, |v, cx| v.reload(cx)),
             // show() already started a fresh load; reload() no-ops while
             // it is in flight.
@@ -299,6 +306,21 @@ impl CloudBridgeApp {
                 None,
                 cx,
             ))
+            // Query, Rules and Settings are the desktop's own: a query
+            // console needs an engine underneath it, and neither an
+            // allocation rule nor a setting can be acted on in a tab that
+            // forgets everything when it reloads. The demo keeps the five
+            // pages whose figures it can actually stand behind.
+            .when(cfg!(not(target_family = "wasm")), |el| {
+                el.child(self.nav_item(
+                    "Query",
+                    IconName::Search,
+                    CurrentView::Query,
+                    current == CurrentView::Query,
+                    None,
+                    cx,
+                ))
+            })
             .child(self.nav_item(
                 "Accounts",
                 IconName::Building2,
@@ -433,6 +455,7 @@ impl CloudBridgeApp {
             CurrentView::Overview => div().size_full().child(self.overview_view.clone()),
             CurrentView::Alerts => div().size_full().child(self.alerts_view.clone()),
             CurrentView::Attribution => div().size_full().child(self.attribution_view.clone()),
+            CurrentView::Query => div().size_full().child(self.query_view.clone()),
             CurrentView::Accounts => div().size_full().child(self.accounts_view.clone()),
             CurrentView::AccountDetail => div().size_full().child(self.account_detail_view.clone()),
             CurrentView::Rules => div().size_full().child(self.rules_view.clone()),
