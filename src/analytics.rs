@@ -441,6 +441,136 @@ pub fn burn(observations: &[BalanceObservation], days: i64, now: DateTime<Utc>) 
     }
 }
 
+// ==================== Data-quality summary ====================
+
+/// Untagged usage above this share of the period's usage is a warning; below
+/// it, a note.
+const UNTAGGED_WARNING_SHARE: f64 = 0.20;
+/// A service whose region-less usage exceeds this share of the period's usage
+/// is worth listing...
+const REGION_NOTICE_SHARE: f64 = 0.05;
+/// ...and above this one it is a warning.
+const REGION_WARNING_SHARE: f64 = 0.25;
+
+/// What a backend has to count for [`data_quality`] to judge a period.
+///
+/// Every field is an aggregate over one billing period, so a backend answers
+/// it however it reads best and the thresholds, wording and severities stay
+/// in one place.
+pub struct QualityCounts<'a> {
+    /// The tag key the attribution page groups by.
+    pub tag_key: &'a str,
+    /// Charges in the period, the denominator of the unconverted share.
+    pub rows: i64,
+    /// Charges carrying an amount that no FX rate covers.
+    pub unconverted: i64,
+    /// Gross usage in the period, the denominator of both share checks.
+    pub usage: f64,
+    /// Usage carrying no value for `tag_key`, and how many rows it is.
+    pub untagged: f64,
+    pub untagged_count: i64,
+    /// Usage with no region, as `(service, amount, charges)`, largest first
+    /// and already filtered to positive amounts.
+    pub regionless: Vec<(String, f64, i64)>,
+    /// `cloud::deduction`'s escape hatch, as `(count, amount)`: money a bill
+    /// accounts for that no named deduction covers. `None` on a backend that
+    /// cannot see it — the browser's reading view carries no charge
+    /// description, and no row it can be given would raise the finding.
+    pub unreconciled: Option<(i64, f64)>,
+}
+
+/// The data-quality findings for a period: unconverted charges, untagged
+/// usage, services whose usage carries no region, and unreconciled
+/// adjustments. A clean period yields an empty list.
+pub fn data_quality(counts: QualityCounts<'_>) -> Vec<DataQualityIssue> {
+    let QualityCounts {
+        tag_key,
+        rows,
+        unconverted,
+        usage,
+        untagged,
+        untagged_count,
+        regionless,
+        unreconciled,
+    } = counts;
+    let mut issues = Vec::new();
+
+    // (a) Charges no rate covers. Their amounts stay in currencies that
+    // cannot be summed, so the issue carries the row count and its share,
+    // not an amount.
+    if unconverted > 0 {
+        let share = unconverted as f64 / rows.max(1) as f64 * 100.0;
+        issues.push(DataQualityIssue {
+            kind: DataQualityKind::UnconvertedCharges,
+            severity: IssueSeverity::Warning,
+            message: format!(
+                "{unconverted} charges ({share:.1}% of the period's rows) have no FX rate \
+                 and are missing from every converted total"
+            ),
+            affected_amount: None,
+            affected_count: unconverted,
+        });
+    }
+
+    // (b) Usage with no value for the tag the attribution page groups by.
+    if untagged > 0.0 {
+        let share = if usage > 0.0 { untagged / usage } else { 0.0 };
+        issues.push(DataQualityIssue {
+            kind: DataQualityKind::UntaggedUsage,
+            severity: if share > UNTAGGED_WARNING_SHARE {
+                IssueSeverity::Warning
+            } else {
+                IssueSeverity::Info
+            },
+            message: format!(
+                "{untagged:.2} of usage ({:.1}% of the period's usage) carries no '{tag_key}' tag",
+                share * 100.0
+            ),
+            affected_amount: Some(untagged),
+            affected_count: untagged_count,
+        });
+    }
+
+    // (c) Region-less usage, per service: a charge without a region cannot be
+    // placed on the region breakdown.
+    for (service, amount, charges) in regionless {
+        let share = if usage > 0.0 { amount / usage } else { 0.0 };
+        if share <= REGION_NOTICE_SHARE {
+            continue;
+        }
+        issues.push(DataQualityIssue {
+            kind: DataQualityKind::MissingRegion,
+            severity: if share > REGION_WARNING_SHARE {
+                IssueSeverity::Warning
+            } else {
+                IssueSeverity::Info
+            },
+            message: format!(
+                "{amount:.2} of {service} usage ({:.1}% of the period's usage) has no region",
+                share * 100.0
+            ),
+            affected_amount: Some(amount),
+            affected_count: charges,
+        });
+    }
+
+    // (d) Money a bill accounts for that no named deduction covers.
+    if let Some((count, amount)) = unreconciled.filter(|(count, _)| *count > 0) {
+        issues.push(DataQualityIssue {
+            kind: DataQualityKind::UnreconciledAdjustment,
+            severity: IssueSeverity::Critical,
+            message: format!(
+                "{count} 'Unreconciled' adjustment rows totalling {amount:.2}: \
+                 bill lines whose named deductions did not add up"
+            ),
+            affected_amount: Some(amount),
+            affected_count: count,
+        });
+    }
+
+    issues
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -779,3 +909,116 @@ mod tests {
         ];
         assert!(burn(&observations, 10, noon(2026, 1, 8)).is_none());
     }
+
+    fn clean() -> QualityCounts<'static> {
+        QualityCounts {
+            tag_key: "business_line",
+            rows: 100,
+            unconverted: 0,
+            usage: 1000.0,
+            untagged: 0.0,
+            untagged_count: 0,
+            regionless: Vec::new(),
+            unreconciled: None,
+        }
+    }
+
+    #[test]
+    fn a_clean_period_raises_no_data_quality_issues() {
+        assert!(data_quality(clean()).is_empty());
+    }
+
+    #[test]
+    fn unconverted_charges_are_flagged_with_their_row_share() {
+        let issues = data_quality(QualityCounts {
+            unconverted: 25,
+            ..clean()
+        });
+
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].kind, DataQualityKind::UnconvertedCharges);
+        assert_eq!(issues[0].severity, IssueSeverity::Warning);
+        assert_eq!(issues[0].affected_count, 25);
+        assert!(issues[0].affected_amount.is_none());
+        assert!(issues[0].message.contains("25.0%"));
+    }
+
+    #[test]
+    fn untagged_usage_warns_above_a_fifth_of_the_period() {
+        let note = data_quality(QualityCounts {
+            untagged: 100.0,
+            untagged_count: 4,
+            ..clean()
+        });
+        assert_eq!(note[0].severity, IssueSeverity::Info);
+
+        let warning = data_quality(QualityCounts {
+            untagged: 300.0,
+            untagged_count: 9,
+            ..clean()
+        });
+        assert_eq!(warning[0].kind, DataQualityKind::UntaggedUsage);
+        assert_eq!(warning[0].severity, IssueSeverity::Warning);
+        assert_eq!(warning[0].affected_amount, Some(300.0));
+        assert!(warning[0].message.contains("business_line"));
+    }
+
+    #[test]
+    fn regionless_usage_is_flagged_by_share_and_ignored_below_the_notice() {
+        let issues = data_quality(QualityCounts {
+            regionless: vec![
+                ("EC2".to_string(), 300.0, 6),
+                ("S3".to_string(), 80.0, 3),
+                // 4% of the period — below the notice share, so absent.
+                ("Lambda".to_string(), 40.0, 2),
+            ],
+            ..clean()
+        });
+
+        assert_eq!(issues.len(), 2);
+        assert_eq!(issues[0].severity, IssueSeverity::Warning);
+        assert!(issues[0].message.contains("EC2"));
+        assert_eq!(issues[1].severity, IssueSeverity::Info);
+        assert!(issues[1].message.contains("S3"));
+    }
+
+    #[test]
+    fn unreconciled_adjustments_are_critical_and_absent_where_unreadable() {
+        let issues = data_quality(QualityCounts {
+            unreconciled: Some((3, -120.0)),
+            ..clean()
+        });
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].kind, DataQualityKind::UnreconciledAdjustment);
+        assert_eq!(issues[0].severity, IssueSeverity::Critical);
+
+        // A backend that cannot see them, and one that saw none, both say
+        // nothing rather than reporting a clean sweep.
+        assert!(data_quality(QualityCounts {
+            unreconciled: None,
+            ..clean()
+        })
+        .is_empty());
+        assert!(data_quality(QualityCounts {
+            unreconciled: Some((0, 0.0)),
+            ..clean()
+        })
+        .is_empty());
+    }
+
+    #[test]
+    fn a_period_with_no_usage_still_reports_its_untagged_rows() {
+        // The share is the denominator's problem, not the finding's: with no
+        // usage to divide by it reads 0%, and the amount still shows.
+        let issues = data_quality(QualityCounts {
+            usage: 0.0,
+            untagged: 50.0,
+            untagged_count: 2,
+            ..clean()
+        });
+
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, IssueSeverity::Info);
+        assert!(issues[0].message.contains("0.0%"));
+    }
+}

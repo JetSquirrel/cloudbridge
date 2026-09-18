@@ -601,6 +601,10 @@ fn load_overview_window(range: Range, now: DateTime<Utc>) -> Result<OverviewData
         drives_between(since, until, provider, service)
     })?;
 
+    // The strip reports the current period's health regardless of which
+    // window the page shows.
+    let data_quality = load_data_quality(&BillingPeriod::containing(now).label());
+
     Ok(OverviewData {
         currency: reporting_currency(),
         range,
@@ -620,6 +624,9 @@ fn load_overview_window(range: Range, now: DateTime<Utc>) -> Result<OverviewData
         card2_label,
         card2_value,
         card2_caption,
+        forecast_band: None,
+        chart_benchmark: None,
+        data_quality,
         window_caption: range.header_caption(now),
         movers_delta_header,
         movers_title: "Biggest movers",
@@ -1103,6 +1110,11 @@ pub fn load_accounts() -> Result<AccountsData> {
         Vec::new()
     });
 
+    // Untagged usage per provider of the current period, for the badge
+    // check: one period-wide query, built on first use and shared by every
+    // account instead of being re-queried per account.
+    let mut untagged_by_provider: Option<BTreeMap<String, f64>> = None;
+
     let mut rows = Vec::new();
     for account in accounts {
         let Some(descriptor) = account.descriptor() else {
@@ -1126,6 +1138,7 @@ pub fn load_accounts() -> Result<AccountsData> {
             &provider,
             &open,
             &current,
+            &mut untagged_by_provider,
         )?;
 
         rows.push(AccountRowData {
@@ -1183,13 +1196,15 @@ fn source_kind(descriptor: &registry::SourceDescriptor) -> String {
 ///
 /// The untagged check is scoped to the account's provider, not the account
 /// itself: tag breakdowns are not account-split today, so two accounts of
-/// one provider share the badge.
+/// one provider share the badge. `untagged_by_provider` caches the
+/// period-wide untagged sums across the accounts-table loop.
 fn account_state(
     account: &crate::cloud::CloudAccount,
     is_snapshot: bool,
     provider: &str,
     open: &[AlertView],
     current: &BillingPeriod,
+    untagged_by_provider: &mut Option<BTreeMap<String, f64>>,
 ) -> Result<AccountState> {
     // The worst applicable badge wins, in the mock's order of severity.
     let low_balance = is_snapshot
@@ -1212,18 +1227,32 @@ fn account_state(
     let key = ingest::period_key(account, current);
     let total = query::period_total(&key)?;
     if total > 0.0 {
-        let untagged: f64 =
-            query::untagged_detail(&key.billing_period, BUSINESS_LINE_TAG, usize::MAX)?
-                .into_iter()
-                .filter(|charge| charge.provider == provider)
-                .map(|charge| charge.amount)
-                .sum();
+        if untagged_by_provider.is_none() {
+            *untagged_by_provider = Some(untagged_usage_by_provider(&key.billing_period)?);
+        }
+        let untagged = untagged_by_provider
+            .as_ref()
+            .expect("just populated")
+            .get(provider)
+            .copied()
+            .unwrap_or(0.0);
         if untagged / total > alerts::DEFAULT_UNTAGGED_THRESHOLD {
             return Ok(AccountState::UntaggedSpend);
         }
     }
 
     Ok(AccountState::Healthy)
+}
+
+/// Untagged usage of a period summed per provider — one period-wide
+/// `untagged_detail` pass, grouped here so the per-account badge check
+/// does not re-query for every account.
+fn untagged_usage_by_provider(billing_period: &str) -> Result<BTreeMap<String, f64>> {
+    let mut by_provider: BTreeMap<String, f64> = BTreeMap::new();
+    for charge in query::untagged_detail(billing_period, BUSINESS_LINE_TAG, usize::MAX)? {
+        *by_provider.entry(charge.provider).or_insert(0.0) += charge.amount;
+    }
+    Ok(by_provider)
 }
 
 // ==================== Attribution ====================
@@ -2080,4 +2109,74 @@ mod tests {
             .collect();
         assert_eq!(benchmark_value(series), Some(42.0));
     }
+
+    #[test]
+    fn data_quality_rows_sort_critical_first() {
+        let issue = |severity: query::IssueSeverity| query::DataQualityIssue {
+            kind: query::DataQualityKind::UntaggedUsage,
+            severity,
+            message: format!("{severity:?}"),
+            affected_amount: None,
+            affected_count: 1,
+        };
+        let rows = data_quality_rows(
+            "2026-09",
+            vec![
+                issue(query::IssueSeverity::Info),
+                issue(query::IssueSeverity::Critical),
+                issue(query::IssueSeverity::Warning),
+            ],
+            &std::collections::HashSet::new(),
+        );
+        let severities: Vec<DataQualitySeverity> = rows.iter().map(|row| row.severity).collect();
+        assert_eq!(
+            severities,
+            vec![
+                DataQualitySeverity::Critical,
+                DataQualitySeverity::Warning,
+                DataQualitySeverity::Info,
+            ]
+        );
+    }
+
+    #[test]
+    fn data_quality_rows_drop_dismissed_keys_and_keep_new_ones() {
+        let issue = |kind: query::DataQualityKind| query::DataQualityIssue {
+            kind,
+            severity: query::IssueSeverity::Warning,
+            message: format!("{kind:?}"),
+            affected_amount: Some(10.0),
+            affected_count: 1,
+        };
+        // Untagged usage was dismissed for the period; a different kind and
+        // a different period are not covered by that dismissal.
+        let dismissed: std::collections::HashSet<String> =
+            ["untagged_usage:2026-09".to_string()].into_iter().collect();
+        let rows = data_quality_rows(
+            "2026-09",
+            vec![
+                issue(query::DataQualityKind::UntaggedUsage),
+                issue(query::DataQualityKind::MissingRegion),
+            ],
+            &dismissed,
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].key, "missing_region:2026-09");
+
+        // The same dismissal does not touch the next period.
+        let rows = data_quality_rows(
+            "2026-10",
+            vec![issue(query::DataQualityKind::UntaggedUsage)],
+            &dismissed,
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].key, "untagged_usage:2026-10");
+    }
+
+    const TEMPLATE_CATEGORIES: [&str; 4] = [
+        "Spend overview",
+        "Forecast & trends",
+        "Composition",
+        "Data health",
+    ];
 

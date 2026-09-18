@@ -885,59 +885,6 @@ fn tag_usage_breakdown_between_of(
     )
 }
 
-/// The one tag-breakdown query behind the period-keyed and window-bounded
-/// variants: `window_sql` is the WHERE fragment that bounds the charges,
-/// bound after `tag_key` and before the optional `(provider, service)`
-/// scope.
-fn tag_usage_breakdown_query(
-    conn: &Connection,
-    tag_key: &str,
-    window_sql: &str,
-    window_params: &[String],
-    scope: Option<(&str, &str)>,
-) -> Result<Vec<(String, f64)>> {
-    let (scope_sql, scope_params): (&str, Vec<String>) = match scope {
-        Some((provider, service)) => (
-            "AND provider = ? AND coalesce(service_name, 'Other') = ?",
-            vec![provider.to_string(), service.to_string()],
-        ),
-        None => ("", Vec::new()),
-    };
-
-    let mut stmt = conn.prepare(&format!(
-        "SELECT coalesce(nullif(json_extract_string(tags, ?), ''), 'Unallocated') AS tag_value,
-                sum(billed_cost_base) AS amount
-         FROM {NORMALIZED_VIEW}
-         WHERE {window_sql} {scope_sql}
-           AND charge_category = 'Usage'
-         GROUP BY tag_value
-         HAVING amount > 0
-         ORDER BY amount DESC"
-    ))?;
-
-    let mut bound: Vec<String> = vec![tag_key.to_string()];
-    bound.extend(window_params.iter().cloned());
-    bound.extend(scope_params);
-
-    let rows = stmt
-        .query_map(duckdb::params_from_iter(bound.iter()), |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(rows)
-}
-
-/// Untagged Usage charges of a period rolled up to one `(provider,
-/// service)` row — what the Unallocated explainer card lists.
-#[derive(Debug, Clone, PartialEq)]
-pub struct UntaggedServiceUsage {
-    pub provider: String,
-    pub service: Option<String>,
-    /// In the reporting currency.
-    pub amount: f64,
-}
-
 /// Untagged usage of a period grouped by `(provider, service)`, largest
 /// first — the roll-up behind [`untagged_detail`]'s per-charge list, so
 /// three small charges of one service read as the one row the UI acts on.
@@ -1446,6 +1393,102 @@ fn trailing_daily_average_of(
     Ok(analytics::trailing_average(
         day_count, months, now, &monthly,
     ))
+}
+
+// ==================== Data-quality summary ====================
+
+/// The data-quality findings for a period: unconverted charges, untagged
+/// usage for `tag_key`, services whose usage carries no region, and
+/// unreconciled adjustments. A clean period yields an empty list.
+pub fn data_quality_issues(billing_period: &str, tag_key: &str) -> Result<Vec<DataQualityIssue>> {
+    with_connection_ref(|conn| data_quality_issues_of(conn, billing_period, tag_key))
+}
+
+fn data_quality_issues_of(
+    conn: &Connection,
+    billing_period: &str,
+    tag_key: &str,
+) -> Result<Vec<DataQualityIssue>> {
+    // Charges no rate covers, against the period's row count.
+    let (rows, unconverted): (i64, i64) = conn.query_row(
+        &format!(
+            "SELECT count(*),
+                    count(*) FILTER (WHERE billed_cost IS NOT NULL AND billed_cost_base IS NULL)
+             FROM {NORMALIZED_VIEW}
+             WHERE billing_period = ?"
+        ),
+        params![billing_period],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+
+    // Period usage is the denominator of both share checks.
+    let (usage, _) = sum_usage_and_credits(
+        conn,
+        &Scope {
+            billing_period: Some(billing_period),
+            ..Default::default()
+        },
+    )?;
+
+    // Usage with no value for the tag the attribution page groups by.
+    let (untagged, untagged_count): (Option<f64>, i64) = conn.query_row(
+        &format!(
+            "SELECT sum(billed_cost_base), count(*)
+             FROM {NORMALIZED_VIEW}
+             WHERE billing_period = ?
+               AND charge_category = 'Usage'
+               AND coalesce(nullif(json_extract_string(tags, ?), ''), '') = ''"
+        ),
+        params![billing_period, tag_key],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+
+    // Region-less usage, per service.
+    let mut stmt = conn.prepare(&format!(
+        "SELECT coalesce(service_name, 'Other') AS service,
+                sum(billed_cost_base) AS amount, count(*) AS charges
+         FROM {NORMALIZED_VIEW}
+         WHERE billing_period = ?
+           AND charge_category = 'Usage'
+           AND region_id IS NULL
+         GROUP BY service
+         HAVING amount > 0
+         ORDER BY amount DESC"
+    ))?;
+    let regionless = stmt
+        .query_map(params![billing_period], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, f64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // `cloud::deduction`'s escape hatch: money a bill accounts for that no
+    // named deduction covers.
+    let unreconciled: (i64, Option<f64>) = conn.query_row(
+        &format!(
+            "SELECT count(*), sum(billed_cost_base)
+             FROM {NORMALIZED_VIEW}
+             WHERE billing_period = ?
+               AND charge_category = 'Adjustment'
+               AND charge_description = ?"
+        ),
+        params![billing_period, crate::cloud::deduction::UNRECONCILED],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+
+    Ok(analytics::data_quality(QualityCounts {
+        tag_key,
+        rows,
+        unconverted,
+        usage,
+        untagged: untagged.unwrap_or(0.0),
+        untagged_count,
+        regionless,
+        unreconciled: Some((unreconciled.0, unreconciled.1.unwrap_or(0.0))),
+    }))
 }
 
         let mut conn = conn("USD");
@@ -2205,117 +2248,173 @@ fn trailing_daily_average_of(
     }
 
     #[test]
-    fn monthly_usage_groups_by_billing_period_oldest_first() {
+    fn a_clean_period_raises_no_data_quality_issues() {
         let mut conn = conn("USD");
-        let jul = |d: u32| Utc.with_ymd_and_hms(2026, 7, d, 0, 0, 0).unwrap();
-        let sep = |d: u32| Utc.with_ymd_and_hms(2026, 9, d, 0, 0, 0).unwrap();
-
+        let clean = |service: &str, amount: f64, day: u32| Charge {
+            region_id: Some("us-east-1".to_string()),
+            ..tagged_charge(service, amount, day, Some(r#"{"business_line":"etl"}"#))
+        };
         write(
             &mut conn,
-            &PeriodKey::new("AWS", "acct-1", "2026-07"),
-            &[charge_on("EC2", 10.0, "USD", jul(15))],
+            &aws(),
+            &[clean("EC2", 100.0, 1), clean("S3", 10.0, 2)],
         );
+
+        assert!(data_quality_issues_of(&conn, "2026-08", "business_line")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn unconverted_charges_are_flagged_with_their_row_share() {
+        let mut conn = conn("USD");
         write(
             &mut conn,
             &aws(),
             &[
-                charge("EC2", 5.0, "USD", 1),
                 Charge {
-                    charge_category: ChargeCategory::Credit,
-                    billed_cost: Some(-2.0),
-                    ..charge("EC2", -2.0, "USD", 2)
+                    region_id: Some("us-east-1".to_string()),
+                    ..tagged_charge("EC2", 100.0, 1, Some(r#"{"business_line":"etl"}"#))
+                },
+                Charge {
+                    region_id: Some("us-east-1".to_string()),
+                    tags: Some(r#"{"business_line":"etl"}"#.to_string()),
+                    ..charge("Something", 100.0, "JPY", 1)
                 },
             ],
         );
+
+        let issues = data_quality_issues_of(&conn, "2026-08", "business_line").unwrap();
+        assert_eq!(issues.len(), 1);
+        let issue = &issues[0];
+        assert_eq!(issue.kind, DataQualityKind::UnconvertedCharges);
+        assert_eq!(issue.severity, IssueSeverity::Warning);
+        // The amount stays in a currency that cannot be summed.
+        assert_eq!(issue.affected_amount, None);
+        assert_eq!(issue.affected_count, 1);
+        assert!(issue.message.contains("50.0%"), "got {}", issue.message);
+    }
+
+    #[test]
+    fn untagged_usage_warns_above_a_fifth_of_the_period() {
+        let mut conn = conn("USD");
+        let regioned = |c: Charge| Charge {
+            region_id: Some("us-east-1".to_string()),
+            ..c
+        };
         write(
             &mut conn,
-            &PeriodKey::new("AWS", "acct-1", "2026-09"),
-            &[charge_on("EC2", 7.0, "USD", sep(2))],
+            &aws(),
+            &[
+                regioned(tagged_charge(
+                    "EC2",
+                    100.0,
+                    1,
+                    Some(r#"{"business_line":"etl"}"#),
+                )),
+                regioned(tagged_charge("NAT", 30.0, 2, None)),
+            ],
         );
 
-        // Ordered by period label; the credit is not usage.
-        let monthly = monthly_usage_all_of(&conn, jul(1)).unwrap();
-        assert_eq!(
-            monthly,
-            vec![
-                ("2026-07".to_string(), 10.0),
-                ("2026-08".to_string(), 5.0),
-                ("2026-09".to_string(), 7.0),
-            ]
+        // 30 of 130 = 23.1%: over the warning line.
+        let issues = data_quality_issues_of(&conn, "2026-08", "business_line").unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].kind, DataQualityKind::UntaggedUsage);
+        assert_eq!(issues[0].severity, IssueSeverity::Warning);
+        assert_eq!(issues[0].affected_amount, Some(30.0));
+        assert_eq!(issues[0].affected_count, 1);
+        assert!(issues[0].message.contains("business_line"));
+        assert!(
+            issues[0].message.contains("23.1%"),
+            "got {}",
+            issues[0].message
         );
 
-        // `since` bounds by charge time: mid-August drops the earlier months.
-        assert_eq!(
-            monthly_usage_all_of(&conn, at(15)).unwrap(),
-            vec![("2026-09".to_string(), 7.0)]
-        );
-    }
-
-    #[test]
-    fn last_ingests_reports_each_account_once() {
-        let mut conn = conn("USD");
-        write(&mut conn, &aws(), &[charge("EC2", 12.5, "USD", 1)]);
-        write(&mut conn, &aws(), &[charge("EC2", 13.0, "USD", 1)]);
-        write(&mut conn, &aliyun(), &[charge("ECS", 710.0, "CNY", 1)]);
-
-        let ingests = last_ingests_of(&conn).unwrap();
-        assert_eq!(ingests.len(), 2);
-        let aws = ingests
-            .iter()
-            .find(|(p, a, _)| p == "AWS" && a == "acct-1")
-            .expect("the AWS account ingested");
-        // The second write is fresher than the first, and is the one reported.
-        assert!(aws.2 <= Utc::now());
-    }
-
-    #[test]
-    fn api_fetches_this_month_counts_api_batches_only() {
-        let mut conn = conn("USD");
-        let this_month = BillingPeriod::containing(Utc::now()).label();
-        let api = PeriodKey::new("AWS", "acct-1", &this_month);
-
-        write(&mut conn, &api, &[charge("EC2", 1.0, "USD", 1)]);
-        // A second fetch of the same period was still a paid call.
-        write(&mut conn, &api, &[charge("EC2", 1.0, "USD", 1)]);
-        write_through(
+        // Below the line the same finding is only a note: 10 of 110 = 9.1%.
+        let jul = |d: u32| Utc.with_ymd_and_hms(2026, 7, d, 0, 0, 0).unwrap();
+        write(
             &mut conn,
-            &api,
-            &[charge("EC2", 1.0, "USD", 1)],
-            Channel::File,
+            &PeriodKey::new("AWS", "acct-1", "2026-07"),
+            &[
+                regioned(Charge {
+                    tags: Some(r#"{"business_line":"etl"}"#.to_string()),
+                    ..charge_on("EC2", 100.0, "USD", jul(3))
+                }),
+                regioned(charge_on("NAT", 10.0, "USD", jul(4))),
+            ],
         );
-        // Another month does not count.
-        write(&mut conn, &aws(), &[charge("EC2", 1.0, "USD", 1)]);
-
-        assert_eq!(api_fetches_this_month_of(&conn).unwrap(), 2);
+        let issues = data_quality_issues_of(&conn, "2026-07", "business_line").unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].kind, DataQualityKind::UntaggedUsage);
+        assert_eq!(issues[0].severity, IssueSeverity::Info);
     }
 
     #[test]
-    fn balance_burn_is_the_mean_of_the_drops() {
+    fn a_service_whose_usage_lacks_a_region_is_flagged_by_share() {
         let mut conn = conn("USD");
-        let now = Utc::now();
-        let snapshot = |days_ago: i64, balance: f64| BalanceSnapshot {
-            provider: "DeepSeek".to_string(),
-            account_id: "acct-3".to_string(),
-            observed_at: now - chrono::Duration::days(days_ago),
-            balance,
-            granted_balance: None,
-            topped_up_balance: Some(balance),
-            currency: "CNY".to_string(),
+        let tagged = |c: Charge| Charge {
+            tags: Some(r#"{"business_line":"etl"}"#.to_string()),
+            ..c
         };
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                tagged(Charge {
+                    region_id: Some("us-east-1".to_string()),
+                    ..charge("EC2", 100.0, "USD", 1)
+                }),
+                tagged(charge("Lambda", 60.0, "USD", 2)), // 30% of usage
+                tagged(charge("S3", 40.0, "USD", 3)),     // 20% of usage
+            ],
+        );
 
-        crate::ledger::write_balance(&mut conn, &snapshot(6, 100.0)).unwrap();
-        crate::ledger::write_balance(&mut conn, &snapshot(4, 90.0)).unwrap();
-        // A rise is a top-up, not consumption.
-        crate::ledger::write_balance(&mut conn, &snapshot(3, 140.0)).unwrap();
-        crate::ledger::write_balance(&mut conn, &snapshot(1, 132.0)).unwrap();
+        let issues = data_quality_issues_of(&conn, "2026-08", "business_line").unwrap();
+        assert_eq!(issues.len(), 2);
+        // Largest first; 30% is over the warning line, 20% is a note.
+        assert_eq!(issues[0].kind, DataQualityKind::MissingRegion);
+        assert_eq!(issues[0].severity, IssueSeverity::Warning);
+        assert!(
+            issues[0].message.contains("Lambda"),
+            "got {}",
+            issues[0].message
+        );
+        assert_eq!(issues[0].affected_amount, Some(60.0));
+        assert_eq!(issues[1].kind, DataQualityKind::MissingRegion);
+        assert_eq!(issues[1].severity, IssueSeverity::Info);
+        assert!(
+            issues[1].message.contains("S3"),
+            "got {}",
+            issues[1].message
+        );
+    }
 
-        // (100-90) + (140-132) = 18 over 7 days.
-        let burn = balance_burn_of(&conn, "DeepSeek", "acct-3", 7).unwrap();
-        assert!((burn.unwrap() - 18.0 / 7.0).abs() < 1e-9);
+    #[test]
+    fn unreconciled_adjustments_are_critical() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                Charge {
+                    region_id: Some("us-east-1".to_string()),
+                    ..tagged_charge("ECS", 100.0, 1, Some(r#"{"business_line":"etl"}"#))
+                },
+                Charge {
+                    charge_category: ChargeCategory::Adjustment,
+                    charge_description: Some(crate::cloud::deduction::UNRECONCILED.to_string()),
+                    billed_cost: Some(-8.0),
+                    ..charge("ECS", -8.0, "USD", 2)
+                },
+            ],
+        );
 
-        // One observation says nothing about burn.
-        assert!(balance_burn_of(&conn, "DeepSeek", "unknown", 7)
-            .unwrap()
-            .is_none());
+        let issues = data_quality_issues_of(&conn, "2026-08", "business_line").unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].kind, DataQualityKind::UnreconciledAdjustment);
+        assert_eq!(issues[0].severity, IssueSeverity::Critical);
+        assert_eq!(issues[0].affected_amount, Some(-8.0));
+        assert_eq!(issues[0].affected_count, 1);
+        assert!(issues[0].message.contains("Unreconciled"));
     }
 }

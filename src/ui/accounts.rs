@@ -13,8 +13,10 @@ use std::collections::HashSet;
 use uuid::Uuid;
 
 use crate::cloud::registry::{self, SourceDescriptor};
-use crate::cloud::CloudAccount;
+use crate::cloud::{BillingPeriod, CloudAccount};
 use crate::db;
+use crate::ingest;
+use crate::ledger::query::{self, DataQualityIssue, DataQualityKind, IssueSeverity};
 use crate::ui::theme::CardOutline as _;
 
 use super::{data, fmt, theme};
@@ -34,6 +36,11 @@ pub struct AccountsView {
     accounts: Vec<CloudAccount>,
     /// Real table/card data, once the background load has landed.
     accounts_data: Option<data::AccountsData>,
+    /// The data-health card's findings; lands in the same flight as
+    /// `accounts_data`. `None` until a load completes (or after a health
+    /// load failure — the card is advisory, never an error banner — and
+    /// after a dismissal, which hides the card until the next load).
+    health: Option<AccountsHealth>,
     /// A table/card data load is in flight; reloads do not pile on.
     loading_data: bool,
     /// A save is in flight; the dialog's Save button is disabled.
@@ -101,6 +108,7 @@ impl AccountsView {
         let mut view = Self {
             accounts: Vec::new(),
             accounts_data: None,
+            health: None,
             loading_data: false,
             saving: false,
             validating_ids: HashSet::new(),
@@ -164,17 +172,26 @@ impl AccountsView {
     }
 
     /// Load the table and card data off the UI thread, like validation and
-    /// import do: the loader reads the ledger, which blocks.
+    /// import do: the loader reads the ledger, which blocks. The health
+    /// card's findings ride in the same flight, but a health failure only
+    /// hides the card — it must not blank the accounts table.
     fn load_data(&mut self, cx: &mut Context<Self>) {
         self.loading_data = true;
         cx.spawn(async move |this, cx| {
-            let outcome = smol::unblock(data::load_accounts)
-                .await
-                .map_err(|e| e.to_string());
+            let (outcome, health) = smol::unblock(|| {
+                (
+                    data::load_accounts().map_err(|e| e.to_string()),
+                    load_health().ok(),
+                )
+            })
+            .await;
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
                     this.loading_data = false;
+                    if let Some(health) = health {
+                        this.health = Some(health);
+                    }
                     match outcome {
                         Ok(loaded) => {
                             this.accounts_data = Some(loaded);
@@ -1077,6 +1094,93 @@ impl AccountsView {
             )
     }
 
+    /// The Data health card, Wealthfolio Health Center style: the ledger's
+    /// data-quality findings for the current billing period, worst first,
+    /// plus the untagged-spend nag when usage carries no business-line tag.
+    /// Hidden until the first load lands, so the page does not flash it.
+    /// Dismiss persists every shown finding's key (the nag's included) and
+    /// hides the card; the loader filters dismissed findings out, so only a
+    /// genuinely new finding brings the card back.
+    fn render_health_card(&self, cx: &Context<Self>) -> AnyElement {
+        let Some(health) = &self.health else {
+            return div().into_any_element();
+        };
+        let currency = self
+            .accounts_data
+            .as_ref()
+            .map(|loaded| loaded.currency.as_str())
+            .unwrap_or("USD");
+        let has_findings = !health.issues.is_empty() || health.untagged.is_some();
+        let dismiss_keys = health.dismiss_keys.clone();
+
+        let card = theme::card(cx).w_full().p_5().v_flex().gap_3().child(
+            div()
+                .h_flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .v_flex()
+                        .gap_1()
+                        .child(theme::section_title(cx, "Data health"))
+                        .child(theme::caption(
+                            cx,
+                            "Data-quality checks over the current billing period",
+                        )),
+                )
+                .when(has_findings, |el| {
+                    el.child(
+                        Button::new("dismiss-health-card")
+                            .label("Dismiss")
+                            .link()
+                            .small()
+                            .text_color(theme::text_muted(cx))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if let Err(e) = data::dismiss_quality_issues(&dismiss_keys) {
+                                    tracing::warn!(
+                                        "Could not persist the data-quality dismissal: {}",
+                                        e
+                                    );
+                                }
+                                this.health = None;
+                                cx.notify();
+                            })),
+                    )
+                }),
+        );
+
+        if health.issues.is_empty() && health.untagged.is_none() {
+            return card
+                .child(
+                    div()
+                        .h_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            Icon::new(IconName::CircleCheck)
+                                .size_4()
+                                .text_color(theme::success(cx)),
+                        )
+                        .child(theme::caption(
+                            cx,
+                            "All good — no data-quality issues this period.",
+                        )),
+                )
+                .into_any_element();
+        }
+
+        card.children(
+            health
+                .issues
+                .iter()
+                .map(|issue| render_issue_row(issue, currency, cx)),
+        )
+        .when_some(health.untagged.as_ref(), |el, untagged| {
+            el.child(render_untagged_nag(untagged, currency, cx))
+        })
+        .into_any_element()
+    }
+
     fn render_add_dialog(&self, cx: &Context<Self>) -> impl IntoElement {
         if !self.show_add_dialog {
             return div().size_0();
@@ -1441,9 +1545,293 @@ impl Render for AccountsView {
                     .overflow_y_scrollbar()
                     .child(self.render_header(cx))
                     .child(self.render_messages(cx))
+                    .child(self.render_health_card(cx))
                     .child(self.render_accounts_table(cx))
                     .child(self.render_bottom_cards(cx)),
             )
             .child(self.render_add_dialog(cx))
     }
+}
+
+// ==================== Data health ====================
+//
+// The health card's loader lives here, next to the card that renders it,
+// like the account detail page's drill-down loader does: the checks are a
+// handful of small ledger queries that need no home in `data.rs`. The
+// issue-row rendering is `pub(super)` so the account detail page renders
+// its findings the same way.
+
+/// The untagged-spend nag's data: the period's usage with no business-line
+/// tag, its share of all usage, and the largest services behind it.
+struct UntaggedSummary {
+    /// The severity the ledger gave the untagged-usage check — a warning
+    /// once untagged usage passes a fifth of the period's usage.
+    severity: IssueSeverity,
+    amount: f64,
+    /// Share of the period's usage, 0..=1.
+    share: f64,
+    /// `provider · service` and amount, largest first, at most three.
+    top_services: Vec<(String, f64)>,
+}
+
+/// Everything the Data health card renders.
+struct AccountsHealth {
+    /// The period's findings, untagged usage excepted (it has its own
+    /// section), worst severity first. Findings the user dismissed are
+    /// already filtered out.
+    issues: Vec<DataQualityIssue>,
+    untagged: Option<UntaggedSummary>,
+    /// The dismissal keys of everything shown — every issue row's
+    /// `{kind}:{billing_period}` plus the untagged nag's
+    /// `untagged_usage:{period}` — so the card's Dismiss button can
+    /// persist them all in one click.
+    dismiss_keys: Vec<String>,
+}
+
+/// Load the health card's data. Blocking; the view wraps it in the same
+/// `smol::unblock` as the table load.
+///
+/// Findings the user already dismissed (`{kind}:{billing_period}` in the
+/// app-state database) are filtered out here, so a reload cannot bring
+/// them back — the card resurfaces only findings that are new.
+fn load_health() -> anyhow::Result<AccountsHealth> {
+    let period = BillingPeriod::containing(Utc::now());
+    let dismissed = db::dismissed_quality_issue_keys().unwrap_or_else(|e| {
+        tracing::warn!("Could not read the dismissed data-quality issues: {}", e);
+        HashSet::new()
+    });
+    // One period key per account, as the attribution page's drill-down
+    // builds them; the checks run per distinct billing period so accounts
+    // sharing a period are not double-counted.
+    let mut periods: Vec<String> = Vec::new();
+    for account in db::get_all_accounts()? {
+        let label = ingest::period_key(&account, &period).billing_period;
+        if !periods.contains(&label) {
+            periods.push(label);
+        }
+    }
+
+    let mut issues = Vec::new();
+    let mut dismiss_keys = Vec::new();
+    let mut untagged_amount = 0.0;
+    let mut untagged_usage_total = 0.0;
+    let mut untagged_severity = IssueSeverity::Info;
+    let mut top_services: Vec<(String, f64)> = Vec::new();
+    for label in &periods {
+        let period_issues = query::data_quality_issues(label, data::BUSINESS_LINE_TAG)?;
+        let (usage, _) = query::usage_and_credits(label)?;
+        // A dismissed untagged nag takes its period out of the nag's
+        // totals entirely — amount, share denominator, and service list.
+        let untagged_dismissed = dismissed.contains(&format!(
+            "{}:{}",
+            DataQualityKind::UntaggedUsage.as_str(),
+            label
+        ));
+        if !untagged_dismissed {
+            untagged_usage_total += usage;
+            top_services.extend(
+                query::untagged_usage_by_service(label, data::BUSINESS_LINE_TAG, 3)?
+                    .into_iter()
+                    .map(|row| {
+                        let service = row.service.unwrap_or_else(|| "Other".to_string());
+                        (format!("{} · {}", row.provider, service), row.amount)
+                    }),
+            );
+        }
+        for issue in &period_issues {
+            let key = issue.dismissal_key(label);
+            if dismissed.contains(&key) {
+                continue;
+            }
+            if issue.kind == DataQualityKind::UntaggedUsage {
+                untagged_amount += issue.affected_amount.unwrap_or(0.0);
+                if severity_rank(issue.severity) < severity_rank(untagged_severity) {
+                    untagged_severity = issue.severity;
+                }
+            } else {
+                issues.push(issue.clone());
+            }
+            dismiss_keys.push(key);
+        }
+    }
+
+    // Untagged usage renders in its own nag section, not the generic list.
+    issues.sort_by_key(|issue| severity_rank(issue.severity));
+    top_services.sort_by(|a, b| b.1.total_cmp(&a.1));
+    top_services.truncate(3);
+
+    let untagged = (untagged_amount > 0.0).then(|| UntaggedSummary {
+        severity: untagged_severity,
+        amount: untagged_amount,
+        share: if untagged_usage_total > 0.0 {
+            untagged_amount / untagged_usage_total
+        } else {
+            0.0
+        },
+        top_services,
+    });
+
+    Ok(AccountsHealth {
+        issues,
+        untagged,
+        dismiss_keys,
+    })
+}
+
+/// Worst-first ordering key for a severity.
+pub(super) fn severity_rank(severity: IssueSeverity) -> u8 {
+    match severity {
+        IssueSeverity::Critical => 0,
+        IssueSeverity::Warning => 1,
+        IssueSeverity::Info => 2,
+    }
+}
+
+/// A severity's icon and tint/ink pair, mirroring the alerts page's badges:
+/// critical in the alert tint, warning in the warning colours, info quiet.
+pub(super) fn issue_severity_style(severity: IssueSeverity, cx: &App) -> (IconName, Hsla, Hsla) {
+    match severity {
+        IssueSeverity::Critical => (IconName::CircleX, theme::alert_tint(cx), theme::danger(cx)),
+        IssueSeverity::Warning => (
+            IconName::TriangleAlert,
+            theme::warning_bg(cx),
+            theme::warning_text(cx),
+        ),
+        IssueSeverity::Info => (IconName::Info, theme::sidebar_bg(cx), theme::text_muted(cx)),
+    }
+}
+
+/// One data-quality issue: a severity icon badge, the check's message, and
+/// the reporting-currency amount behind it when the check could sum one
+/// (unconverted charges cannot — their currencies do not mix).
+pub(super) fn render_issue_row(issue: &DataQualityIssue, currency: &str, cx: &App) -> Div {
+    let (icon, bg, fg) = issue_severity_style(issue.severity, cx);
+    div()
+        .h_flex()
+        .items_center()
+        .gap_3()
+        .py_2()
+        .border_t_1()
+        .border_color(theme::card_border(cx))
+        .child(
+            div()
+                .flex_shrink_0()
+                .size_8()
+                .rounded_full()
+                .bg(bg)
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(Icon::new(icon).size_4().text_color(fg)),
+        )
+        .child(
+            div()
+                .flex_1()
+                // min_w_0 so a long message wraps instead of pushing the
+                // amount out of the card.
+                .min_w_0()
+                .text_sm()
+                .text_color(theme::text_primary(cx))
+                .child(issue.message.clone()),
+        )
+        .when_some(issue.affected_amount, |el, amount| {
+            el.child(
+                div()
+                    .flex_shrink_0()
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme::text_primary(cx))
+                    .child(fmt::amount(amount, currency)),
+            )
+        })
+}
+
+/// The untagged-spend nag: how much usage carries no business-line tag, the
+/// largest services behind it, and where to fix it. Tinted in the check's
+/// severity, so a warning share reads louder than an informational one.
+fn render_untagged_nag(untagged: &UntaggedSummary, currency: &str, cx: &App) -> Div {
+    let (icon, bg, fg) = issue_severity_style(untagged.severity, cx);
+    div()
+        .v_flex()
+        .gap_2()
+        .p_3()
+        .rounded_md()
+        .bg(bg)
+        .child(
+            div()
+                .h_flex()
+                .items_center()
+                .gap_2()
+                .child(Icon::new(icon).size_4().text_color(fg))
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(fg)
+                        .child(format!(
+                            "{} of usage is untagged this period ({:.1}% of all usage)",
+                            fmt::amount(untagged.amount, currency),
+                            untagged.share * 100.0
+                        )),
+                ),
+        )
+        .child(
+            div()
+                .v_flex()
+                .children(untagged.top_services.iter().map(|(name, amount)| {
+                    div()
+                        .h_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .text_sm()
+                                .text_color(theme::text_primary(cx))
+                                .child(name.clone()),
+                        )
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .text_sm()
+                                .text_color(theme::text_primary(cx))
+                                .child(fmt::amount(*amount, currency)),
+                        )
+                })),
+        )
+        .child(theme::caption(
+            cx,
+            format!(
+                "Tag these resources with '{}' at your provider so their spend lands on a \
+                 business line.{}",
+                data::BUSINESS_LINE_TAG,
+                // The template it names lives on the Query page, which the
+                // browser demo does not offer — there is no SQL engine under
+                // it for a template to run against.
+                if cfg!(target_family = "wasm") {
+                    String::new()
+                } else {
+                    " The Query page's 'Unallocated spend by service' template lists \
+                     everything untagged."
+                        .to_string()
+                }
+            ),
+        ))
+        .when(cfg!(not(target_family = "wasm")), |el| {
+            el.child(
+                div().child(
+                    Button::new("open-untagged-query")
+                        .label("Open the Query template →")
+                        .link()
+                        .small()
+                        .text_color(theme::accent(cx))
+                        .on_click(|_, _, cx| {
+                            crate::app::navigate_to(crate::app::CurrentView::Query, cx)
+                        }),
+                ),
+            )
+        })
 }

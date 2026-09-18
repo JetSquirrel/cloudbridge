@@ -9,6 +9,7 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use duckdb::{params, Connection};
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use crate::alerts::{AlertEvent, AlertRule, AlertStatus, Severity};
@@ -205,6 +206,16 @@ const TABLES: &[(&str, &str, &str)] = &[
             resolved_at   VARCHAR
         )"#,
         "id, rule_id, severity, title, body, fields_json, stat_json, created_at, status, snoozed_until, dedupe_key, resolved_at",
+    ),
+    (
+        "dismissed_quality_issues",
+        r#"(
+            -- {kind}:{billing_period}, e.g. untagged_usage:2026-09.
+            issue_key    VARCHAR PRIMARY KEY,
+            -- RFC 3339, like every other stamp in this database.
+            dismissed_at VARCHAR NOT NULL
+        )"#,
+        "issue_key, dismissed_at",
     ),
 ];
 
@@ -897,6 +908,55 @@ pub fn mark_account_synced(account_id: &str, at: DateTime<Utc>) -> Result<()> {
     Ok(())
 }
 
+// ==================== Dismissed quality issues ====================
+//
+// The persistence half of the data-quality dismissal scheme (Wealthfolio's
+// health_issue_dismissals): the UI keys a finding as
+// `{kind}:{billing_period}` and the loaders filter stored keys out, so a
+// dismissed finding stays hidden for its period across sessions and
+// refreshes while a new period or a different kind still shows.
+
+/// Record a data-quality issue dismissal. Re-dismissing a key is a no-op
+/// beyond refreshing its stamp. Blocking, but a single-row write — the UI
+/// calls it straight from click handlers.
+pub fn dismiss_quality_issue(issue_key: &str) -> Result<()> {
+    with_connection(|conn| dismiss_quality_issue_to(conn, issue_key))
+}
+
+pub(crate) fn dismiss_quality_issue_to(conn: &Connection, issue_key: &str) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO dismissed_quality_issues (issue_key, dismissed_at)
+         VALUES (?, ?)",
+        params![issue_key, Utc::now().to_rfc3339()],
+    )?;
+
+    Ok(())
+}
+
+/// Every dismissed issue key.
+pub fn dismissed_quality_issue_keys() -> Result<HashSet<String>> {
+    with_connection(dismissed_quality_issue_keys_of)
+}
+
+pub(crate) fn dismissed_quality_issue_keys_of(conn: &Connection) -> Result<HashSet<String>> {
+    let mut stmt = conn.prepare("SELECT issue_key FROM dismissed_quality_issues")?;
+    let keys = stmt
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<HashSet<_>, _>>()?;
+    Ok(keys)
+}
+
+/// Forget every dismissal — all findings resurface on the next load. No UI
+/// calls this yet; it is the "resurface all" escape hatch, kept for
+/// completeness and exercised by the tests.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn clear_dismissed_quality_issues() -> Result<()> {
+    with_connection(|conn| {
+        conn.execute("DELETE FROM dismissed_quality_issues", [])?;
+        Ok(())
+    })
+}
+
 // ==================== Alert Functions ====================
 //
 // Each function has a `*_to(conn)` twin so the alerting engine
@@ -1476,6 +1536,59 @@ mod tests {
         assert!(table_exists(&conn, "alert_event"));
         assert!(has_primary_key(&conn, "alert_rule").unwrap());
         assert!(has_primary_key(&conn, "alert_event").unwrap());
+    }
+
+    #[test]
+    fn a_fresh_database_has_the_dismissals_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        prepare_schema(&conn).unwrap();
+
+        assert!(table_exists(&conn, "dismissed_quality_issues"));
+        assert!(has_primary_key(&conn, "dismissed_quality_issues").unwrap());
+        assert_eq!(
+            column_names(&conn, "dismissed_quality_issues").unwrap(),
+            vec!["issue_key", "dismissed_at"]
+        );
+    }
+
+    /// Dismissals round-trip: a stored key comes back in the set,
+    /// re-dismissing does not duplicate it, and clearing empties the table.
+    #[test]
+    fn dismissed_quality_issues_round_trip() {
+        let conn = Connection::open_in_memory().unwrap();
+        prepare_schema(&conn).unwrap();
+
+        assert!(dismissed_quality_issue_keys_of(&conn).unwrap().is_empty());
+
+        dismiss_quality_issue_to(&conn, "untagged_usage:2026-09").unwrap();
+        dismiss_quality_issue_to(&conn, "missing_region:2026-09").unwrap();
+        // Re-dismissing is idempotent.
+        dismiss_quality_issue_to(&conn, "untagged_usage:2026-09").unwrap();
+
+        let keys = dismissed_quality_issue_keys_of(&conn).unwrap();
+        assert_eq!(keys.len(), 2);
+        assert!(keys.contains("untagged_usage:2026-09"));
+        assert!(keys.contains("missing_region:2026-09"));
+        // A different period is a different key.
+        assert!(!keys.contains("untagged_usage:2026-10"));
+
+        // The stamp is recorded.
+        let stamp: String = conn
+            .query_row(
+                "SELECT dismissed_at FROM dismissed_quality_issues
+                 WHERE issue_key = 'untagged_usage:2026-09'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(DateTime::parse_from_rfc3339(&stamp).is_ok());
+
+        // The public clear writes to the shared connection, uninitialized
+        // here; the in-memory twin runs its SQL directly.
+        let _ = clear_dismissed_quality_issues();
+        conn.execute("DELETE FROM dismissed_quality_issues", [])
+            .unwrap();
+        assert!(dismissed_quality_issue_keys_of(&conn).unwrap().is_empty());
     }
 
     /// The resolution stamp arrives on an existing database without

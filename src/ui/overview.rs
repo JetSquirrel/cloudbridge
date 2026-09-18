@@ -29,6 +29,12 @@ pub struct OverviewView {
     /// Chart hover state (point under the mouse + the canvas's per-frame
     /// geometry cells); drives the hover guide, dot, and tooltip.
     chart_hover: chart::ChartHover,
+    /// The user closed the data-quality strip; it stays hidden until the
+    /// next load. Dismissal is also persisted per finding
+    /// (`{kind}:{billing_period}` in the app-state database) and filtered
+    /// at the data layer, so a refresh can only bring the strip back with
+    /// a finding that is genuinely new — never with a dismissed one.
+    quality_strip_dismissed: bool,
 }
 
 impl OverviewView {
@@ -42,6 +48,7 @@ impl OverviewView {
             opened_at: chrono::Utc::now(),
             generation: 0,
             chart_hover: chart::ChartHover::new(),
+            quality_strip_dismissed: false,
         };
         view.load(cx);
         view
@@ -476,6 +483,94 @@ impl OverviewView {
                 "Add an account from the Accounts page to see spend here.",
             ))
     }
+
+    /// The data-quality warnings strip under the header: one row per
+    /// finding, worst severity first, severity pills colored like the
+    /// Alerts page's badges. Dismiss persists every shown finding's key
+    /// (`{kind}:{billing_period}`) and hides the strip; the data layer
+    /// filters dismissed findings out of every later load, so the strip
+    /// only reappears when a refresh surfaces something new.
+    fn render_data_quality_strip(
+        &self,
+        cx: &mut Context<Self>,
+        d: &data::OverviewData,
+    ) -> impl IntoElement {
+        div()
+            .w_full()
+            .p_3()
+            .rounded_md()
+            .bg(theme::warning_bg(cx))
+            .v_flex()
+            .gap_2()
+            .child(
+                div()
+                    .h_flex()
+                    .items_center()
+                    .justify_between()
+                    .child(theme::caption(cx, "Data quality"))
+                    .child(
+                        Button::new("dismiss-quality-strip")
+                            .label("Dismiss")
+                            .link()
+                            .small()
+                            .text_color(theme::text_muted(cx))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let keys: Vec<String> = this
+                                    .data
+                                    .as_ref()
+                                    .map(|d| {
+                                        d.data_quality.iter().map(|row| row.key.clone()).collect()
+                                    })
+                                    .unwrap_or_default();
+                                if let Err(e) = data::dismiss_quality_issues(&keys) {
+                                    tracing::warn!(
+                                        "Could not persist the data-quality dismissal: {}",
+                                        e
+                                    );
+                                }
+                                this.quality_strip_dismissed = true;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .children(d.data_quality.iter().map(|issue| {
+                let (badge_bg, badge_fg) = match issue.severity {
+                    data::DataQualitySeverity::Critical => {
+                        (theme::alert_tint(cx), theme::danger(cx))
+                    }
+                    data::DataQualitySeverity::Warning => {
+                        (theme::warning_bg(cx), theme::warning_text(cx))
+                    }
+                    data::DataQualitySeverity::Info => {
+                        (theme::sidebar_bg(cx), theme::text_muted(cx))
+                    }
+                };
+                div()
+                    .h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(theme::pill(issue.severity.label(), badge_bg, badge_fg))
+                    .child(
+                        div()
+                            .flex_1()
+                            // min_w_0 so a long message wraps/truncates
+                            // instead of pushing the amount out.
+                            .min_w_0()
+                            .text_sm()
+                            .text_color(theme::text_primary(cx))
+                            .child(issue.message.clone()),
+                    )
+                    .when_some(issue.affected_amount, |el, amount| {
+                        el.child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(theme::text_primary(cx))
+                                .child(fmt::amount(amount, &d.currency)),
+                        )
+                    })
+            }))
+    }
 }
 
 impl Render for OverviewView {
@@ -524,6 +619,12 @@ impl Render for OverviewView {
                             .child(error),
                     )
                 })
+                .when_some(
+                    self.data
+                        .as_ref()
+                        .filter(|d| !d.data_quality.is_empty() && !self.quality_strip_dismissed),
+                    |el, d| el.child(self.render_data_quality_strip(cx, d)),
+                )
                 .child(body),
         )
     }
