@@ -487,13 +487,22 @@ impl AccountsView {
         // Use standard thread to handle sync HTTP requests
         let (tx, rx) = std::sync::mpsc::channel::<Result<bool, String>>();
 
-        std::thread::spawn(move || {
+        let validate = move || {
             let result = descriptor
                 .client(context)
                 .and_then(|source| source.validate_credentials())
                 .map_err(|e| e.to_string());
             let _ = tx.send(result);
-        });
+        };
+
+        // A blocking HTTP call must not stall a frame, so the desktop puts it
+        // on a thread. The browser has no thread to put it on and no request
+        // to make — its client answers without one — so the work runs where
+        // it stands.
+        #[cfg(not(target_family = "wasm"))]
+        std::thread::spawn(validate);
+        #[cfg(target_family = "wasm")]
+        validate();
 
         // Use gpui spawn to check results
         cx.spawn(async move |this, cx| {

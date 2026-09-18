@@ -13,56 +13,14 @@
 
 use anyhow::{anyhow, Result};
 use directories::BaseDirs;
-use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 use super::billfile::{self, BillFileFormat};
 use super::{aliyun::AliyunCloudService, aws::AwsCloudService, deepseek::DeepSeekService};
 use super::{BillingSource, SourceContext};
 
-/// What a source reports, and therefore what there is to refresh.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Reporting {
-    /// Cost accrued over a period. Refreshing means re-fetching the current
-    /// billing period and, for a while after it ends, the one before it.
-    Periodic,
-    /// A point-in-time balance. There is no period cost and no history to
-    /// backfill, so a refresh reads the balance as it stands.
-    Snapshot,
-}
-
-/// Identifier of a billing source.
-///
-/// Persisted verbatim in the `cloud_accounts` table, so these strings are
-/// part of the on-disk format and must not be renamed without a migration.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct SourceId(String);
-
-impl SourceId {
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    /// The descriptor for this id, or `None` if no source is registered
-    /// under it — an account written by a newer build, or by a build that
-    /// still had the Azure and GCP enum variants.
-    pub fn descriptor(&self) -> Option<&'static SourceDescriptor> {
-        get(&self.0)
-    }
-}
-
-impl From<&str> for SourceId {
-    fn from(id: &str) -> Self {
-        Self(id.to_string())
-    }
-}
-
-impl From<String> for SourceId {
-    fn from(id: String) -> Self {
-        Self(id)
-    }
-}
+pub use crate::model::Reporting;
+use crate::model::SourceId;
 
 /// Where a source's credentials conventionally sit on this machine.
 ///

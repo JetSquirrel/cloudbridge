@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>CloudBridge — web demo</title>
+    <meta
+      name="description"
+      content="CloudBridge as a browser demo: a multi-cloud cost dashboard running on demo data, compiled to WebAssembly."
+    />
+    <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/demo/" />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        color-scheme: light dark;
+      }
+      /* The application owns the whole viewport and draws its own shell; the
+         page is only the canvas it paints into. */
+      body {
+        overflow: hidden;
+        font-family: system-ui, sans-serif;
+        background: #f4edde;
+      }
+      body > canvas {
+        position: fixed;
+        inset: 0;
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      #loading {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        color: #8a7b60;
+        font-size: 15px;
+        pointer-events: none;
+      }
+      #loading .error {
+        max-width: 32rem;
+        padding: 1.5rem;
+        text-align: left;
+      }
+      #loading h2 {
+        font-size: 17px;
+        margin: 0 0 0.5rem;
+      }
+      #loading p {
+        margin: 0.35rem 0;
+      }
+      @media (prefers-color-scheme: dark) {
+        body {
+          background: #221a10;
+        }
+        #loading {
+          color: #8a7b60;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="loading">Loading CloudBridge — about 4 MB of WebAssembly…</div>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

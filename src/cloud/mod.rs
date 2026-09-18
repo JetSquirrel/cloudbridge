@@ -9,8 +9,6 @@ pub mod raw;
 pub mod registry;
 
 use anyhow::Result;
-use chrono::{DateTime, Datelike, NaiveDate, Utc};
-use serde::{Deserialize, Serialize};
 
 use crate::ledger::{BalanceSnapshot, Charge};
 pub use raw::{RawBatch, RawPart};
@@ -28,40 +26,9 @@ pub struct SourceContext {
     pub region: Option<String>,
 }
 
-/// Cloud account information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CloudAccount {
-    /// Account ID
-    pub id: String,
-    /// Account name (user-defined)
-    pub name: String,
-    /// Billing source this account belongs to; see [`registry`].
-    pub source_id: SourceId,
-    /// Region (optional)
-    pub region: Option<String>,
-    /// Created time
-    pub created_at: DateTime<Utc>,
-    /// Last synced time
-    pub last_synced_at: Option<DateTime<Utc>>,
-    /// Is enabled
-    pub enabled: bool,
-    /// The first characters of the access key, kept in the database so a
-    /// list of accounts can be shown without reading the keyring — see
-    /// [`access_key_hint`]. `None` for an account stored before the hint
-    /// was recorded.
-    pub access_key_hint: Option<String>,
-}
-
-/// How much of an access key is kept as a hint.
-const HINT_CHARS: usize = 8;
-
-/// The part of an access key worth keeping in the clear: enough to tell two
-/// accounts apart in a list, never enough to authenticate with.
-///
-/// The secret half is never hinted at, at any length.
-pub fn access_key_hint(access_key: &str) -> String {
-    access_key.chars().take(HINT_CHARS).collect()
-}
+pub use crate::model::{
+    access_key_hint, BillingPeriod, BudgetInfo, BudgetStatus, CloudAccount, SourceId,
+};
 
 impl CloudAccount {
     /// The descriptor for this account's source, or `None` if the stored id
@@ -69,108 +36,14 @@ impl CloudAccount {
     pub fn descriptor(&self) -> Option<&'static SourceDescriptor> {
         self.source_id.descriptor()
     }
-
-    /// The access key as the UI shows it, or `None` for an account whose
-    /// hint was never recorded.
-    ///
-    /// Reading the key itself would mean a keyring prompt, which is not
-    /// something a list of accounts should cost; see
-    /// [`crate::db::account_context`].
-    pub fn masked_access_key(&self) -> Option<String> {
-        self.access_key_hint
-            .as_ref()
-            .map(|hint| format!("{}****", hint))
-    }
 }
 
-/// Budget information
-// TODO(v0.2.0): drop this allow once the budget UI is wired up
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BudgetInfo {
-    /// Account ID
-    pub account_id: String,
-    /// Monthly budget amount
-    pub monthly_budget: f64,
-    /// Currency
-    pub currency: String,
-    /// Alert threshold (percentage, e.g., 80.0 for 80%)
-    pub alert_threshold: f64,
-    /// Created time
-    pub created_at: DateTime<Utc>,
-    /// Updated time
-    pub updated_at: DateTime<Utc>,
-}
-
-/// Budget status (comparison of budget vs actual)
-// TODO(v0.2.0): drop this allow once the budget UI is wired up
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BudgetStatus {
-    /// Account ID
-    pub account_id: String,
-    /// Account name
-    pub account_name: String,
-    /// Monthly budget
-    pub monthly_budget: f64,
-    /// Current month actual cost
-    pub current_cost: f64,
-    /// Currency
-    pub currency: String,
-    /// Percentage used (0-100+)
-    pub percentage_used: f64,
-    /// Remaining budget (can be negative if over budget)
-    pub remaining: f64,
-    /// Whether alert threshold is exceeded
-    pub alert_triggered: bool,
-}
-
-/// A calendar month of billing, the unit providers issue a bill in and the
-/// unit the ledger replaces as a whole.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BillingPeriod {
-    pub year: i32,
-    pub month: u32,
-}
-
-impl BillingPeriod {
-    pub fn new(year: i32, month: u32) -> Self {
-        Self { year, month }
-    }
-
-    /// The period the given instant falls in.
-    pub fn containing(instant: DateTime<Utc>) -> Self {
-        Self::new(instant.year(), instant.month())
-    }
-
-    /// The period before this one.
-    pub fn previous(&self) -> Self {
-        if self.month == 1 {
-            Self::new(self.year - 1, 12)
-        } else {
-            Self::new(self.year, self.month - 1)
-        }
-    }
-
-    /// `YYYY-MM`, as stored in `billing_period` and in the raw path.
-    pub fn label(&self) -> String {
-        format!("{:04}-{:02}", self.year, self.month)
-    }
-
-    /// First day of the period.
-    pub fn start(&self) -> NaiveDate {
-        NaiveDate::from_ymd_opt(self.year, self.month, 1).expect("a valid billing period")
-    }
-
-    /// First day of the following period. Cost Explorer and the BSS API
-    /// both take an exclusive end.
-    pub fn end_exclusive(&self) -> NaiveDate {
-        let (year, month) = if self.month == 12 {
-            (self.year + 1, 1)
-        } else {
-            (self.year, self.month + 1)
-        };
-        NaiveDate::from_ymd_opt(year, month, 1).expect("a valid billing period")
+impl SourceId {
+    /// The descriptor for this id, or `None` if no source is registered
+    /// under it — an account written by a newer build, or by a build that
+    /// still had the Azure and GCP enum variants.
+    pub fn descriptor(&self) -> Option<&'static SourceDescriptor> {
+        registry::get(self.as_str())
     }
 }
 

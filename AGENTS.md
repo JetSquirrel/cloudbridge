@@ -135,7 +135,7 @@ The same crate builds a browser version:
 
 ```bash
 ./scripts/build-web.sh              # debug; add --release for the shipped one
-python3 -m http.server 8000 --directory www
+python3 -m http.server 8000 --directory web/site
 ```
 
 `src/lib.rs` chooses a data backend per target with `cfg`: DuckDB, the provider
@@ -169,18 +169,33 @@ Things that will bite you:
 
 - **Nightly is required for the wasm build only.** `gpui-pre-web` pulls Zed's
   `wasm_thread`, which uses a `stdarch_wasm_atomic_wait` feature stable does not
-  have. The desktop stays on stable.
-- **`wasm-bindgen` CLI must match the `wasm-bindgen` crate version** — read it
-  out of `Cargo.lock` and `cargo install wasm-bindgen-cli --version <that>`.
+  have. The desktop stays on stable. The nightly is **pinned by date** —
+  `WEB_TOOLCHAIN` in `scripts/build-web.sh`, and the same date in both
+  workflows — because an unstable feature can be renamed overnight and a
+  floating `+nightly` turns that into a build that broke with nobody having
+  changed anything. To build against a nightly you already have:
+  `WEB_TOOLCHAIN=nightly ./scripts/build-web.sh`. Bumping the pin means
+  changing it in all three places.
+- **`wasm-bindgen` CLI must match the `wasm-bindgen` crate version.**
+  `scripts/locked-version.py <package>` prints what `Cargo.lock` resolved and
+  fails when the answer is not a single version; the build script and both
+  workflows read it from there rather than guessing.
 - **The browser has no system fonts.** `gpui-pre-web` starts with an empty font
   database, and GPUI resolves `.SystemUIFont` to IBM Plex Sans there; without
   that family registered the text system panics rather than falling back. The
-  four fonts are in `www/fonts/` (OFL) and registered in `src/wasm_entry.rs`;
+  four fonts are in `web/site/fonts/` (OFL) and registered in `src/wasm_entry.rs`;
   they are `include_bytes!`d, so they must exist to compile.
 - **Icons are fetched, not embedded.** gpui-kit's wasm asset source requests
   `<endpoint>/assets/icons/<name>.svg` on demand, so the build script copies the
-  catalog out of the resolved `gpui-kit-assets` crate into `www/assets/`
-  (gitignored).
+  catalog out of the `gpui-kit-assets` version `Cargo.lock` names into
+  `web/site/assets/` (gitignored). The endpoint is `.`, relative to the page, so the
+  same module works at a site root and under `/demo/`; anything added to
+  `web/site/index.html` has to stay relative for the same reason.
+- **The demo is published with the docs site.** `.github/workflows/gh-pages.yml`
+  runs a release web build on every push to `main` and drops `web/site/` into
+  `docs/demo/`, because a Pages deployment uploads the whole site at once — a
+  docs-only push that skipped the build would publish a site with no demo in
+  it.
 - **`smol::unblock` is forwarded by `web/smol-bridge`.** Cargo refuses one
   dependency name with two sources, so the desktop's `smol` is reached through
   that crate instead of beside it. The pages call `smol::unblock` unchanged; on

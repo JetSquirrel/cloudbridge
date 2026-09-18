@@ -11,18 +11,50 @@ keywords = ["cloud", "cost-management", "aws", "aliyun", "finops"]
 categories = ["gui", "finance"]
 rust-version = "1.95"
 
+# The desktop binary and the web demo are the same crate built for two
+# targets. The library target is what makes the wasm entry point possible;
+# `main.rs` stays the desktop entry.
+[lib]
+name = "cloudbridge"
+path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
+
+# None of these belong to a target in particular.
 [dependencies]
 # GPUI Kit: the single dependency for GPUI, gpui-base, the styled
 # components and the default assets. Default features are `component` and
 # `assets`; the tree-sitter grammars stay off, so no syntax-highlighting
-# stack is compiled into a cost dashboard.
+# stack is compiled into a cost dashboard. It carries its own
+# `cfg(target_family = "wasm")` dependency on `gpui-pre-web`, which is what
+# lets the whole UI compile for the browser.
 gpui-kit = "0.6"
 
+# Run blocking operations in GPUI async context. A local forwarding crate,
+# so that the pages calling `smol::unblock` need no target-specific code —
+# see `web/smol-bridge`.
+smol = { path = "web/smol-bridge", package = "smol-bridge" }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Time handling
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+
+# Error handling
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+
+# UUID generation
+uuid = { version = "1", features = ["v4"] }
+
+# Desktop only: signing, storage, the billing APIs and the OS integrations
+# a browser has no equivalent for.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
 # Sync HTTP client (avoids aws-lc-sys compilation issues)
 ureq = { version = "3", features = ["json"] }
-
-# Run blocking operations in GPUI async context
-smol = "2"
 
 # AWS signing
 hmac = "0.12"
@@ -33,9 +65,7 @@ hex = "0.4"
 # Database
 duckdb = { version = "1", features = ["bundled"] }
 
-# Serialization
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+quick-xml = { version = "0.36", features = ["serialize"] }
 
 # Encryption (for AK/SK secure storage)
 aes-gcm = "0.10"
@@ -46,25 +76,36 @@ rand = "0.8"
 # Using v2.3 for better stability on Windows
 keyring = "2.3"
 
-# Time handling
-chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
-
-# Error handling
-anyhow = "1"
-
-# Logging
-tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Configuration
 directories = "6"
 
-# UUID generation
-uuid = { version = "1", features = ["v4"] }
-
 # Lazy initialization
 lazy_static = "1"
 zip = { version = "4.2.0", default-features = false, features = ["deflate"] }
+
+# Browser only. The web demo has no filesystem, no keyring and no threads,
+# so the desktop's platform crates are replaced rather than shared.
+[target.'cfg(target_family = "wasm")'.dependencies]
+wasm-bindgen = "0.2"
+console_error_panic_hook = "0.1"
+console_log = "1.0"
+log = "0.4"
+tracing-wasm = "0.2"
+
+# `chrono::Utc::now` reaches the wall clock through js-sys on wasm; without
+# this it reads the target's unimplemented `SystemTime`.
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std", "wasmbind"] }
+
+# `uuid`'s v4 needs a randomness source the browser exposes only through
+# `crypto.getRandomValues`, which `getrandom`'s `js` feature wires up.
+getrandom = { version = "0.2", features = ["js"] }
+
+[workspace]
+members = ["web/smol-bridge"]
+# `cargo build` at the root still means the desktop application.
+default-members = ["."]
 
 [profile.release]
 opt-level = "z"          # Optimize for size

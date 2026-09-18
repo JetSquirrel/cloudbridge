@@ -309,23 +309,27 @@ impl CloudBridgeApp {
                 None,
                 cx,
             ))
-            .child(self.nav_item(
-                "Rules",
-                IconName::SquareTerminal,
-                CurrentView::Rules,
-                current == CurrentView::Rules,
-                None,
-                cx,
-            ))
+            .when(cfg!(not(target_family = "wasm")), |el| {
+                el.child(self.nav_item(
+                    "Rules",
+                    IconName::SquareTerminal,
+                    CurrentView::Rules,
+                    current == CurrentView::Rules,
+                    None,
+                    cx,
+                ))
+            })
             .child(div().flex_1())
-            .child(self.nav_item(
-                "Settings",
-                IconName::Settings,
-                CurrentView::Settings,
-                current == CurrentView::Settings,
-                None,
-                cx,
-            ))
+            .when(cfg!(not(target_family = "wasm")), |el| {
+                el.child(self.nav_item(
+                    "Settings",
+                    IconName::Settings,
+                    CurrentView::Settings,
+                    current == CurrentView::Settings,
+                    None,
+                    cx,
+                ))
+            })
     }
 
     fn nav_item(

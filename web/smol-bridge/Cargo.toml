@@ -1,0 +1,17 @@
+[package]
+name = "smol-bridge"
+version = "0.1.0"
+edition = "2021"
+description = "`smol::unblock` on the desktop, an inline future on targets without threads"
+publish = false
+
+# The library is named `smol` on purpose: the pages call `smol::unblock`, and
+# one crate that resolves that name for both targets is what keeps them
+# compiling unchanged. Cargo refuses two dependency sources under one name, so
+# the desktop's real `smol` is reached through this crate instead of beside it.
+[lib]
+name = "smol"
+path = "src/lib.rs"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+real-smol = { package = "smol", version = "2" }

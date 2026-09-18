@@ -940,6 +940,7 @@
         <div class="container">
             <a href="#main" class="logo">CloudBridge</a>
             <ul class="nav-links">
+                <li><a href="/demo/" data-i18n="nav.demo">Demo</a></li>
                 <li><a href="/docs.html" data-i18n="nav.docs">Docs</a></li>
                 <li><a href="/blog.html" data-i18n="nav.blog">Blog</a></li>
                 <li><a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer">GitHub</a></li>
@@ -958,6 +959,7 @@
                         <p class="hero-sub" data-i18n="hero.sub">CloudBridge reads your cloud and model-provider bills into one local ledger — from the billing API, or from the export you downloaded — then draws the trends. No sign-up, no sync, no telemetry.</p>
                         <div class="hero-buttons">
                             <a href="#download" class="btn btn-primary" data-i18n="hero.download">Download</a>
+                            <a href="/demo/" class="btn btn-outline" data-i18n="hero.demo">Try the demo</a>
                             <a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer" class="btn btn-outline" data-i18n="hero.github">View on GitHub</a>
                         </div>
                         <div class="hero-badges">
@@ -1144,6 +1146,7 @@
                     <span class="eyebrow" data-i18n="download.eyebrow">free · open source · no account</span>
                 </div>
                 <p class="download-sub" data-i18n="download.sub">Pick your platform:</p>
+                <p class="download-sub" data-i18n-html="download.demo">Or <a href="/demo/">try the demo in your browser</a> first — it runs on a sample bill, with nothing to install and no account.</p>
                 <div class="manifest">
                     <div class="manifest-row">
                         <span class="m-platform">Windows</span>
@@ -1174,6 +1177,10 @@
                     <span class="eyebrow" data-i18n="faq.eyebrow">answers</span>
                 </div>
                 <div class="faq-list">
+                    <details class="faq-item">
+                        <summary data-i18n="faq.demo.q">Can I try it before installing anything?</summary>
+                        <div class="faq-answer" data-i18n-html="faq.demo.a">Yes. The same application compiles to WebAssembly and runs at <a href="/demo/">the browser demo</a>, on a sample bill of twelve months across AWS, Alibaba Cloud and DeepSeek. The pages, the charts and the alerting rules are the desktop build's own code. What it cannot do is the part that needs your machine: it holds no credentials, calls no billing API, imports no bill file and has no SQL console. Nothing you do in it is saved.</div>
+                    </details>
                     <details class="faq-item">
                         <summary data-i18n="faq.free.q">Is CloudBridge free to use?</summary>
                         <div class="faq-answer" data-i18n="faq.free.a">Yes. CloudBridge is free and open source under the MIT license. Provider fees are separate: AWS Cost Explorer charges per API request, and total cost depends on accounts, periods and refreshes. There is no fixed daily cost guarantee. Local file imports do not call billing APIs.</div>

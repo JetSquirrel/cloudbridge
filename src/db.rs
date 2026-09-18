@@ -881,6 +881,20 @@ pub(crate) fn save_alert_rule_to(conn: &Connection, rule: &AlertRule) -> Result<
     Ok(())
 }
 
+/// Whether a rule with this id is already stored.
+///
+/// `seed_default_rules_on` wants to know exactly this and nothing about the
+/// rule, and the seeding has to run on a backend that has no SQL of its own.
+pub(crate) fn alert_rule_exists(conn: &Connection, id: &str) -> Result<bool> {
+    let count: i64 = conn.query_row(
+        "SELECT count(*) FROM alert_rule WHERE id = ?",
+        params![id],
+        |row| row.get(0),
+    )?;
+
+    Ok(count > 0)
+}
+
 /// Every alerting rule, in the order they were first stored.
 pub fn get_alert_rules() -> Result<Vec<AlertRule>> {
     with_connection(get_alert_rules_of)

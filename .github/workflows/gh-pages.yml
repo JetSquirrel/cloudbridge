@@ -24,15 +24,42 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      
+
+      # The demo is rebuilt on every deploy, not only when the web sources
+      # changed: a Pages deployment uploads the whole site at once, so a
+      # docs-only push would otherwise publish a site with no demo in it. The
+      # cache is what keeps that from being a fifteen-minute wait each time.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-07-28
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm-release
+      - name: Install the wasm-bindgen CLI the lock file names
+        run: |
+          version="$(./scripts/locked-version.py wasm-bindgen)"
+          cargo install wasm-bindgen-cli --version "$version" --locked
+      - name: Build the web demo
+        run: ./scripts/build-web.sh --release
+
+      # `web/site/` is self-contained and references everything relative to the
+      # page it is served from, so it drops into the docs site as one
+      # directory and the demo lives at <site>/demo/.
+      - name: Place the demo under the docs site
+        run: |
+          rm -rf docs/demo
+          mkdir -p docs/demo
+          cp -R web/site/. docs/demo/
+
       - name: Setup Pages
         uses: actions/configure-pages@v4
-      
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: './docs'
-      
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

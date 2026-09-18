@@ -6,7 +6,6 @@ on:
     paths:
       - 'src/**'
       - 'web/**'
-      - 'www/**'
       - 'scripts/**'
       - 'rust-toolchain*'
       - 'Cargo.toml'
@@ -17,7 +16,6 @@ on:
     paths:
       - 'src/**'
       - 'web/**'
-      - 'www/**'
       - 'scripts/**'
       - 'rust-toolchain*'
       - 'Cargo.toml'
@@ -56,48 +54,29 @@ jobs:
         run: cargo test
 
   wasm:
-    name: Web demo (advisory until web sources are tracked)
+    name: Web demo (wasm32)
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - name: Check web build prerequisites
-        id: web
-        shell: bash
-        run: |
-          if [[ -f web/smol-bridge/Cargo.toml && -f scripts/build-web.sh && -d www/fonts ]]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Skipping web build: web demo sources or fonts are not present in this checkout."
-            echo "Web build skipped: commit the web demo sources, build script and fonts to enable it." >> "$GITHUB_STEP_SUMMARY"
-          fi
-      - uses: dtolnay/rust-toolchain@nightly
-        if: steps.web.outputs.available == 'true'
+      # The nightly is pinned, not floating: `gpui-pre-web` needs an unstable
+      # feature, and a nightly that renames one would otherwise break this job
+      # on a day nobody touched the project. Keep it in step with
+      # WEB_TOOLCHAIN in scripts/build-web.sh.
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-07-28
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-        if: steps.web.outputs.available == 'true'
         with:
           key: wasm
-      - name: Install matching wasm-bindgen CLI
-        if: steps.web.outputs.available == 'true'
-        shell: bash
+      - name: Install the wasm-bindgen CLI the lock file names
         run: |
-          version=$(python3 - <<'PY'
-          import pathlib
-          import tomllib
-
-          lock = tomllib.loads(pathlib.Path("Cargo.lock").read_text())
-          versions = {p["version"] for p in lock["package"] if p["name"] == "wasm-bindgen"}
-          if len(versions) != 1:
-              raise SystemExit("Expected exactly one wasm-bindgen version in Cargo.lock")
-          print(versions.pop())
-          PY
-          )
+          version="$(./scripts/locked-version.py wasm-bindgen)"
           cargo install wasm-bindgen-cli --version "$version" --locked
+      # This is what keeps `src/ui/`, `app.rs` and `alerts.rs` compiling for
+      # both targets: the two data backends answer the same signatures, and
+      # nothing but this build notices when one of them drifts.
       - name: Build web demo
-        if: steps.web.outputs.available == 'true'
         run: ./scripts/build-web.sh
 
   msrv:

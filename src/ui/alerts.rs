@@ -427,15 +427,21 @@ impl Render for AlertsView {
                         "Evaluated locally against the ledger every ingest",
                     )),
             )
-            .child(
-                Button::new("edit-rules")
-                    .custom(theme::outline_variant(cx))
-                    .card_outline(cx)
-                    .label("Edit rules")
-                    .on_click(|_, _, cx| {
-                        crate::app::navigate_to(crate::app::CurrentView::Rules, cx)
-                    }),
-            );
+            // The rules editor is a desktop page: a rule cannot be tuned in a
+            // tab that forgets the change when it reloads, and the browser
+            // demo has no way to evaluate one against anything but its own
+            // seeded ledger.
+            .when(cfg!(not(target_family = "wasm")), |el| {
+                el.child(
+                    Button::new("edit-rules")
+                        .custom(theme::outline_variant(cx))
+                        .card_outline(cx)
+                        .label("Edit rules")
+                        .on_click(|_, _, cx| {
+                            crate::app::navigate_to(crate::app::CurrentView::Rules, cx)
+                        }),
+                )
+            });
 
         let Some(data) = self.data.as_ref() else {
             let body: AnyElement = if self.loading {

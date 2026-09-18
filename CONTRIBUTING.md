@@ -95,10 +95,10 @@ constraints the desktop build does not:
 - **`wasm-bindgen` CLI must match the `wasm-bindgen` crate version.** Read
   the version out of `Cargo.lock` and install the matching
   `wasm-bindgen-cli`.
-- **Fonts are embedded:** the four fonts in `www/fonts/` are
+- **Fonts are embedded:** the four fonts in `web/site/fonts/` are
   `include_bytes!`d from `src/wasm_entry.rs` and must exist to compile.
 - **Icons are fetched, not embedded** — the build script copies the icon
-  catalog out of the resolved `gpui-kit-assets` crate into `www/assets/`
+  catalog out of the resolved `gpui-kit-assets` crate into `web/site/assets/`
   (gitignored), and the running app requests SVGs from the served
   directory at runtime.
 
@@ -115,12 +115,12 @@ Then build and serve:
 
 ```bash
 ./scripts/build-web.sh              # debug; use --release for an optimized build
-python3 -m http.server 8000 --directory www
+python3 -m http.server 8000 --directory web/site
 ```
 
 Open `http://localhost:8000/`. The script runs `cargo +nightly build --lib
 --target wasm32-unknown-unknown`, generates web bindings, and replaces the
-generated `www/assets/` directory. Do not keep hand-authored assets there.
+generated `web/site/assets/` directory. Do not keep hand-authored assets there.
 The browser backend uses in-memory demo data, not real provider credentials.
 
 A change to anything under `src/ui/`, `app.rs`, `alerts.rs` or `model.rs`
@@ -159,8 +159,11 @@ cloudbridge/
 │   │                      # attribution, alerts, rules, settings, charting
 │   └── web/               # wasm backends: in-memory ledger, no keyring
 ├── scripts/
-│   └── build-web.sh       # wasm build + wasm-bindgen + icon catalog
-├── www/                   # Static shell for the browser demo
+│   ├── build-web.sh       # wasm build + wasm-bindgen + icon catalog
+│   └── locked-version.py  # The version Cargo.lock resolved, for a package
+├── web/
+│   ├── site/              # Static shell for the browser demo
+│   └── smol-bridge/       # `smol::unblock` for both targets
 └── themes/                # Theme files
 ```
 

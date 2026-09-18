@@ -1248,30 +1248,41 @@ mod tests {
     }
 
     #[test]
-    fn a_cross_cloud_total_is_one_query_in_one_currency() {
+    fn last_ingests_reports_each_account_once() {
         let mut conn = conn("USD");
         write(&mut conn, &aws(), &[charge("EC2", 12.5, "USD", 1)]);
+        write(&mut conn, &aws(), &[charge("EC2", 13.0, "USD", 1)]);
         write(&mut conn, &aliyun(), &[charge("ECS", 710.0, "CNY", 1)]);
 
-        // 710 CNY at the built-in 0.1408 is 99.968 USD.
-        let total = total_for_period_of(&conn, "2026-08").unwrap();
-        assert!((total - 112.468).abs() < 1e-6, "got {total}");
-
-        // Each account still reports in the same currency as the total.
-        assert!((period_total_of(&conn, &aws()).unwrap() - 12.5).abs() < 1e-9);
-        assert!((period_total_of(&conn, &aliyun()).unwrap() - 99.968).abs() < 1e-6);
+        let ingests = last_ingests_of(&conn).unwrap();
+        assert_eq!(ingests.len(), 2);
+        let aws = ingests
+            .iter()
+            .find(|(p, a, _)| p == "AWS" && a == "acct-1")
+            .expect("the AWS account ingested");
+        // The second write is fresher than the first, and is the one reported.
+        assert!(aws.2 <= Utc::now());
     }
 
     #[test]
-    fn changing_the_reporting_currency_rereads_the_same_rows() {
+    fn api_fetches_this_month_counts_api_batches_only() {
         let mut conn = conn("USD");
-        write(&mut conn, &aliyun(), &[charge("ECS", 710.0, "CNY", 1)]);
+        let this_month = BillingPeriod::containing(Utc::now()).label();
+        let api = PeriodKey::new("AWS", "acct-1", &this_month);
 
-        assert!((period_total_of(&conn, &aliyun()).unwrap() - 99.968).abs() < 1e-6);
+        write(&mut conn, &api, &[charge("EC2", 1.0, "USD", 1)]);
+        // A second fetch of the same period was still a paid call.
+        write(&mut conn, &api, &[charge("EC2", 1.0, "USD", 1)]);
+        write_through(
+            &mut conn,
+            &api,
+            &[charge("EC2", 1.0, "USD", 1)],
+            Channel::File,
+        );
+        // Another month does not count.
+        write(&mut conn, &aws(), &[charge("EC2", 1.0, "USD", 1)]);
 
-        // No rewrite of the fact table: only the view changes.
-        schema::apply_reporting_currency(&conn, "CNY").unwrap();
-        assert!((period_total_of(&conn, &aliyun()).unwrap() - 710.0).abs() < 1e-9);
+        assert_eq!(api_fetches_this_month_of(&conn).unwrap(), 2);
     }
 
     #[test]

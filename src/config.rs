@@ -1,9 +1,17 @@
 //! Configuration management module
+//!
+//! The shapes here are shared; only where a config is kept differs. The
+//! desktop writes `config.json` under the OS's application-data directory,
+//! and the web demo holds the same struct in memory for the life of the tab.
 
 use anyhow::Result;
+#[cfg(not(target_family = "wasm"))]
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+
+#[cfg(not(target_family = "wasm"))]
 use std::fs;
+#[cfg(not(target_family = "wasm"))]
 use std::path::PathBuf;
 
 /// How long a billing period stays fresh after it is ingested, until the
@@ -83,6 +91,7 @@ pub struct ThemeConfig {
 }
 
 /// Get application data directory
+#[cfg(not(target_family = "wasm"))]
 pub fn get_app_data_dir() -> Result<PathBuf> {
     // Use simpler path: AppData/Roaming/CloudBridge/ on Windows
     // "" for qualifier and organization to avoid nested folders
@@ -100,6 +109,7 @@ pub fn get_app_data_dir() -> Result<PathBuf> {
 }
 
 /// Get config file path
+#[cfg(not(target_family = "wasm"))]
 pub fn get_config_path() -> Result<PathBuf> {
     let data_dir = get_app_data_dir()?;
     Ok(data_dir.join("config.json"))
@@ -107,6 +117,7 @@ pub fn get_config_path() -> Result<PathBuf> {
 
 /// Path of the application-state database: accounts, budgets and the
 /// response caches the dashboard reads.
+#[cfg(not(target_family = "wasm"))]
 pub fn get_database_path() -> Result<PathBuf> {
     let data_dir = get_app_data_dir()?;
     Ok(data_dir.join("cloudbridge.duckdb"))
@@ -115,6 +126,7 @@ pub fn get_database_path() -> Result<PathBuf> {
 /// Path of the billing ledger. A separate file from the application state:
 /// the ledger is the durable record, everything in `cloudbridge.duckdb` is
 /// either user-entered or re-fetchable.
+#[cfg(not(target_family = "wasm"))]
 pub fn get_ledger_database_path() -> Result<PathBuf> {
     let data_dir = get_app_data_dir()?;
     Ok(data_dir.join("billing.duckdb"))
@@ -122,12 +134,36 @@ pub fn get_ledger_database_path() -> Result<PathBuf> {
 
 /// Root of the raw payload store. Laid out so the same path semantics
 /// work for a local directory and for an object store; see [`crate::cloud::raw`].
+#[cfg(not(target_family = "wasm"))]
 pub fn get_raw_data_dir() -> Result<PathBuf> {
     let data_dir = get_app_data_dir()?;
     Ok(data_dir.join("raw"))
 }
 
+/// Load configuration.
+///
+/// The browser has no file to read, so the settings the demo runs with are
+/// the defaults the desktop would write on a first launch. Keeping them in
+/// memory is enough for the Settings page to be exercised; nothing survives
+/// a reload, which is what a demo wants.
+#[cfg(target_family = "wasm")]
+pub fn load_config() -> Result<AppConfig> {
+    CONFIG.with(|config| Ok(config.borrow().clone()))
+}
+
+#[cfg(target_family = "wasm")]
+pub fn save_config(config: &AppConfig) -> Result<()> {
+    CONFIG.with(|stored| *stored.borrow_mut() = config.clone());
+    Ok(())
+}
+
+#[cfg(target_family = "wasm")]
+thread_local! {
+    static CONFIG: std::cell::RefCell<AppConfig> = std::cell::RefCell::new(AppConfig::default());
+}
+
 /// Load configuration
+#[cfg(not(target_family = "wasm"))]
 pub fn load_config() -> Result<AppConfig> {
     let config_path = get_config_path()?;
 
@@ -152,6 +188,7 @@ pub fn load_config() -> Result<AppConfig> {
 }
 
 /// Save configuration
+#[cfg(not(target_family = "wasm"))]
 pub fn save_config(config: &AppConfig) -> Result<()> {
     let config_path = get_config_path()?;
     let content = serde_json::to_string_pretty(config)?;
