@@ -8,11 +8,14 @@ use super::{data, theme};
 use crate::alerts::{AlertField, AlertKind, AlertStat, AlertView, Severity};
 use crate::ui::theme::CardOutline as _;
 
-fn kind_icon(kind: AlertKind) -> IconName {
+fn kind_icon(kind: AlertKind) -> Icon {
     match kind {
-        AlertKind::CostAnomaly => IconName::ChartPie,
-        AlertKind::Balance => IconName::TriangleAlert,
-        AlertKind::UntaggedRatio => IconName::Info,
+        AlertKind::CostAnomaly => Icon::new(IconName::ChartPie),
+        AlertKind::Balance => Icon::new(IconName::TriangleAlert),
+        AlertKind::UntaggedRatio => Icon::new(IconName::Info),
+        // The component icon subset has no money icon; the assets crate's
+        // full catalog does, and Icon accepts any IconNamed.
+        AlertKind::Budget => Icon::new(gpui_kit::assets::IconName::Wallet),
     }
 }
 
@@ -41,7 +44,7 @@ fn icon_badge(alert: &AlertView, cx: &App) -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .child(Icon::new(kind_icon(alert.kind)).size_5().text_color(fg))
+        .child(kind_icon(alert.kind).size_5().text_color(fg))
 }
 
 /// The severity marker next to an alert title.

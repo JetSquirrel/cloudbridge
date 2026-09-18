@@ -12,6 +12,7 @@ use gpui_kit::*;
 use serde_json::json;
 
 use crate::alerts::{self, RuleView};
+use crate::cloud::BudgetStatus;
 use crate::ui::theme::CardOutline as _;
 
 use super::{data, fmt, theme};
@@ -28,7 +29,7 @@ struct RuleKindSpec {
     name: &'static str,
 }
 
-const RULE_KINDS: [RuleKindSpec; 3] = [
+const RULE_KINDS: [RuleKindSpec; 4] = [
     RuleKindSpec {
         kind: alerts::RULE_COST_ANOMALY,
         name: "Model cost growth anomaly",
@@ -41,7 +42,20 @@ const RULE_KINDS: [RuleKindSpec; 3] = [
         kind: alerts::RULE_UNTAGGED_RATIO,
         name: "Untagged spend ratio",
     },
+    RuleKindSpec {
+        kind: alerts::RULE_BUDGET,
+        name: "Account budget",
+    },
 ];
+
+/// What a budget rule compares against its threshold, as selector labels
+/// and config values.
+const BASED_OPTIONS: [(&str, &str); 2] =
+    [("cost", "Cost to date"), ("forecast", "Month-end forecast")];
+
+/// A budget rule's threshold type, as selector labels and config values.
+const THRESHOLD_TYPE_OPTIONS: [(&str, &str); 2] =
+    [("percent", "% of budget"), ("absolute", "Amount")];
 
 /// Humanized "last fired" line under a rule's switch.
 fn last_fired_label(last_fired_at: Option<DateTime<Utc>>) -> String {
@@ -55,6 +69,11 @@ fn last_fired_label(last_fired_at: Option<DateTime<Utc>>) -> String {
 pub struct RulesView {
     /// Loaded rules, once the first load lands.
     data: Option<data::RulesData>,
+    /// Per-account budget consumption, loaded alongside the rules.
+    budgets: Vec<BudgetStatus>,
+    /// `(id, name)` of every account, for the budget editor and the budget
+    /// rule's account picker.
+    accounts: Vec<(String, String)>,
     /// A load is in flight.
     loading: bool,
     /// Bumped on every load so an overlapping older load discards its
@@ -77,6 +96,20 @@ pub struct RulesView {
     consecutive_input: Entity<InputState>,
     floor_input: Entity<InputState>,
     threshold_input: Entity<InputState>,
+    /// The account a budget rule watches (dialog).
+    rule_account: Option<String>,
+    /// A budget rule's `based` (dialog): `cost` or `forecast`.
+    rule_based: &'static str,
+    /// A budget rule's threshold type (dialog): `percent` or `absolute`.
+    rule_threshold_type: &'static str,
+    /// The account the budget editor edits.
+    budget_account: Option<String>,
+    budget_amount_input: Entity<InputState>,
+    budget_threshold_input: Entity<InputState>,
+    /// A budget save or delete is in flight.
+    saving_budget: bool,
+    /// Budget editor validation or save failure.
+    budget_error: Option<String>,
     /// The custom rule awaiting delete confirmation, if any.
     pending_delete: Option<String>,
     /// A delete is in flight.
@@ -90,6 +123,8 @@ impl RulesView {
         let consecutive_input = cx.new(|cx| InputState::new(window, cx).placeholder("2"));
         let floor_input = cx.new(|cx| InputState::new(window, cx).placeholder("200"));
         let threshold_input = cx.new(|cx| InputState::new(window, cx).placeholder("15"));
+        let budget_amount_input = cx.new(|cx| InputState::new(window, cx).placeholder("500"));
+        let budget_threshold_input = cx.new(|cx| InputState::new(window, cx).placeholder("80"));
 
         // Escape-to-close for the dialogs. gpui-component's own Cancel
         // action is crate-private, so the dialogs get their own action and
@@ -106,6 +141,8 @@ impl RulesView {
 
         let mut view = Self {
             data: None,
+            budgets: Vec::new(),
+            accounts: Vec::new(),
             loading: false,
             load_generation: 0,
             error: None,
@@ -119,6 +156,14 @@ impl RulesView {
             consecutive_input,
             floor_input,
             threshold_input,
+            rule_account: None,
+            rule_based: BASED_OPTIONS[0].0,
+            rule_threshold_type: THRESHOLD_TYPE_OPTIONS[0].0,
+            budget_account: None,
+            budget_amount_input,
+            budget_threshold_input,
+            saving_budget: false,
+            budget_error: None,
             pending_delete: None,
             deleting: false,
         };
@@ -140,6 +185,9 @@ impl RulesView {
     /// runs on a worker thread like the Accounts page's loads do. Loads can
     /// overlap — a toggle or delete triggers one mid-flight — so only the
     /// newest generation may write state; an older result is discarded.
+    ///
+    /// Budgets and accounts load alongside: the budget editor and the
+    /// budget rule's account picker both need them.
     fn load(&mut self, cx: &mut Context<Self>) {
         self.loading = true;
         self.load_generation += 1;
@@ -147,7 +195,13 @@ impl RulesView {
         cx.notify();
 
         cx.spawn(async move |this, cx| {
-            let result = smol::unblock(|| data::load_rules().map_err(|e| e.to_string())).await;
+            let result = smol::unblock(|| {
+                let rules = data::load_rules().map_err(|e| e.to_string())?;
+                let budgets = data::load_budget_statuses().map_err(|e| e.to_string())?;
+                let accounts = data::account_names().map_err(|e| e.to_string())?;
+                Ok::<_, String>((rules, budgets, accounts))
+            })
+            .await;
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
@@ -156,8 +210,10 @@ impl RulesView {
                     }
                     this.loading = false;
                     match result {
-                        Ok(rules) => {
+                        Ok((rules, budgets, accounts)) => {
                             this.data = Some(rules);
+                            this.budgets = budgets;
+                            this.accounts = accounts;
                             // A banner from an earlier failure would mask
                             // the fresh list forever.
                             this.error = None;
@@ -249,8 +305,20 @@ impl RulesView {
             state.set_value("200", window, cx);
         });
         self.threshold_input.update(cx, |state, cx| {
-            state.set_value("15", window, cx);
+            // A budget rule's threshold reads as a percent of the budget by
+            // default; the untagged rule's reads as a percent of spend.
+            let default = if kind == alerts::RULE_BUDGET {
+                "80"
+            } else {
+                "15"
+            };
+            state.set_value(default, window, cx);
         });
+        self.rule_based = BASED_OPTIONS[0].0;
+        self.rule_threshold_type = THRESHOLD_TYPE_OPTIONS[0].0;
+        if self.rule_account.is_none() {
+            self.rule_account = self.accounts.first().map(|(id, _)| id.clone());
+        }
 
         cx.notify();
     }
@@ -281,6 +349,21 @@ impl RulesView {
                     .parse::<f64>()
                     .map_err(|_| "The floor must be a number, e.g. 200".to_string())?;
                 Ok(json!({ "floor": floor }))
+            }
+            alerts::RULE_BUDGET => {
+                let account_id = self
+                    .rule_account
+                    .clone()
+                    .ok_or_else(|| "Pick the account the rule watches".to_string())?;
+                let threshold = value(&self.threshold_input)
+                    .parse::<f64>()
+                    .map_err(|_| "The threshold must be a number, e.g. 80".to_string())?;
+                Ok(json!({
+                    "account_id": account_id,
+                    "based": self.rule_based,
+                    "threshold_type": self.rule_threshold_type,
+                    "threshold": threshold,
+                }))
             }
             _ => {
                 // The dialog asks for a percent; the config is a ratio.
@@ -332,6 +415,122 @@ impl RulesView {
                             this.dialog_error = Some(e);
                             cx.notify();
                         }
+                    }
+                })
+                .ok();
+            });
+        })
+        .detach();
+    }
+
+    // ==================== Budget editor ====================
+
+    /// Select the account the budget editor edits, prefilling the fields
+    /// from its current budget when one exists. (The status carries no
+    /// alert threshold, so the percent field falls back to the default.)
+    fn select_budget_account(
+        &mut self,
+        account_id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let amount = self
+            .budgets
+            .iter()
+            .find(|status| status.account_id == account_id)
+            .map(|status| format!("{}", status.monthly_budget))
+            .unwrap_or_default();
+        self.budget_account = Some(account_id);
+        self.budget_error = None;
+        self.budget_amount_input.update(cx, |state, cx| {
+            state.set_value(amount, window, cx);
+        });
+        self.budget_threshold_input.update(cx, |state, cx| {
+            state.set_value("80", window, cx);
+        });
+        cx.notify();
+    }
+
+    /// Save the editor's budget for the selected account, re-evaluate so a
+    /// rule whose line moved fires (or resolves) right away, then reload.
+    fn save_budget(&mut self, cx: &mut Context<Self>) {
+        let Some(account_id) = self.budget_account.clone() else {
+            return;
+        };
+        let value = |input: &Entity<InputState>| input.read(cx).value().trim().to_string();
+        let monthly_budget = match value(&self.budget_amount_input).parse::<f64>() {
+            Ok(amount) if amount > 0.0 => amount,
+            _ => {
+                self.budget_error =
+                    Some("The budget must be a number above zero, e.g. 500".to_string());
+                cx.notify();
+                return;
+            }
+        };
+        let alert_threshold = match value(&self.budget_threshold_input).parse::<f64>() {
+            Ok(percent) if percent > 0.0 => percent,
+            _ => {
+                self.budget_error =
+                    Some("The alert threshold must be a percent above zero, e.g. 80".to_string());
+                cx.notify();
+                return;
+            }
+        };
+
+        self.saving_budget = true;
+        self.budget_error = None;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let result = smol::unblock(move || {
+                data::save_budget(&account_id, monthly_budget, alert_threshold)
+                    .map_err(|e| e.to_string())
+            })
+            .await;
+            if result.is_ok() {
+                let _ = smol::unblock(data::evaluate_rules).await;
+            }
+
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.saving_budget = false;
+                    if let Err(e) = result {
+                        this.budget_error = Some(format!("Could not save the budget: {e}"));
+                        cx.notify();
+                    } else {
+                        this.load(cx);
+                    }
+                })
+                .ok();
+            });
+        })
+        .detach();
+    }
+
+    /// Remove the selected account's budget. Budget rules watching it stop
+    /// firing: with no budget there is nothing to measure against.
+    fn delete_budget(&mut self, cx: &mut Context<Self>) {
+        let Some(account_id) = self.budget_account.clone() else {
+            return;
+        };
+
+        self.saving_budget = true;
+        self.budget_error = None;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let result =
+                smol::unblock(move || data::delete_budget(&account_id).map_err(|e| e.to_string()))
+                    .await;
+
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.saving_budget = false;
+                    if let Err(e) = result {
+                        this.budget_error = Some(format!("Could not remove the budget: {e}"));
+                        cx.notify();
+                    } else {
+                        this.load(cx);
                     }
                 })
                 .ok();
@@ -489,6 +688,126 @@ impl RulesView {
             )
     }
 
+    /// The "Monthly budgets" card: per-account budget editor on top,
+    /// consumption lines for every account that has a budget below.
+    fn render_budgets(&self, cx: &Context<Self>) -> impl IntoElement {
+        let account_selector =
+            div()
+                .h_flex()
+                .gap_2()
+                .flex_wrap()
+                .children(self.accounts.iter().map(|(id, name)| {
+                    let id = id.clone();
+                    let selected = self.budget_account.as_deref() == Some(id.as_str());
+                    Button::new(SharedString::from(format!("budget-account-{id}")))
+                        .label(name.clone())
+                        .small()
+                        .when(selected, |button| button.custom(theme::accent_variant(cx)))
+                        .when(!selected, |button| {
+                            button.custom(theme::outline_variant(cx)).card_outline(cx)
+                        })
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.select_budget_account(id.clone(), window, cx);
+                        }))
+                }));
+
+        let has_budget = self
+            .budget_account
+            .as_ref()
+            .is_some_and(|id| self.budgets.iter().any(|status| &status.account_id == id));
+
+        let editor = div()
+            .h_flex()
+            .gap_4()
+            .flex_wrap()
+            .items_end()
+            .child(
+                div()
+                    .w_40()
+                    .v_flex()
+                    .gap_1()
+                    .child(div().text_sm().child("Monthly budget"))
+                    .child(Input::new(&self.budget_amount_input)),
+            )
+            .child(
+                div()
+                    .w_40()
+                    .v_flex()
+                    .gap_1()
+                    .child(div().text_sm().child("Alert at (% of budget)"))
+                    .child(Input::new(&self.budget_threshold_input)),
+            )
+            .child(
+                Button::new("save-budget")
+                    .label("Save budget")
+                    .primary()
+                    .small()
+                    .disabled(self.saving_budget || self.budget_account.is_none())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.save_budget(cx);
+                    })),
+            )
+            .when(has_budget, |el| {
+                el.child(
+                    Button::new("delete-budget")
+                        .label("Remove")
+                        .ghost()
+                        .danger()
+                        .small()
+                        .disabled(self.saving_budget)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.delete_budget(cx);
+                        })),
+                )
+            });
+
+        theme::card(cx)
+            .w_full()
+            .p_5()
+            .v_flex()
+            .gap_3()
+            .child(
+                div()
+                    .text_base()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme::text_primary(cx))
+                    .child("Monthly budgets"),
+            )
+            .child(div().text_sm().text_color(theme::text_muted(cx)).child(
+                "What an account may cost in a month. Budget rules measure the \
+                         month-to-date cost or the month-end projection against it.",
+            ))
+            .when(self.accounts.is_empty(), |el| {
+                el.child(theme::caption(
+                    cx,
+                    "Add an account on the Accounts page first.",
+                ))
+            })
+            .when(!self.accounts.is_empty(), |el| {
+                el.child(account_selector).child(editor)
+            })
+            .children(self.budgets.iter().map(|status| {
+                let line = format!(
+                    "{} — {} of {} used ({:.0}%)",
+                    status.account_name,
+                    fmt::amount(status.current_cost, &status.currency),
+                    fmt::amount(status.monthly_budget, &status.currency),
+                    status.percentage_used,
+                );
+                div()
+                    .text_sm()
+                    .text_color(if status.alert_triggered {
+                        theme::danger(cx)
+                    } else {
+                        theme::text_muted(cx)
+                    })
+                    .child(line)
+            }))
+            .when_some(self.budget_error.clone(), |el, error| {
+                el.child(div().text_sm().text_color(theme::danger(cx)).child(error))
+            })
+    }
+
     fn render_kind_selector(&self, cx: &Context<Self>) -> impl IntoElement {
         div()
             .h_flex()
@@ -544,6 +863,116 @@ impl RulesView {
                     .child(div().text_sm().child("Floor (account's currency)"))
                     .child(Input::new(&self.floor_input)),
             ),
+            alerts::RULE_BUDGET => {
+                let account_picker =
+                    div()
+                        .v_flex()
+                        .gap_1()
+                        .child(div().text_sm().child("Account"))
+                        .when(self.accounts.is_empty(), |el| {
+                            el.child(theme::caption(cx, "No accounts yet — add one first."))
+                        })
+                        .child(div().h_flex().gap_2().flex_wrap().children(
+                            self.accounts.iter().map(|(id, name)| {
+                                let id = id.clone();
+                                let selected = self.rule_account.as_deref() == Some(id.as_str());
+                                Button::new(SharedString::from(format!("rule-account-{id}")))
+                                    .label(name.clone())
+                                    .small()
+                                    .when(selected, |button| {
+                                        button.custom(theme::accent_variant(cx))
+                                    })
+                                    .when(!selected, |button| {
+                                        button.custom(theme::outline_variant(cx)).card_outline(cx)
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.rule_account = Some(id.clone());
+                                        cx.notify();
+                                    }))
+                            }),
+                        ));
+
+                let based_picker = div()
+                    .flex_1()
+                    .v_flex()
+                    .gap_1()
+                    .child(div().text_sm().child("Based on"))
+                    .child(div().h_flex().gap_2().children(BASED_OPTIONS.iter().map(
+                        |(value, label)| {
+                            let value = *value;
+                            let selected = self.rule_based == value;
+                            Button::new(SharedString::from(format!("rule-based-{value}")))
+                                .label(*label)
+                                .small()
+                                .when(selected, |button| button.custom(theme::accent_variant(cx)))
+                                .when(!selected, |button| {
+                                    button.custom(theme::outline_variant(cx)).card_outline(cx)
+                                })
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.rule_based = value;
+                                    cx.notify();
+                                }))
+                        },
+                    )));
+
+                let threshold_type_picker = div()
+                    .flex_1()
+                    .v_flex()
+                    .gap_1()
+                    .child(div().text_sm().child("Threshold type"))
+                    .child(
+                        div()
+                            .h_flex()
+                            .gap_2()
+                            .children(THRESHOLD_TYPE_OPTIONS.iter().map(|(value, label)| {
+                                let value = *value;
+                                let selected = self.rule_threshold_type == value;
+                                Button::new(SharedString::from(format!(
+                                    "rule-threshold-type-{value}"
+                                )))
+                                .label(*label)
+                                .small()
+                                .when(selected, |button| button.custom(theme::accent_variant(cx)))
+                                .when(!selected, |button| {
+                                    button.custom(theme::outline_variant(cx)).card_outline(cx)
+                                })
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        this.rule_threshold_type = value;
+                                        cx.notify();
+                                    },
+                                ))
+                            })),
+                    );
+
+                div()
+                    .v_flex()
+                    .gap_4()
+                    .child(account_picker)
+                    .child(
+                        div()
+                            .h_flex()
+                            .gap_4()
+                            .child(based_picker)
+                            .child(threshold_type_picker),
+                    )
+                    .child(
+                        div().h_flex().child(
+                            div()
+                                .flex_1()
+                                .v_flex()
+                                .gap_1()
+                                .child(div().text_sm().child(
+                                    if self.rule_threshold_type == "absolute" {
+                                        "Amount (reporting currency)"
+                                    } else {
+                                        "Percent of budget (%)"
+                                    },
+                                ))
+                                .child(Input::new(&self.threshold_input)),
+                        ),
+                    )
+            }
             _ => div().h_flex().child(
                 div()
                     .flex_1()
@@ -869,6 +1298,7 @@ impl Render for RulesView {
                         ),
                     )
                 })
+                .child(self.render_budgets(cx))
                 .children(rules.iter().map(|rule| self.render_rule(rule, cx)))
                 .into_any_element()
         } else if let Some(error) = &self.error {

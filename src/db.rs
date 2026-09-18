@@ -714,7 +714,6 @@ pub fn delete_account(account_id: &str) -> Result<()> {
 // ==================== Budget Functions ====================
 
 /// Save or update budget for an account
-#[allow(dead_code)] // TODO(v0.2.0): remove once the budget UI calls this
 pub fn save_budget(budget: &BudgetInfo) -> Result<()> {
     let db = get_connection()?;
     let conn = db.as_ref().unwrap();
@@ -740,7 +739,6 @@ pub fn save_budget(budget: &BudgetInfo) -> Result<()> {
 }
 
 /// Get budget for an account
-#[allow(dead_code)] // TODO(v0.2.0): remove once the budget UI calls this
 pub fn get_budget(account_id: &str) -> Result<Option<BudgetInfo>> {
     with_connection(|conn| get_budget_of(conn, account_id))
 }
@@ -780,7 +778,6 @@ pub(crate) fn get_budget_of(conn: &Connection, account_id: &str) -> Result<Optio
 }
 
 /// Get all budgets
-#[allow(dead_code)] // TODO(v0.2.0): remove once the budget UI calls this
 pub fn get_all_budgets() -> Result<Vec<BudgetInfo>> {
     let db = get_connection()?;
     let conn = db.as_ref().unwrap();
@@ -817,7 +814,6 @@ pub fn get_all_budgets() -> Result<Vec<BudgetInfo>> {
 }
 
 /// Delete budget for an account
-#[allow(dead_code)] // TODO(v0.2.0): remove once the budget UI calls this
 pub fn delete_budget(account_id: &str) -> Result<()> {
     let db = get_connection()?;
     let conn = db.as_ref().unwrap();
@@ -832,7 +828,6 @@ pub fn delete_budget(account_id: &str) -> Result<()> {
 }
 
 /// Get budget status (compares budget with current costs)
-#[allow(dead_code)] // TODO(v0.2.0): remove once the budget UI calls this
 pub fn get_budget_status(account_id: &str) -> Result<Option<BudgetStatus>> {
     // Get budget
     let budget = match get_budget(account_id)? {
@@ -847,10 +842,9 @@ pub fn get_budget_status(account_id: &str) -> Result<Option<BudgetStatus>> {
         .find(|a| a.id == account_id)
         .ok_or_else(|| anyhow::anyhow!("Account not found"))?;
 
-    // What the ledger says has been charged this month. It is in the
-    // reporting currency, while a budget carries a currency of its own;
-    // reconciling the two belongs with the budget alerts in P2, which is
-    // also where this function finally gets a caller.
+    // What the ledger says has been charged this month, in the reporting
+    // currency. Budgets are recorded in that same currency (the Rules page
+    // writes them so), which is what makes the comparison meaningful.
     let period = BillingPeriod::containing(Utc::now());
     let current_cost = query::period_total(&PeriodKey::new(
         account.source_id.as_str().to_string(),
@@ -866,7 +860,11 @@ pub fn get_budget_status(account_id: &str) -> Result<Option<BudgetStatus>> {
     };
 
     let remaining = budget.monthly_budget - current_cost;
-    let alert_triggered = percentage_used >= budget.alert_threshold;
+    // Mirrors the budget alert rules (crate::alerts, kind "budget"): a live
+    // event means an evaluated rule fired for this account. The threshold
+    // check keeps the badge honest before the first evaluation runs.
+    let alert_triggered =
+        has_live_budget_alert(account_id)? || percentage_used >= budget.alert_threshold;
 
     Ok(Some(BudgetStatus {
         account_id: account_id.to_string(),
@@ -880,8 +878,21 @@ pub fn get_budget_status(account_id: &str) -> Result<Option<BudgetStatus>> {
     }))
 }
 
+/// Whether any open or snoozed budget-rule event names this account.
+fn has_live_budget_alert(account_id: &str) -> Result<bool> {
+    with_connection(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT count(*) FROM alert_event e
+             JOIN alert_rule r ON r.id = e.rule_id
+             WHERE r.kind = 'budget' AND e.status IN ('open', 'snoozed')
+               AND e.dedupe_key LIKE 'budget|' || ? || '|%'",
+        )?;
+        let count: i64 = stmt.query_row(params![account_id], |row| row.get(0))?;
+        Ok(count > 0)
+    })
+}
+
 /// Get all budget statuses
-#[allow(dead_code)] // TODO(v0.2.0): remove once the budget UI calls this
 pub fn get_all_budget_statuses() -> Result<Vec<BudgetStatus>> {
     let budgets = get_all_budgets()?;
     let mut statuses = Vec::new();

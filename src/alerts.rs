@@ -13,12 +13,13 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
-use duckdb::Connection;
 use serde_json::json;
 use std::collections::BTreeMap;
 
+use crate::cloud::BudgetInfo;
 use crate::db;
 use crate::ledger::query;
+use crate::store::Connection;
 use crate::ui::data::BUSINESS_LINE_TAG;
 
 /// Rule id of the cost-growth anomaly rule.
@@ -27,6 +28,10 @@ pub const RULE_COST_ANOMALY: &str = "cost-growth-anomaly";
 pub const RULE_BALANCE_FLOOR: &str = "balance-floor";
 /// Rule id of the untagged-ratio rule.
 pub const RULE_UNTAGGED_RATIO: &str = "untagged-ratio";
+/// Rule kind of the per-account budget rules. There is no seeded budget
+/// rule: each one watches one account's monthly budget, so every budget
+/// rule is a custom one.
+pub const RULE_BUDGET: &str = "budget";
 
 /// The untagged share the seeded `untagged-ratio` rule fires over, as a
 /// fraction (0.15 = 15%). The account-row "Untagged spend" badge reads the
@@ -142,6 +147,7 @@ pub enum AlertKind {
     CostAnomaly,
     Balance,
     UntaggedRatio,
+    Budget,
 }
 
 impl AlertKind {
@@ -150,6 +156,7 @@ impl AlertKind {
             Self::CostAnomaly => "Cost anomaly",
             Self::Balance => "Balance",
             Self::UntaggedRatio => "Untagged spend",
+            Self::Budget => "Budget",
         }
     }
 
@@ -158,6 +165,7 @@ impl AlertKind {
         match rule_kind {
             RULE_COST_ANOMALY => Self::CostAnomaly,
             RULE_BALANCE_FLOOR => Self::Balance,
+            RULE_BUDGET => Self::Budget,
             _ => Self::UntaggedRatio,
         }
     }
@@ -259,12 +267,7 @@ pub fn seed_default_rules() -> Result<()> {
 
 pub(crate) fn seed_default_rules_on(conn: &Connection) -> Result<()> {
     for rule in default_rules() {
-        let exists: i64 = conn.query_row(
-            "SELECT count(*) FROM alert_rule WHERE id = ?",
-            duckdb::params![rule.id],
-            |row| row.get(0),
-        )?;
-        if exists == 0 {
+        if !db::alert_rule_exists(conn, &rule.id)? {
             db::save_alert_rule_to(conn, &rule)?;
         }
     }
@@ -296,6 +299,7 @@ pub(crate) fn evaluate_with(
             RULE_COST_ANOMALY => evaluate_cost_anomalies(app, ledger, rule, now)?,
             RULE_BALANCE_FLOOR => evaluate_balance_floors(app, ledger, rule, now)?,
             RULE_UNTAGGED_RATIO => evaluate_untagged_ratio(app, ledger, rule, now)?,
+            RULE_BUDGET => evaluate_budgets(app, ledger, rule, now)?,
             other => {
                 tracing::warn!("No evaluator for alert rule kind {:?}", other);
                 0
@@ -337,6 +341,13 @@ fn config_u64(rule: &AlertRule, key: &str, default: u64) -> u64 {
         .get(key)
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(default)
+}
+
+fn config_str(rule: &AlertRule, key: &str) -> Option<String> {
+    rule.config
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
 }
 
 // ==================== Cost growth anomaly ====================
@@ -410,6 +421,37 @@ pub fn detect_breach(
     (breach.streak_days() >= consecutive as i64).then_some(breach)
 }
 
+/// [`detect_breach`] with OptScale's import-lag tolerance: bill imports run
+/// about a day behind, so when the check against the latest day with data
+/// finds no breach, re-check as of yesterday before concluding. This is what
+/// keeps a part-imported today — a small amount so far — from breaking a
+/// streak that completed yesterday.
+fn detect_breach_with_lag(
+    daily: &BTreeMap<NaiveDate, f64>,
+    multiplier: f64,
+    consecutive: u64,
+    now: DateTime<Utc>,
+) -> Option<Breach> {
+    detect_breach(daily, multiplier, consecutive).or_else(|| {
+        let yesterday = now.date_naive().pred_opt()?;
+        let lagged: BTreeMap<NaiveDate, f64> = daily
+            .range(..=yesterday)
+            .map(|(day, amount)| (*day, *amount))
+            .collect();
+        detect_breach(&lagged, multiplier, consecutive)
+    })
+}
+
+/// [`query::daily_totals_by_service`] for a single account, read through the
+/// evaluation's own ledger connection rather than the global one.
+fn daily_totals_for_account_of(
+    conn: &Connection,
+    account_id: &str,
+    since: DateTime<Utc>,
+) -> Result<Vec<query::ServiceDailyTotal>> {
+    query::daily_totals_for_account_of(conn, account_id, since)
+}
+
 fn evaluate_cost_anomalies(
     app: &Connection,
     ledger: &Connection,
@@ -419,9 +461,17 @@ fn evaluate_cost_anomalies(
     let multiplier = config_f64(rule, "multiplier", 2.5);
     let consecutive = config_u64(rule, "consecutive_days", 2);
     let currency = reporting_currency();
+    // When the rule names an account, only that account's days are checked.
+    let account_id = config_str(rule, "account_id");
 
-    let rows =
-        query::daily_totals_by_service_of(ledger, now - Duration::days(ANOMALY_WINDOW_DAYS))?;
+    let rows = match account_id.as_deref() {
+        Some(account) => {
+            daily_totals_for_account_of(ledger, account, now - Duration::days(ANOMALY_WINDOW_DAYS))?
+        }
+        None => {
+            query::daily_totals_by_service_of(ledger, now - Duration::days(ANOMALY_WINDOW_DAYS))?
+        }
+    };
 
     // Group days per (provider, service).
     let mut series: BTreeMap<(String, String), BTreeMap<NaiveDate, f64>> = BTreeMap::new();
@@ -437,17 +487,31 @@ fn evaluate_cost_anomalies(
 
     let mut created = 0;
     for ((provider, service), daily) in series {
-        let Some(breach) = detect_breach(&daily, multiplier, consecutive) else {
+        let Some(breach) = detect_breach_with_lag(&daily, multiplier, consecutive, now) else {
             continue;
         };
 
-        let dedupe_key = format!("cost|{}|{}|{}", provider, service, breach.last_day);
+        // A scoped rule's key names its account, so it never collides with
+        // the unscoped rule watching the same (provider, service).
+        let dedupe_key = match account_id.as_deref() {
+            Some(account) => format!("cost|{account}|{provider}|{service}|{}", breach.last_day),
+            None => format!("cost|{}|{}|{}", provider, service, breach.last_day),
+        };
         if !should_fire(app, &dedupe_key, now)? {
             continue;
         }
 
         let month_end = breach.last_amount * f64::from(days_in_month(breach.last_day));
         let ratio = breach.last_amount / breach.baseline;
+        let mut context = json!({
+            "provider": provider.clone(),
+            "service": service.clone(),
+            "multiplier": multiplier,
+            "consecutive_days": consecutive,
+        });
+        if let Some(account) = account_id.as_deref() {
+            context["account_id"] = json!(account);
+        }
         let event = AlertEvent {
             id: uuid::Uuid::new_v4().to_string(),
             rule_id: rule.id.clone(),
@@ -474,12 +538,7 @@ fn evaluate_cost_anomalies(
                     { "label": "First breach", "value": breach.first_day.to_string() },
                     { "label": "Month-end if held", "value": fmt_amount(month_end, &currency) },
                 ],
-                "context": {
-                    "provider": provider.clone(),
-                    "service": service.clone(),
-                    "multiplier": multiplier,
-                    "consecutive_days": consecutive,
-                },
+                "context": context,
             })
             .to_string(),
             stat_json: Some(
@@ -685,6 +744,196 @@ fn evaluate_untagged_ratio(
     Ok(1)
 }
 
+// ==================== Budget ====================
+
+/// Which number a budget rule compares against its threshold: the month's
+/// actual cost so far, or the run-rate projection of where the month ends.
+/// OptScale's pool alerts offer the same two.
+const BASED_COST: &str = "cost";
+const BASED_FORECAST: &str = "forecast";
+
+/// What a budget rule's evaluation found, when the based value crossed the
+/// threshold.
+#[derive(Debug)]
+struct BudgetBreach {
+    account_name: String,
+    budget: BudgetInfo,
+    based: String,
+    /// Month-to-date actual when `based` is cost, month-end projection when
+    /// it is forecast.
+    value: f64,
+    /// The threshold `value` crossed, in the budget's currency.
+    threshold: f64,
+    mtd: f64,
+    forecast: f64,
+}
+
+/// The run-rate forecast of one account for a billing period, read through
+/// the evaluation's own ledger connection and clock.
+fn account_forecast_of(
+    conn: &Connection,
+    provider: &str,
+    account_id: &str,
+    period: crate::cloud::BillingPeriod,
+    now: DateTime<Utc>,
+) -> Result<query::PeriodForecast> {
+    query::account_forecast_of(conn, provider, account_id, period, now)
+}
+
+/// The threshold a budget rule fires at, in the budget's currency: the
+/// config's absolute amount, or a percent of the monthly budget — the
+/// config's percent, else the budget's own `alert_threshold`.
+fn budget_threshold(rule: &AlertRule, budget: &BudgetInfo) -> f64 {
+    let threshold = config_f64(rule, "threshold", f64::NAN);
+    match config_str(rule, "threshold_type").as_deref() {
+        Some("absolute") => threshold,
+        _ => {
+            let percent = if threshold.is_nan() {
+                budget.alert_threshold
+            } else {
+                threshold
+            };
+            budget.monthly_budget * percent / 100.0
+        }
+    }
+}
+
+/// Evaluate one budget rule: whether its account's month-to-date cost (or
+/// run-rate month-end projection) has crossed the rule's threshold. Shared
+/// by firing and by staleness resolution, so the two can never disagree.
+fn budget_breach_of(
+    app: &Connection,
+    ledger: &Connection,
+    rule: &AlertRule,
+    now: DateTime<Utc>,
+) -> Result<Option<BudgetBreach>> {
+    let Some(account_id) = config_str(rule, "account_id") else {
+        return Ok(None);
+    };
+    // No budget recorded for the account: nothing to measure against.
+    let Some(budget) = db::get_budget_of(app, &account_id)? else {
+        return Ok(None);
+    };
+    let accounts = db::get_all_accounts_of(app)?;
+    let Some(account) = accounts.iter().find(|account| account.id == account_id) else {
+        return Ok(None);
+    };
+
+    let period = crate::cloud::BillingPeriod::containing(now);
+    let progress =
+        account_forecast_of(ledger, account.source_id.as_str(), &account.id, period, now)?;
+
+    let based = config_str(rule, "based").unwrap_or_else(|| BASED_COST.to_string());
+    let value = if based == BASED_FORECAST {
+        progress.forecast
+    } else {
+        progress.month_to_date
+    };
+    let threshold = budget_threshold(rule, &budget);
+
+    Ok((value >= threshold).then_some(BudgetBreach {
+        account_name: account.name.clone(),
+        budget,
+        based,
+        value,
+        threshold,
+        mtd: progress.month_to_date,
+        forecast: progress.forecast,
+    }))
+}
+
+fn evaluate_budgets(
+    app: &Connection,
+    ledger: &Connection,
+    rule: &AlertRule,
+    now: DateTime<Utc>,
+) -> Result<usize> {
+    let Some(breach) = budget_breach_of(app, ledger, rule, now)? else {
+        return Ok(0);
+    };
+
+    // A day-grained dedupe key, like the other rules: a condition that holds
+    // fires once a day, not once per refresh. (OptScale's pool alerts
+    // re-check every 12h; everything here works to a day.)
+    let account_id = config_str(rule, "account_id").unwrap_or_default();
+    let dedupe_key = format!(
+        "budget|{}|{}|{}",
+        account_id,
+        breach.based,
+        now.date_naive()
+    );
+    if !should_fire(app, &dedupe_key, now)? {
+        return Ok(0);
+    }
+
+    // Ledger amounts are in the reporting currency; budgets are recorded in
+    // it too (the Rules page writes them so), one currency throughout.
+    let currency = breach.budget.currency.clone();
+    let budget = breach.budget.monthly_budget;
+    let percent_of_budget = if budget > 0.0 {
+        breach.value / budget * 100.0
+    } else {
+        0.0
+    };
+    let based_label = if breach.based == BASED_FORECAST {
+        "month-end projection"
+    } else {
+        "month-to-date cost"
+    };
+    let severity = if breach.value >= budget {
+        Severity::Critical
+    } else {
+        Severity::Warning
+    };
+
+    let event = AlertEvent {
+        id: uuid::Uuid::new_v4().to_string(),
+        rule_id: rule.id.clone(),
+        severity,
+        title: format!("{} over budget threshold", breach.account_name),
+        body: format!(
+            "The {based_label} of {} crossed the {} threshold ({:.0}% of the {} monthly budget). \
+             Month to date stands at {} and the run-rate projection lands near {}.",
+            fmt_amount(breach.value, &currency),
+            fmt_amount(breach.threshold, &currency),
+            percent_of_budget,
+            fmt_amount(budget, &currency),
+            fmt_amount(breach.mtd, &currency),
+            fmt_amount(breach.forecast, &currency),
+        ),
+        fields_json: json!({
+            "fields": [
+                { "label": "Account", "value": breach.account_name.clone() },
+                { "label": "Month-to-date", "value": fmt_amount(breach.mtd, &currency) },
+                { "label": "Month-end forecast", "value": fmt_amount(breach.forecast, &currency) },
+                { "label": "Monthly budget", "value": fmt_amount(budget, &currency) },
+                { "label": "Threshold", "value": fmt_amount(breach.threshold, &currency) },
+            ],
+            "context": {
+                "account_id": account_id,
+                "based": breach.based.clone(),
+                "threshold": breach.threshold,
+            },
+        })
+        .to_string(),
+        stat_json: Some(
+            json!({
+                "label": "Of monthly budget",
+                "value": format!("{:.0}%", percent_of_budget),
+            })
+            .to_string(),
+        ),
+        created_at: now,
+        status: AlertStatus::Open,
+        snoozed_until: None,
+        dedupe_key,
+        resolved_at: None,
+    };
+
+    fire(app, rule, event, now)?;
+    Ok(1)
+}
+
 // ==================== Resolution ====================
 
 /// Auto-resolve open events whose condition no longer holds — the
@@ -741,10 +990,18 @@ pub(crate) fn resolve_stale_with(
                     (Some(provider), Some(service)) => {
                         let multiplier = config_f64(rule, "multiplier", 2.5);
                         let consecutive = config_u64(rule, "consecutive_days", 2);
-                        let rows = query::daily_totals_by_service_of(
-                            ledger,
-                            now - Duration::days(ANOMALY_WINDOW_DAYS),
-                        )?;
+                        // The event's context remembers the account a scoped
+                        // rule fired for; fall back to the rule's own config.
+                        let account_id = context
+                            .get("account_id")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string)
+                            .or_else(|| config_str(rule, "account_id"));
+                        let since = now - Duration::days(ANOMALY_WINDOW_DAYS);
+                        let rows = match account_id.as_deref() {
+                            Some(account) => daily_totals_for_account_of(ledger, account, since)?,
+                            None => query::daily_totals_by_service_of(ledger, since)?,
+                        };
                         let daily: BTreeMap<NaiveDate, f64> = rows
                             .into_iter()
                             .filter(|row| row.provider == provider && row.service == service)
@@ -754,11 +1011,12 @@ pub(crate) fn resolve_stale_with(
                                     .map(|day| (day, row.amount))
                             })
                             .collect();
-                        detect_breach(&daily, multiplier, consecutive).is_none()
+                        detect_breach_with_lag(&daily, multiplier, consecutive, now).is_none()
                     }
                     _ => false,
                 }
             }
+            RULE_BUDGET => budget_breach_of(app, ledger, rule, now)?.is_none(),
             _ => false,
         };
 
@@ -820,11 +1078,27 @@ pub(crate) fn create_rule_on(
     anyhow::ensure!(!name.is_empty(), "The rule needs a name");
     validate_config(kind, &config)?;
 
+    let scope = if kind == RULE_BUDGET {
+        // A budget rule's scope chip names the account it watches — which
+        // must exist, or the rule could never fire.
+        let account_id = config
+            .get("account_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        db::get_all_accounts_of(conn)?
+            .into_iter()
+            .find(|account| account.id == account_id)
+            .ok_or_else(|| anyhow::anyhow!("No account with id {account_id:?}"))?
+            .name
+    } else {
+        default_scope(kind).to_string()
+    };
+
     let rule = AlertRule {
         id: format!("{}{}", CUSTOM_RULE_PREFIX, uuid::Uuid::new_v4()),
         kind: kind.to_string(),
         name: name.to_string(),
-        scope: default_scope(kind).to_string(),
+        scope,
         enabled: true,
         config,
         last_fired_at: None,
@@ -886,6 +1160,12 @@ fn validate_config(kind: &str, config: &serde_json::Value) -> Result<()> {
                     anyhow::anyhow!("Consecutive days must be a whole number, e.g. 2")
                 })?;
             anyhow::ensure!(consecutive >= 1, "Consecutive days must be at least 1");
+            if let Some(account_id) = config.get("account_id").and_then(serde_json::Value::as_str) {
+                anyhow::ensure!(
+                    !account_id.trim().is_empty(),
+                    "The account id must not be empty"
+                );
+            }
         }
         RULE_BALANCE_FLOOR => {
             let floor = config
@@ -903,6 +1183,42 @@ fn validate_config(kind: &str, config: &serde_json::Value) -> Result<()> {
                 (0.0..1.0).contains(&threshold),
                 "The threshold must be between 0 and 1 (0.15 = 15%)"
             );
+        }
+        RULE_BUDGET => {
+            let account_id = config
+                .get("account_id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            anyhow::ensure!(
+                !account_id.trim().is_empty(),
+                "A budget rule needs the account it watches"
+            );
+            if let Some(based) = config.get("based").and_then(serde_json::Value::as_str) {
+                anyhow::ensure!(
+                    based == BASED_COST || based == BASED_FORECAST,
+                    "Based must be \"cost\" or \"forecast\""
+                );
+            }
+            let threshold_type = config
+                .get("threshold_type")
+                .and_then(serde_json::Value::as_str);
+            if let Some(threshold_type) = threshold_type {
+                anyhow::ensure!(
+                    threshold_type == "absolute" || threshold_type == "percent",
+                    "The threshold type must be \"absolute\" or \"percent\""
+                );
+            }
+            match config.get("threshold").and_then(serde_json::Value::as_f64) {
+                Some(threshold) => {
+                    anyhow::ensure!(threshold > 0.0, "The threshold must be above zero")
+                }
+                // A percent rule without a number falls back to the budget's
+                // own alert threshold; an absolute one needs the amount.
+                None => anyhow::ensure!(
+                    threshold_type != Some("absolute"),
+                    "An absolute threshold needs an amount, e.g. 500"
+                ),
+            }
         }
         other => anyhow::bail!("Unknown rule kind {other:?}"),
     }
@@ -964,6 +1280,7 @@ fn view_of(event: &AlertEvent, rules: &[AlertRule]) -> AlertView {
         AlertKind::CostAnomaly => vec!["Trace in attribution", "Snooze 24h", "Dismiss"],
         AlertKind::Balance => vec!["Snooze 24h", "Dismiss"],
         AlertKind::UntaggedRatio => vec!["Write an allocation rule", "Snooze 24h", "Dismiss"],
+        AlertKind::Budget => vec!["Snooze 24h", "Dismiss"],
     }
     .into_iter()
     .map(str::to_string)
@@ -1024,6 +1341,31 @@ fn rule_view_of(rule: &AlertRule) -> RuleView {
             ],
             vec!["Desktop".to_string()],
         ),
+        RULE_BUDGET => {
+            let based = config_str(rule, "based").unwrap_or_else(|| BASED_COST.to_string());
+            let based_label = if based == BASED_FORECAST {
+                "month_end_forecast"
+            } else {
+                "month_to_date_cost"
+            };
+            let threshold_chip = match config_str(rule, "threshold_type").as_deref() {
+                Some("absolute") => format!(
+                    "{based_label} ≥ {}",
+                    fmt_amount(config_f64(rule, "threshold", 0.0), &reporting_currency())
+                ),
+                _ => format!(
+                    "{based_label} ≥ {}% of budget",
+                    trim_float(config_f64(rule, "threshold", 80.0))
+                ),
+            };
+            (
+                "Fires when an account's month-to-date cost — or its run-rate month-end \
+                 projection — crosses a threshold of the account's monthly budget."
+                    .to_string(),
+                vec![threshold_chip, "Daily".to_string()],
+                vec!["Alert centre only".to_string()],
+            )
+        }
         _ => (
             "Raises a warning when the share of spend that reaches no business line grows \
              month over month, so attribution rules keep pace with new workloads."
@@ -1054,10 +1396,10 @@ fn rule_view_of(rule: &AlertRule) -> RuleView {
 // ==================== Formatting ====================
 
 /// The currency amounts are read in, for the messages that quote one.
+/// Canonical home is the data layer; kept here as a thin delegate so the
+/// engine and the pages cannot drift apart.
 fn reporting_currency() -> String {
-    crate::config::load_config()
-        .map(|settings| settings.reporting_currency)
-        .unwrap_or_else(|_| crate::config::DEFAULT_REPORTING_CURRENCY.to_string())
+    crate::ui::data::reporting_currency()
 }
 
 /// `1,234.56` with the currency's usual symbol when it has one.
@@ -1090,15 +1432,11 @@ fn trim_float(value: f64) -> String {
     }
 }
 
+/// Days in the month `date` falls in. The month arithmetic lives on
+/// [`crate::cloud::BillingPeriod`]; this is the date-keyed convenience.
 fn days_in_month(date: NaiveDate) -> u32 {
-    let (year, month) = if date.month() == 12 {
-        (date.year() + 1, 1)
-    } else {
-        (date.year(), date.month() + 1)
-    };
-    let first_of_next =
-        NaiveDate::from_ymd_opt(year, month, 1).expect("the month after a real one");
-    (first_of_next - date.with_day(1).expect("day 1 exists")).num_days() as u32
+    let period = crate::cloud::BillingPeriod::new(date.year(), date.month());
+    (period.end_exclusive() - period.start()).num_days() as u32
 }
 
 #[cfg(test)]
@@ -1139,7 +1477,17 @@ mod tests {
 
     /// Write a whole period's charges (the ledger replaces periods whole).
     fn write_period(ledger: &mut Connection, period: BillingPeriod, charges: &[Charge]) {
-        let key = PeriodKey::new("AWS", "acct-1", period.label());
+        write_period_for(ledger, "acct-1", period, charges);
+    }
+
+    /// [`write_period`] for any account id.
+    fn write_period_for(
+        ledger: &mut Connection,
+        account_id: &str,
+        period: BillingPeriod,
+        charges: &[Charge],
+    ) {
+        let key = PeriodKey::new("AWS", account_id, period.label());
         ledger::write_period(
             ledger,
             &key,
@@ -1147,6 +1495,42 @@ mod tests {
             charges,
             None,
             Channel::Api,
+        )
+        .unwrap();
+    }
+
+    /// Write charges for an account, split by billing period (the ledger
+    /// replaces periods whole).
+    fn write_charges(ledger: &mut Connection, account_id: &str, charges: &[Charge]) {
+        let current = BillingPeriod::containing(Utc::now());
+        for period in [current, current.previous()] {
+            let batch: Vec<Charge> = charges
+                .iter()
+                .filter(|c| BillingPeriod::containing(c.charge_period_start) == period)
+                .cloned()
+                .collect();
+            if !batch.is_empty() {
+                write_period_for(ledger, account_id, period, &batch);
+            }
+        }
+    }
+
+    fn add_aws_account(app: &Connection, id: &str, name: &str) {
+        app.execute(
+            "INSERT INTO cloud_accounts
+             (id, name, source_id, region, created_at, last_synced_at, enabled)
+             VALUES (?, ?, 'AWS', 'us-east-1', '2026-08-01T00:00:00+00:00', NULL, true)",
+            duckdb::params![id, name],
+        )
+        .unwrap();
+    }
+
+    fn set_budget(app: &Connection, account_id: &str, monthly_budget: f64, alert_threshold: f64) {
+        app.execute(
+            "INSERT OR REPLACE INTO budgets
+             (account_id, monthly_budget, currency, alert_threshold, created_at, updated_at)
+             VALUES (?, ?, 'USD', ?, '2026-08-01T00:00:00+00:00', '2026-08-01T00:00:00+00:00')",
+            duckdb::params![account_id, monthly_budget, alert_threshold],
         )
         .unwrap();
     }
@@ -1560,6 +1944,38 @@ mod tests {
         assert!(
             create_rule_on(&app, RULE_UNTAGGED_RATIO, "x", json!({ "threshold": 1.5 })).is_err()
         );
+        // Budget rules.
+        assert!(create_rule_on(&app, RULE_BUDGET, "x", json!({ "based": "cost" })).is_err());
+        assert!(create_rule_on(&app, RULE_BUDGET, "x", json!({ "account_id": "  " })).is_err());
+        assert!(create_rule_on(
+            &app,
+            RULE_BUDGET,
+            "x",
+            json!({ "account_id": "acct-1", "based": "sideways" })
+        )
+        .is_err());
+        assert!(create_rule_on(
+            &app,
+            RULE_BUDGET,
+            "x",
+            json!({ "account_id": "acct-1", "threshold_type": "absolute" })
+        )
+        .is_err());
+        assert!(create_rule_on(
+            &app,
+            RULE_BUDGET,
+            "x",
+            json!({ "account_id": "acct-1", "threshold_type": "percent", "threshold": -5.0 })
+        )
+        .is_err());
+        // A valid config still fails when the account does not exist.
+        assert!(create_rule_on(
+            &app,
+            RULE_BUDGET,
+            "x",
+            json!({ "account_id": "ghost", "based": "cost", "threshold_type": "percent" })
+        )
+        .is_err());
         assert!(create_rule_on(&app, "nonsense", "x", json!({})).is_err());
         assert!(create_rule_on(&app, RULE_BALANCE_FLOOR, "   ", json!({ "floor": 50.0 })).is_err());
 
@@ -1610,5 +2026,306 @@ mod tests {
         assert_eq!(evaluate_with(&app, &ledger, Utc::now()).unwrap(), 1);
         let events = db::get_alert_events_of(&app, &[AlertStatus::Open]).unwrap();
         assert_eq!(events[0].rule_id, view.id);
+    }
+
+    #[test]
+    fn a_budget_rule_fires_on_cost_over_an_absolute_threshold() {
+        let (app, mut ledger) = stores();
+        seed_default_rules_on(&app).unwrap();
+        add_aws_account(&app, "acct-1", "Prod");
+        set_budget(&app, "acct-1", 100.0, 80.0);
+
+        // Pinned mid-month; everything tagged so the other rules stay quiet.
+        let now = Utc.with_ymd_and_hms(2026, 8, 16, 12, 0, 0).unwrap();
+        let period = BillingPeriod::containing(now);
+        let charges = vec![usage(
+            "EC2",
+            120.0,
+            period.start().and_hms_opt(2, 0, 0).unwrap().and_utc(),
+            Some(r#"{"business_line":"etl"}"#),
+        )];
+        write_period(&mut ledger, period, &charges);
+
+        let view = create_rule_on(
+            &app,
+            RULE_BUDGET,
+            "Prod budget",
+            json!({
+                "account_id": "acct-1",
+                "based": "cost",
+                "threshold_type": "absolute",
+                "threshold": 100.0,
+            }),
+        )
+        .unwrap();
+        // The scope chip names the watched account.
+        assert_eq!(view.scope, "Prod");
+
+        assert_eq!(evaluate_with(&app, &ledger, now).unwrap(), 1);
+        let events = db::get_alert_events_of(&app, &[AlertStatus::Open]).unwrap();
+        assert_eq!(events.len(), 1);
+        let event = &events[0];
+        assert_eq!(event.rule_id, view.id);
+        // Over the budget itself, not just the threshold: critical.
+        assert_eq!(event.severity, Severity::Critical);
+        assert!(event.title.contains("Prod"), "{}", event.title);
+        assert!(event.body.contains("month-to-date cost"), "{}", event.body);
+        assert!(event.body.contains("$120.00"), "{}", event.body);
+
+        // Same day, same condition: no second event (the day-grained
+        // debounce every rule here shares).
+        assert_eq!(evaluate_with(&app, &ledger, now).unwrap(), 0);
+        // The next day the still-holding condition fires again.
+        assert_eq!(
+            evaluate_with(&app, &ledger, now + Duration::days(1)).unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_budget_rule_defaults_to_the_budgets_own_alert_threshold() {
+        let (app, mut ledger) = stores();
+        seed_default_rules_on(&app).unwrap();
+        add_aws_account(&app, "acct-1", "Prod");
+        set_budget(&app, "acct-1", 100.0, 80.0);
+
+        let now = Utc.with_ymd_and_hms(2026, 8, 16, 12, 0, 0).unwrap();
+        let period = BillingPeriod::containing(now);
+        let charges = vec![usage(
+            "EC2",
+            85.0,
+            period.start().and_hms_opt(2, 0, 0).unwrap().and_utc(),
+            Some(r#"{"business_line":"etl"}"#),
+        )];
+        write_period(&mut ledger, period, &charges);
+
+        // A percent rule with no number of its own reads the budget's
+        // alert_threshold: 80% of 100 = 80, and 85 crosses it.
+        let view = create_rule_on(
+            &app,
+            RULE_BUDGET,
+            "Prod budget",
+            json!({ "account_id": "acct-1", "based": "cost", "threshold_type": "percent" }),
+        )
+        .unwrap();
+
+        assert_eq!(evaluate_with(&app, &ledger, now).unwrap(), 1);
+        let events = db::get_alert_events_of(&app, &[AlertStatus::Open]).unwrap();
+        let event = &events[0];
+        assert_eq!(event.rule_id, view.id);
+        // Past the threshold but under the budget: a warning.
+        assert_eq!(event.severity, Severity::Warning);
+        assert!(event.body.contains("85% of the $100.00"), "{}", event.body);
+        assert!(
+            event.stat_json.as_ref().unwrap().contains("85%"),
+            "{:?}",
+            event.stat_json
+        );
+    }
+
+    #[test]
+    fn a_forecast_budget_rule_fires_before_the_money_is_spent() {
+        let (app, mut ledger) = stores();
+        seed_default_rules_on(&app).unwrap();
+        add_aws_account(&app, "acct-1", "Prod");
+        set_budget(&app, "acct-1", 1000.0, 80.0);
+
+        // Day 16 of 31, $60 spent so far: a daily rate of $3.75 projects
+        // $116.25 — over 100 on the projection, under it on the actuals.
+        let now = Utc.with_ymd_and_hms(2026, 8, 16, 12, 0, 0).unwrap();
+        let period = BillingPeriod::containing(now);
+        let charges = vec![usage(
+            "EC2",
+            60.0,
+            period.start().and_hms_opt(2, 0, 0).unwrap().and_utc(),
+            Some(r#"{"business_line":"etl"}"#),
+        )];
+        write_period(&mut ledger, period, &charges);
+
+        let forecast_rule = create_rule_on(
+            &app,
+            RULE_BUDGET,
+            "Prod forecast",
+            json!({
+                "account_id": "acct-1",
+                "based": "forecast",
+                "threshold_type": "absolute",
+                "threshold": 100.0,
+            }),
+        )
+        .unwrap();
+        let cost_rule = create_rule_on(
+            &app,
+            RULE_BUDGET,
+            "Prod cost",
+            json!({
+                "account_id": "acct-1",
+                "based": "cost",
+                "threshold_type": "absolute",
+                "threshold": 100.0,
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(evaluate_with(&app, &ledger, now).unwrap(), 1);
+        let events = db::get_alert_events_of(&app, &[AlertStatus::Open]).unwrap();
+        assert_eq!(events.len(), 1);
+        let event = &events[0];
+        assert_eq!(event.rule_id, forecast_rule.id);
+        assert!(
+            event.body.contains("month-end projection"),
+            "{}",
+            event.body
+        );
+        assert!(event.body.contains("$116.25"), "{}", event.body);
+        assert!(event.rule_id != cost_rule.id);
+    }
+
+    #[test]
+    fn raising_the_budget_resolves_the_event() {
+        let (app, mut ledger) = stores();
+        seed_default_rules_on(&app).unwrap();
+        add_aws_account(&app, "acct-1", "Prod");
+        set_budget(&app, "acct-1", 100.0, 80.0);
+
+        let now = Utc.with_ymd_and_hms(2026, 8, 16, 12, 0, 0).unwrap();
+        let period = BillingPeriod::containing(now);
+        let charges = vec![usage(
+            "EC2",
+            90.0,
+            period.start().and_hms_opt(2, 0, 0).unwrap().and_utc(),
+            Some(r#"{"business_line":"etl"}"#),
+        )];
+        write_period(&mut ledger, period, &charges);
+
+        create_rule_on(
+            &app,
+            RULE_BUDGET,
+            "Prod budget",
+            json!({ "account_id": "acct-1", "based": "cost", "threshold_type": "percent" }),
+        )
+        .unwrap();
+        assert_eq!(evaluate_with(&app, &ledger, now).unwrap(), 1);
+
+        // 90 of a 200 budget is 45% — under the 80% line now.
+        set_budget(&app, "acct-1", 200.0, 80.0);
+        assert_eq!(resolve_stale_with(&app, &ledger, now).unwrap(), 1);
+        assert!(db::get_alert_events_of(&app, &[AlertStatus::Open])
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn a_budget_rule_without_a_budget_never_fires() {
+        let (app, mut ledger) = stores();
+        seed_default_rules_on(&app).unwrap();
+        add_aws_account(&app, "acct-1", "Prod");
+
+        let now = Utc.with_ymd_and_hms(2026, 8, 16, 12, 0, 0).unwrap();
+        let period = BillingPeriod::containing(now);
+        let charges = vec![usage(
+            "EC2",
+            500.0,
+            period.start().and_hms_opt(2, 0, 0).unwrap().and_utc(),
+            Some(r#"{"business_line":"etl"}"#),
+        )];
+        write_period(&mut ledger, period, &charges);
+
+        create_rule_on(
+            &app,
+            RULE_BUDGET,
+            "Prod budget",
+            json!({
+                "account_id": "acct-1",
+                "based": "cost",
+                "threshold_type": "absolute",
+                "threshold": 100.0,
+            }),
+        )
+        .unwrap();
+
+        // No budgets row for the account: nothing to measure against.
+        assert_eq!(evaluate_with(&app, &ledger, now).unwrap(), 0);
+    }
+
+    #[test]
+    fn a_part_imported_today_does_not_hide_yesterdays_breach() {
+        let (app, mut ledger) = stores();
+        seed_default_rules_on(&app).unwrap();
+
+        // Flat 10/day, then 40 on the two days before today — a two-day
+        // breach that completed yesterday. Today holds only a part-imported
+        // 2.0, which would break the streak if it were the anchor.
+        let tag = Some(r#"{"business_line":"etl"}"#);
+        let mut charges = Vec::new();
+        for back in (3..=13).rev() {
+            charges.push(usage("Claude", 10.0, day(back), tag));
+        }
+        charges.push(usage("Claude", 40.0, day(2), tag));
+        charges.push(usage("Claude", 40.0, day(1), tag));
+        charges.push(usage("Claude", 2.0, day(0), tag));
+        write_charges(&mut ledger, "acct-1", &charges);
+
+        assert_eq!(evaluate_with(&app, &ledger, Utc::now()).unwrap(), 1);
+        let events = db::get_alert_events_of(&app, &[AlertStatus::Open]).unwrap();
+        let event = &events[0];
+        assert_eq!(event.rule_id, RULE_COST_ANOMALY);
+        assert!(event.title.contains("Claude"), "{}", event.title);
+        // The breach is reported against yesterday, the last complete day.
+        let yesterday = day(1).date_naive().to_string();
+        assert!(
+            event.stat_json.as_ref().unwrap().contains(&yesterday),
+            "{:?}",
+            event.stat_json
+        );
+
+        // And it debounces like any other firing.
+        assert_eq!(evaluate_with(&app, &ledger, Utc::now()).unwrap(), 0);
+    }
+
+    #[test]
+    fn an_account_scoped_anomaly_rule_ignores_other_accounts() {
+        let (app, mut ledger) = stores();
+        seed_default_rules_on(&app).unwrap();
+        // The seeded unscoped rule would fire for both accounts; only the
+        // scoped one is under test.
+        db::set_alert_rule_enabled_to(&app, RULE_COST_ANOMALY, false).unwrap();
+
+        // The same two-day breach on two accounts of one provider.
+        let tag = Some(r#"{"business_line":"etl"}"#);
+        let mut charges = Vec::new();
+        for back in (2..=13).rev() {
+            charges.push(usage("Claude", 10.0, day(back), tag));
+        }
+        charges.push(usage("Claude", 40.0, day(1), tag));
+        charges.push(usage("Claude", 40.0, day(0), tag));
+        write_charges(&mut ledger, "acct-1", &charges);
+        write_charges(&mut ledger, "acct-2", &charges);
+
+        let view = create_rule_on(
+            &app,
+            RULE_COST_ANOMALY,
+            "Prod anomaly",
+            json!({ "multiplier": 2.5, "consecutive_days": 2, "account_id": "acct-1" }),
+        )
+        .unwrap();
+
+        assert_eq!(evaluate_with(&app, &ledger, Utc::now()).unwrap(), 1);
+        let events = db::get_alert_events_of(&app, &[AlertStatus::Open]).unwrap();
+        assert_eq!(events.len(), 1);
+        let event = &events[0];
+        assert_eq!(event.rule_id, view.id);
+        assert!(
+            event.dedupe_key.starts_with("cost|acct-1|"),
+            "{}",
+            event.dedupe_key
+        );
+        assert!(
+            event.fields_json.contains("acct-1"),
+            "{}",
+            event.fields_json
+        );
+
+        assert_eq!(evaluate_with(&app, &ledger, Utc::now()).unwrap(), 0);
     }
 }
