@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **AWS Data Exports (FOCUS 1.2) straight from S3.** An AWS account can
+  carry the `s3://bucket/prefix` URI of its CUR 2.0 "FOCUS 1.2 with AWS
+  columns" export; refresh then reads the Parquet objects from the bucket
+  — resource-level rows with tags, and no per-request Cost Explorer cost.
+  Accounts without a URI keep the Cost Explorer channel. A period the
+  export has not delivered yet is skipped, never written as an empty
+  month, and the downloaded objects live in the raw store so
+  normalization replays offline.
+- Account form: optional "Data export S3 URI" field for AWS accounts.
+- **CloudBridge in a browser.** The same crate now builds for wasm32 as a
+  demo: the pages, the view models and the alerting rules are the desktop's
+  own code, with an in-memory ledger seeded with the demo bill underneath
+  them in place of DuckDB, the provider APIs and the OS keyring.
+  `scripts/build-web.sh` builds it, and the docs site publishes it at
+  `/demo/` — linked from the navigation, the hero, the download section, the
+  FAQ and the install guide. Everything the browser build needs is under
+  `web/`: the static shell in `web/site/`, the `smol::unblock` bridge in
+  `web/smol-bridge/`
+
+### Changed
+- The statistics every backend has to agree on — the run-rate forecast, its
+  confidence bands, the period-over-period comparison, the cost-change
+  decomposition, the trailing daily average, balance burn and the
+  data-quality findings — are one shared `analytics` module rather than a
+  copy per backend. The desktop groups its charges in SQL and the browser
+  folds over vectors, and from there both compute the same arithmetic from
+  the same code, tested once
+- The demo bill is likewise one `demo_data` module, so the two seeders write
+  the same rows rather than two lists that have to be kept equal by hand
+- A cost-change decomposition now ranks buckets of equal swing by name
+  instead of by hash order, so the same ledger reads the same way twice
+- CI builds the web demo as a required job: `src/ui/`, `app.rs` and
+  `alerts.rs` are compiled for both targets, and a change that drops one of
+  them fails the build rather than waiting to be noticed
+- The web build's nightly toolchain and its icon catalogue are pinned to
+  exact versions — the nightly by date (`WEB_TOOLCHAIN` in
+  `scripts/build-web.sh`), the icons to what `Cargo.lock` resolved
+
 ## [0.3.1] - 2026-09-12
 
 A consistency pass over the whole interface: one shared set of cards,
