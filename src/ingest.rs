@@ -109,6 +109,8 @@ pub fn refresh_account(account: &CloudAccount, force: bool) -> Result<RefreshOut
     };
 
     let mut outcome = RefreshOutcome::default();
+    let mut attempted = 0;
+    let mut not_ready = 0;
     for period in periods {
         if !force && is_fresh(account, &period, now)? {
             tracing::debug!(
@@ -120,8 +122,29 @@ pub fn refresh_account(account: &CloudAccount, force: bool) -> Result<RefreshOut
             continue;
         }
 
-        let ingested = ingest_period(account, &period)?;
-        outcome.ingested.push((period.label(), ingested));
+        attempted += 1;
+        match ingest_period(account, &period) {
+            Ok(ingested) => outcome.ingested.push((period.label(), ingested)),
+            // An export that has not delivered the period yet is a skip,
+            // not a failure — and must never write an empty batch over a
+            // month's rows. It is a failure when every period asked for is
+            // missing: then the URI is probably wrong, and staying silent
+            // would look like a successful no-op.
+            Err(e) if crate::cloud::aws_focus::is_export_not_ready(&e) => {
+                not_ready += 1;
+                tracing::info!("{}", e);
+                outcome.skipped_fresh.push(period.label());
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    if attempted > 0 && not_ready == attempted {
+        return Err(anyhow!(
+            "{} has no export data for any of the period(s) asked for — \
+             check the export S3 URI, or wait for the export's first delivery",
+            account.name
+        ));
     }
 
     if !outcome.ingested.is_empty() {
@@ -156,7 +179,7 @@ pub fn ingest_period(account: &CloudAccount, period: &BillingPeriod) -> Result<I
     })?;
 
     let source = descriptor.client(crate::db::account_context(account, descriptor)?)?;
-    let parts = source.fetch(period)?;
+    let fetched = source.fetch(period)?;
 
     let batch = RawBatch {
         provider: descriptor.id.to_string(),
@@ -164,7 +187,8 @@ pub fn ingest_period(account: &CloudAccount, period: &BillingPeriod) -> Result<I
         period: *period,
         batch_id: ledger::new_batch_id(),
         fetched_at: Utc::now(),
-        parts,
+        parts: fetched.parts,
+        payload_files: fetched.payload_files,
     };
 
     let raw_path = persist(&batch)?;
@@ -194,6 +218,7 @@ fn normalize_with(descriptor: &SourceDescriptor, batch: &RawBatch) -> Result<Nor
             access_key_id: String::new(),
             secret_access_key: String::new(),
             region: None,
+            export_uri: None,
         });
         source.normalize(batch)
     } else if let Some(format) = descriptor.bill_file {
@@ -383,6 +408,7 @@ pub fn import_bill_file(account: &CloudAccount, path: &Path) -> Result<ImportOut
             batch_id: ledger::new_batch_id(),
             fetched_at: Utc::now(),
             parts: vec![RawPart::new(format.part, request.clone(), text.clone())],
+            payload_files: Vec::new(),
         };
 
         let raw_path = persist(&batch)?;

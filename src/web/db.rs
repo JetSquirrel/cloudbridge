@@ -128,6 +128,7 @@ pub fn account_context(
         access_key_id,
         secret_access_key,
         region: descriptor.region_or_default(account.region.clone()),
+        export_uri: account.export_uri.clone(),
     })
 }
 

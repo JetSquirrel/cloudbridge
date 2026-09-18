@@ -2,17 +2,19 @@
 
 pub mod aliyun;
 pub mod aws;
+pub mod aws_focus;
 pub mod billfile;
 pub mod deduction;
 pub mod deepseek;
 pub mod raw;
 pub mod registry;
+pub mod s3;
 
 use anyhow::Result;
 
 use crate::ledger::{BalanceSnapshot, Charge};
-pub use raw::{RawBatch, RawPart};
-pub use registry::{SourceDescriptor, SourceId};
+pub use raw::{PayloadFile, RawBatch, RawPart};
+pub use registry::SourceDescriptor;
 
 /// The credentials a [`BillingSource`] is built from.
 ///
@@ -24,6 +26,10 @@ pub struct SourceContext {
     pub access_key_id: String,
     pub secret_access_key: String,
     pub region: Option<String>,
+    /// Where the provider's own billing export lands, if the account is
+    /// backed by one (`s3://bucket/prefix` for AWS Data Exports). When set,
+    /// the export is the bill and the fetch reads it instead of an API.
+    pub export_uri: Option<String>,
 }
 
 pub use crate::model::{
@@ -57,6 +63,24 @@ pub struct Normalized {
     pub balances: Vec<BalanceSnapshot>,
 }
 
+/// What one fetch returned: text responses as [`RawPart`]s, and binary
+/// objects (a Parquet billing export is not UTF-8) as [`PayloadFile`]s.
+#[derive(Debug, Default)]
+pub struct Fetched {
+    pub parts: Vec<RawPart>,
+    pub payload_files: Vec<PayloadFile>,
+}
+
+impl Fetched {
+    /// A fetch of text responses only, which is every API source today.
+    pub fn parts_only(parts: Vec<RawPart>) -> Self {
+        Self {
+            parts,
+            payload_files: Vec::new(),
+        }
+    }
+}
+
 /// A source of billing data (sync, using ureq).
 ///
 /// [`Self::fetch`] and [`Self::normalize`] are deliberately split. `fetch`
@@ -70,7 +94,7 @@ pub trait BillingSource: Send + Sync {
 
     /// Retrieve everything the provider reports for one billing period,
     /// unchanged. The only method here that talks to the network.
-    fn fetch(&self, period: &BillingPeriod) -> Result<Vec<RawPart>>;
+    fn fetch(&self, period: &BillingPeriod) -> Result<Fetched>;
 
     /// Turn a fetched batch into ledger rows. Pure: no clock, no network,
     /// no database — everything it needs is in the batch.

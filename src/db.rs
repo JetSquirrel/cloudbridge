@@ -53,7 +53,17 @@ lazy_static::lazy_static! {
 /// v6 adds `resolved_at` to `alert_event`: when the event reached its
 /// final state. "Resolved this month" keys on it — an alert resolved in
 /// month N but created earlier still belongs to month N's list.
-const APP_SCHEMA_VERSION: i32 = 6;
+///
+/// v7 adds `export_uri` to `cloud_accounts`: where the provider's own
+/// billing export lands (`s3://bucket/prefix` for AWS Data Exports). An
+/// account with one is read from the export instead of a billing API.
+///
+/// v8 adds `dismissed_quality_issues`, the user's data-quality dismissal
+/// record (Wealthfolio's health_issue_dismissals pattern): a dismissed
+/// finding stays hidden for its billing period across sessions and
+/// refreshes. New table only; `create_tables` runs on every start, so an
+/// existing database gains it without a rebuild.
+const APP_SCHEMA_VERSION: i32 = 8;
 
 /// Initialize database
 pub fn init_database() -> Result<()> {
@@ -102,6 +112,9 @@ pub(crate) fn prepare_schema(conn: &Connection) -> Result<()> {
     if version < 6 {
         migrate_to_v6(conn)?;
     }
+    if version < 7 {
+        migrate_to_v7(conn)?;
+    }
 
     conn.execute(
         "INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (?, ?)",
@@ -139,12 +152,13 @@ const TABLES: &[(&str, &str, &str)] = &[
             created_at     VARCHAR NOT NULL,
             last_synced_at VARCHAR,
             enabled        BOOLEAN NOT NULL DEFAULT true,
-            -- Last, because v4 adds it with ALTER TABLE to a database that
-            -- already exists, and a fresh install should have the same
+            -- Last, because v4/v7 add columns with ALTER TABLE to a database
+            -- that already exists, and a fresh install should have the same
             -- column order as an upgraded one.
-            access_key_hint VARCHAR
+            access_key_hint VARCHAR,
+            export_uri     VARCHAR
         )"#,
-        "id, name, source_id, region, created_at, last_synced_at, enabled, access_key_hint",
+        "id, name, source_id, region, created_at, last_synced_at, enabled, access_key_hint, export_uri",
     ),
     (
         "budgets",
@@ -292,6 +306,23 @@ fn migrate_to_v6(conn: &Connection) -> Result<()> {
 
     tracing::info!("Adding resolved_at to alert_event");
     conn.execute_batch("ALTER TABLE alert_event ADD COLUMN resolved_at VARCHAR")?;
+
+    Ok(())
+}
+
+/// Add the column that points an account at its provider-side billing
+/// export, e.g. the `s3://bucket/prefix` of an AWS Data Exports export.
+///
+/// Left NULL for accounts already stored: they keep reading from their
+/// billing API until an export URI is entered.
+fn migrate_to_v7(conn: &Connection) -> Result<()> {
+    let columns = column_names(conn, "cloud_accounts")?;
+    if columns.is_empty() || columns.iter().any(|c| c == "export_uri") {
+        return Ok(());
+    }
+
+    tracing::info!("Adding export_uri to cloud_accounts");
+    conn.execute_batch("ALTER TABLE cloud_accounts ADD COLUMN export_uri VARCHAR")?;
 
     Ok(())
 }
@@ -493,8 +524,8 @@ pub fn save_account(
     conn.execute(
         r#"
         INSERT OR REPLACE INTO cloud_accounts
-        (id, name, source_id, region, created_at, last_synced_at, enabled, access_key_hint)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (id, name, source_id, region, created_at, last_synced_at, enabled, access_key_hint, export_uri)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
         params![
             account.id,
@@ -505,6 +536,7 @@ pub fn save_account(
             account.last_synced_at.map(|dt| dt.to_rfc3339()),
             account.enabled,
             hint,
+            account.export_uri,
         ],
     )?;
 
@@ -545,6 +577,7 @@ pub fn account_context(
         access_key_id,
         secret_access_key,
         region: descriptor.region_or_default(account.region.clone()),
+        export_uri: account.export_uri.clone(),
     })
 }
 
@@ -569,7 +602,7 @@ pub fn get_all_accounts() -> Result<Vec<CloudAccount>> {
 
 pub(crate) fn get_all_accounts_of(conn: &Connection) -> Result<Vec<CloudAccount>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, source_id, region, created_at, last_synced_at, enabled, access_key_hint
+        "SELECT id, name, source_id, region, created_at, last_synced_at, enabled, access_key_hint, export_uri
          FROM cloud_accounts",
     )?;
 
@@ -584,13 +617,23 @@ pub(crate) fn get_all_accounts_of(conn: &Connection) -> Result<Vec<CloudAccount>
                 row.get::<_, Option<String>>(5)?,
                 row.get::<_, bool>(6)?,
                 row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<String>>(8)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut result = Vec::new();
-    for (id, name, source_id, region, created_at_str, last_synced_str, enabled, access_key_hint) in
-        rows
+    for (
+        id,
+        name,
+        source_id,
+        region,
+        created_at_str,
+        last_synced_str,
+        enabled,
+        access_key_hint,
+        export_uri,
+    ) in rows
     {
         // An id with no descriptor comes from a build that knew a source this
         // one does not. Skip the row rather than guessing: silently reading it
@@ -626,6 +669,7 @@ pub(crate) fn get_all_accounts_of(conn: &Connection) -> Result<Vec<CloudAccount>
             last_synced_at,
             enabled,
             access_key_hint,
+            export_uri,
         });
     }
 
@@ -1187,7 +1231,8 @@ mod tests {
                 "created_at",
                 "last_synced_at",
                 "enabled",
-                "access_key_hint"
+                "access_key_hint",
+                "export_uri"
             ]
         );
         assert!(!table_exists(&conn, "cost_data"));
@@ -1336,7 +1381,7 @@ mod tests {
         prepare_schema(&conn).unwrap();
 
         let columns = column_names(&conn, "cloud_accounts").unwrap();
-        assert_eq!(columns.last().unwrap(), "access_key_hint");
+        assert!(columns.iter().any(|c| c == "access_key_hint"));
         let (name, hint): (String, Option<String>) = conn
             .query_row(
                 "SELECT name, access_key_hint FROM cloud_accounts WHERE id = 'acct-1'",
@@ -1346,6 +1391,31 @@ mod tests {
             .unwrap();
         assert_eq!(name, "Prod");
         assert_eq!(hint, None);
+
+        // And a fresh install ends up with the same shape.
+        let fresh = Connection::open_in_memory().unwrap();
+        prepare_schema(&fresh).unwrap();
+        assert_eq!(column_names(&fresh, "cloud_accounts").unwrap(), columns);
+    }
+
+    /// The column arrives last, NULL for accounts already stored: they keep
+    /// reading from their billing API until an export URI is entered.
+    #[test]
+    fn the_export_uri_column_is_added_to_an_existing_database() {
+        let conn = legacy_database();
+
+        prepare_schema(&conn).unwrap();
+
+        let columns = column_names(&conn, "cloud_accounts").unwrap();
+        assert_eq!(columns.last().unwrap(), "export_uri");
+        let export_uri: Option<String> = conn
+            .query_row(
+                "SELECT export_uri FROM cloud_accounts WHERE id = 'acct-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(export_uri, None);
 
         // And a fresh install ends up with the same shape.
         let fresh = Connection::open_in_memory().unwrap();

@@ -104,6 +104,7 @@ pub fn account(provider: &str, account_id: &str, name: &str, now: DateTime<Utc>)
         // `save_account` derives the hint from the key it is given; with no
         // key there is none to show.
         access_key_hint: None,
+        export_uri: None,
     }
 }
 

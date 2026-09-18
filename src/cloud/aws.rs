@@ -7,25 +7,119 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use super::raw::RawPart;
-use super::{BillingPeriod, BillingSource, Normalized, RawBatch};
+use super::s3::{S3Client, S3Uri};
+use super::{aws_focus, BillingPeriod, BillingSource, Fetched, Normalized, PayloadFile, RawBatch};
 use crate::ledger::{Charge, ChargeCategory};
 
 type HmacSha256 = Hmac<Sha256>;
+
+/// Name the S3 object listing is stored under in a raw batch, when the
+/// account is backed by a Data Exports S3 URI.
+const PART_EXPORT_LISTING: &str = "export_listing";
 
 /// AWS Cloud Service
 pub struct AwsCloudService {
     access_key_id: String,
     secret_access_key: String,
     region: String,
+    /// `s3://bucket/prefix` of this account's Data Exports (FOCUS) export;
+    /// when set, the export is the bill and Cost Explorer is not called.
+    export_uri: Option<String>,
 }
 
 impl AwsCloudService {
-    pub fn new(access_key_id: String, secret_access_key: String, region: Option<String>) -> Self {
+    pub fn new(
+        access_key_id: String,
+        secret_access_key: String,
+        region: Option<String>,
+        export_uri: Option<String>,
+    ) -> Self {
         Self {
             access_key_id,
             secret_access_key,
             region: region.unwrap_or_else(|| "us-east-1".to_string()),
+            export_uri: export_uri.filter(|uri| !uri.trim().is_empty()),
         }
+    }
+
+    fn s3_client(&self) -> S3Client {
+        S3Client::new(
+            self.access_key_id.clone(),
+            self.secret_access_key.clone(),
+            Some(self.region.clone()),
+        )
+    }
+
+    /// Find and download the export objects for one billing period.
+    ///
+    /// A CUR 2.0 export partitions by `BILLING_PERIOD=<label>` below a
+    /// `data/` directory, but the URI a user copies may point anywhere
+    /// above it, so the candidates run from the most to the least specific.
+    /// A period the export has not produced yet is [`aws_focus::ExportNotReady`]
+    /// rather than an empty batch: writing nothing here must never replace
+    /// a month's ledger rows with zero rows.
+    fn fetch_focus_export(&self, period: &BillingPeriod) -> Result<Fetched> {
+        let uri = S3Uri::parse(self.export_uri.as_deref().unwrap_or_default())?;
+        let client = self.s3_client();
+        let label = period.label();
+        let marker = format!("BILLING_PERIOD={}", label);
+
+        let candidates = [
+            format!("{}/data/{}/", uri.prefix, marker),
+            format!("{}/{}/", uri.prefix, marker),
+            uri.prefix.clone(),
+        ];
+        let mut objects = Vec::new();
+        for prefix in &candidates {
+            let found: Vec<_> = client
+                .list_objects(&uri.bucket, prefix)?
+                .into_iter()
+                .filter(|object| object.key.contains(&marker) && object.key.ends_with(".parquet"))
+                .collect();
+            if !found.is_empty() {
+                objects = found;
+                break;
+            }
+        }
+        if objects.is_empty() {
+            return Err(aws_focus::ExportNotReady {
+                uri: self.export_uri.clone().unwrap_or_default(),
+                period: label,
+            }
+            .into());
+        }
+
+        // The listing rides as the metadata part: which keys, sizes and
+        // ETags the batch was built from, for reproducing the fetch later.
+        let listing: Vec<serde_json::Value> = objects
+            .iter()
+            .map(|object| {
+                serde_json::json!({
+                    "key": object.key,
+                    "size": object.size,
+                    "etag": object.etag,
+                })
+            })
+            .collect();
+        let listing_json = serde_json::to_string_pretty(&listing)?;
+
+        let mut payload_files = Vec::with_capacity(objects.len());
+        for (index, object) in objects.iter().enumerate() {
+            let bytes = client.get_object(&uri.bucket, &object.key)?;
+            payload_files.push(PayloadFile {
+                name: format!("focus-{}.parquet", index),
+                bytes,
+            });
+        }
+
+        Ok(Fetched {
+            parts: vec![RawPart::new(
+                PART_EXPORT_LISTING,
+                format!("s3://{}/{}", uri.bucket, uri.prefix),
+                listing_json,
+            )],
+            payload_files,
+        })
     }
 
     /// Calculate SHA256 hash
@@ -551,6 +645,11 @@ fn parse_sts_response(xml: &str) -> Result<StsCallerIdentity> {
 
 impl BillingSource for AwsCloudService {
     fn validate_credentials(&self) -> Result<bool> {
+        if let Some(uri) = &self.export_uri {
+            let uri = S3Uri::parse(uri)?;
+            self.s3_client().bucket_is_readable(&uri.bucket)?;
+            return Ok(true);
+        }
         match self.call_sts_get_caller_identity() {
             Ok(identity) => {
                 tracing::info!(
@@ -567,21 +666,30 @@ impl BillingSource for AwsCloudService {
         }
     }
 
-    fn fetch(&self, period: &BillingPeriod) -> Result<Vec<RawPart>> {
+    fn fetch(&self, period: &BillingPeriod) -> Result<Fetched> {
+        if self.export_uri.is_some() {
+            return self.fetch_focus_export(period);
+        }
         let request = ledger_request(
             &period.start().to_string(),
             &period.end_exclusive().to_string(),
         );
         let body = self.cost_and_usage_raw(&request)?;
 
-        Ok(vec![RawPart::new(
+        Ok(Fetched::parts_only(vec![RawPart::new(
             PART_COST_AND_USAGE,
             serde_json::to_string(&request)?,
             body,
-        )])
+        )]))
     }
 
     fn normalize(&self, batch: &RawBatch) -> Result<Normalized> {
+        // Dispatch on what the batch holds, not on this client's config:
+        // `normalize_with` builds the client with empty credentials and no
+        // export URI, and a replayed export batch must still map as FOCUS.
+        if !batch.payload_files.is_empty() {
+            return aws_focus::normalize(batch);
+        }
         normalize(batch)
     }
 }
@@ -618,6 +726,7 @@ mod tests {
             batch_id: "b-1".to_string(),
             fetched_at: "2026-08-03T04:00:00Z".parse().unwrap(),
             parts: vec![RawPart::new(PART_COST_AND_USAGE, "{}", body)],
+            payload_files: Vec::new(),
         }
     }
 

@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use serde::Deserialize;
 
 use super::raw::RawPart;
-use super::{BillingPeriod, BillingSource, Normalized, RawBatch};
+use super::{BillingPeriod, BillingSource, Fetched, Normalized, RawBatch};
 use crate::ledger::BalanceSnapshot;
 
 /// DeepSeek balance info
@@ -118,14 +118,14 @@ impl BillingSource for DeepSeekService {
         }
     }
 
-    fn fetch(&self, _period: &BillingPeriod) -> Result<Vec<RawPart>> {
+    fn fetch(&self, _period: &BillingPeriod) -> Result<Fetched> {
         // A balance is the same value whichever period is being ingested:
         // the endpoint reports the account as it stands right now.
-        Ok(vec![RawPart::new(
+        Ok(Fetched::parts_only(vec![RawPart::new(
             PART_BALANCE,
             format!("GET {}", BALANCE_URL),
             self.balance_raw()?,
-        )])
+        )]))
     }
 
     fn normalize(&self, batch: &RawBatch) -> Result<Normalized> {
@@ -148,6 +148,7 @@ mod tests {
             batch_id: "b-1".to_string(),
             fetched_at: "2026-08-29T09:30:00Z".parse().unwrap(),
             parts: vec![RawPart::new(PART_BALANCE, "", body)],
+            payload_files: Vec::new(),
         }
     }
 

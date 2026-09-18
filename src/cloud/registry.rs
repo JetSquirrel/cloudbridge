@@ -432,10 +432,12 @@ static SOURCES: &[SourceDescriptor] = &[
                 ctx.access_key_id,
                 ctx.secret_access_key,
                 ctx.region,
+                ctx.export_uri,
             ))
         }),
-        // The Cost and Usage Report export is P1's; Cost Explorer is the
-        // only channel today.
+        // No file import: the AWS channel is the account's own Data
+        // Exports (FOCUS) export in S3 — set the bucket URI on the account
+        // — with Cost Explorer as the fallback when no URI is set.
         bill_file: None,
     },
     SourceDescriptor {
@@ -661,6 +663,7 @@ mod tests {
             access_key_id: String::new(),
             secret_access_key: String::new(),
             region: None,
+            export_uri: None,
         }) {
             Ok(_) => panic!("OpenAI has no API client in this build"),
             Err(e) => e.to_string(),

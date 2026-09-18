@@ -58,6 +58,7 @@ pub struct AccountsView {
     ak_input: Entity<InputState>,
     sk_input: Entity<InputState>,
     region_input: Entity<InputState>,
+    export_uri_input: Entity<InputState>,
     /// Billing source selected in the add dialog
     selected_source: &'static SourceDescriptor,
     /// What the last "Fill from system" click found, if there has been one.
@@ -81,6 +82,9 @@ impl AccountsView {
             InputState::new(window, cx)
                 .placeholder("Region (optional, default us-east-1)")
                 .default_value("us-east-1")
+        });
+        let export_uri_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("s3://bucket/prefix/export-name (optional)")
         });
 
         let default_source = registry::default_source();
@@ -112,6 +116,7 @@ impl AccountsView {
             ak_input,
             sk_input,
             region_input,
+            export_uri_input,
             selected_source: default_source,
         };
 
@@ -370,6 +375,21 @@ impl AccountsView {
             enabled: true,
             // Derived by the save, from the key it is given.
             access_key_hint: None,
+            export_uri: {
+                let uri = self.export_uri_input.read(cx).value().trim().to_string();
+                if uri.is_empty() {
+                    None
+                } else if !uri.starts_with("s3://") {
+                    self.error = Some(
+                        "The export URI starts with s3://, e.g. s3://bucket/prefix/export-name"
+                            .to_string(),
+                    );
+                    cx.notify();
+                    return;
+                } else {
+                    Some(uri)
+                }
+            },
         };
 
         // The save writes the secret to the OS keyring, which blocks, so
@@ -1173,15 +1193,39 @@ impl AccountsView {
                                             .child(Input::new(&self.sk_input)),
                                     )
                                 })
+                                .when(self.selected_source.default_region.is_some(), |el| {
+                                    el.child(
+                                        div()
+                                            .v_flex()
+                                            .gap_1()
+                                            .child(div().text_sm().child("Region"))
+                                            .child(Input::new(&self.region_input)),
+                                    )
+                                })
+                                // An AWS account can be backed by its own
+                                // Data Exports (FOCUS) export instead of
+                                // Cost Explorer: the export is resource-level
+                                // and free to read, the API is neither.
                                 .when(
-                                    self.selected_source.default_region.is_some(),
+                                    self.selected_source.id == "AWS",
                                     |el| {
                                         el.child(
                                             div()
                                                 .v_flex()
                                                 .gap_1()
-                                                .child(div().text_sm().child("Region"))
-                                                .child(Input::new(&self.region_input)),
+                                                .child(div().text_sm().child("Data export S3 URI"))
+                                                .child(Input::new(&self.export_uri_input))
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(theme::text_muted(cx))
+                                                        .child(
+                                                            "Optional. A FOCUS 1.2 export from \
+                                                         Billing and Cost Management → Data \
+                                                         Exports. When set, the bill is read \
+                                                         from S3 and Cost Explorer is not called.",
+                                                        ),
+                                                ),
                                         )
                                     },
                                 )

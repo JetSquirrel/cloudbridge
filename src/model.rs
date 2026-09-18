@@ -311,6 +311,10 @@ pub struct CloudAccount {
     /// [`access_key_hint`]. `None` for an account stored before the hint
     /// was recorded.
     pub access_key_hint: Option<String>,
+    /// Where the provider's billing export lands (`s3://bucket/prefix` for
+    /// an AWS Data Exports-backed account). `None` for an account read by
+    /// its billing API, and for one stored before exports were supported.
+    pub export_uri: Option<String>,
 }
 
 /// How much of an access key is kept as a hint.

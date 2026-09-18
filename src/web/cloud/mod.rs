@@ -31,6 +31,9 @@ pub struct SourceContext {
     pub access_key_id: String,
     pub secret_access_key: String,
     pub region: Option<String>,
+    /// Where the provider's own billing export lands, if the account is
+    /// backed by one.
+    pub export_uri: Option<String>,
 }
 
 /// A source of billing data.

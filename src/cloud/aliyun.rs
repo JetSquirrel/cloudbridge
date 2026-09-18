@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use super::deduction;
 use super::raw::RawPart;
-use super::{BillingPeriod, BillingSource, Normalized, RawBatch};
+use super::{BillingPeriod, BillingSource, Fetched, Normalized, RawBatch};
 use crate::ledger::Charge;
 
 type HmacSha1 = Hmac<Sha1>;
@@ -186,15 +186,15 @@ impl BillingSource for AliyunCloudService {
         }
     }
 
-    fn fetch(&self, period: &BillingPeriod) -> Result<Vec<RawPart>> {
+    fn fetch(&self, period: &BillingPeriod) -> Result<Fetched> {
         let billing_cycle = period.label();
         let body = self.call_bss_api("QueryBillOverview", &[("BillingCycle", &billing_cycle)])?;
 
-        Ok(vec![RawPart::new(
+        Ok(Fetched::parts_only(vec![RawPart::new(
             PART_BILL_OVERVIEW,
             format!("QueryBillOverview BillingCycle={}", billing_cycle),
             body,
-        )])
+        )]))
     }
 
     fn normalize(&self, batch: &RawBatch) -> Result<Normalized> {
@@ -373,6 +373,7 @@ mod tests {
             batch_id: "b-1".to_string(),
             fetched_at: "2026-09-01T02:00:00Z".parse().unwrap(),
             parts: vec![RawPart::new(PART_BILL_OVERVIEW, "", body)],
+            payload_files: Vec::new(),
         }
     }
 

@@ -129,6 +129,7 @@ mod tests {
             batch_id: "b-1".to_string(),
             fetched_at: "2026-09-01T02:00:00Z".parse().unwrap(),
             parts: vec![RawPart::new(PART, "file", text)],
+            payload_files: Vec::new(),
         }
     }
 

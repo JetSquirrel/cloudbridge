@@ -50,6 +50,20 @@ impl RawPart {
     }
 }
 
+/// A binary payload too large or too un-textual for [`RawPart::body`],
+/// stored as a file of its own next to the batch's `part-0.parquet`.
+///
+/// The AWS Data Exports channel downloads Parquet objects from S3; a
+/// Parquet file is not UTF-8, so it cannot ride in the metadata part the
+/// way a JSON or CSV response does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PayloadFile {
+    /// File name within the batch directory, e.g. `focus-0.parquet`.
+    pub name: String,
+    /// The object bytes, unchanged.
+    pub bytes: Vec<u8>,
+}
+
 /// Everything one fetch of one account's billing period returned.
 ///
 /// This is the whole input to [`super::BillingSource::normalize`]: keeping
@@ -63,6 +77,9 @@ pub struct RawBatch {
     pub batch_id: String,
     pub fetched_at: DateTime<Utc>,
     pub parts: Vec<RawPart>,
+    /// Binary payloads stored as sibling files of `part-0.parquet`; empty
+    /// for sources whose responses are text.
+    pub payload_files: Vec<PayloadFile>,
 }
 
 impl RawBatch {
@@ -97,12 +114,13 @@ pub fn batch_directory(
         .join(format!("batch={}", batch_id))
 }
 
-/// Write a batch as a single Parquet part. Returns the file's path, which
-/// is what the ledger records as the batch's `source_ref`.
+/// Write a batch as a single Parquet part, plus one sibling file per
+/// binary payload. Returns the metadata file's path, which is what the
+/// ledger records as the batch's `source_ref`.
 pub fn write(root: &Path, batch: &RawBatch) -> Result<PathBuf> {
     let directory = batch.directory(root);
     std::fs::create_dir_all(&directory)?;
-    let file = directory.join("part-0.parquet");
+    let file = directory.join(METADATA_FILE_NAME);
 
     let conn = Connection::open_in_memory()?;
     conn.execute_batch(
@@ -127,7 +145,16 @@ pub fn write(root: &Path, batch: &RawBatch) -> Result<PathBuf> {
         sql_literal(&file.to_string_lossy())
     ))?;
 
-    tracing::info!("Raw: wrote {} payload(s) to {:?}", batch.parts.len(), file);
+    for payload in &batch.payload_files {
+        check_path_segment(&payload.name, "payload file name")?;
+        std::fs::write(directory.join(&payload.name), &payload.bytes)?;
+    }
+
+    tracing::info!(
+        "Raw: wrote {} payload(s) to {:?}",
+        batch.parts.len() + batch.payload_files.len(),
+        directory
+    );
     Ok(file)
 }
 
@@ -162,6 +189,10 @@ pub fn read(file: &Path) -> Result<(Vec<RawPart>, DateTime<Utc>)> {
     Ok((rows.into_iter().map(|(part, _)| part).collect(), fetched_at))
 }
 
+/// The metadata part's file name within a batch directory; every other
+/// file there is a binary payload.
+const METADATA_FILE_NAME: &str = "part-0.parquet";
+
 /// Read a stored batch back in full, so it can be normalized again without
 /// paying for another fetch.
 pub fn read_batch(
@@ -171,8 +202,21 @@ pub fn read_batch(
     period: &BillingPeriod,
     batch_id: &str,
 ) -> Result<RawBatch> {
-    let file = batch_directory(root, provider, account_id, period, batch_id).join("part-0.parquet");
-    let (parts, fetched_at) = read(&file)?;
+    let directory = batch_directory(root, provider, account_id, period, batch_id);
+    let (parts, fetched_at) = read(&directory.join(METADATA_FILE_NAME))?;
+
+    let mut payload_files = Vec::new();
+    for entry in std::fs::read_dir(&directory)? {
+        let name = entry?.file_name().to_string_lossy().into_owned();
+        if name == METADATA_FILE_NAME || !name.ends_with(".parquet") {
+            continue;
+        }
+        payload_files.push(PayloadFile {
+            bytes: std::fs::read(directory.join(&name))?,
+            name,
+        });
+    }
+    payload_files.sort_by(|a, b| a.name.cmp(&b.name));
 
     Ok(RawBatch {
         provider: provider.to_string(),
@@ -181,6 +225,7 @@ pub fn read_batch(
         batch_id: batch_id.to_string(),
         fetched_at,
         parts,
+        payload_files,
     })
 }
 
@@ -307,6 +352,7 @@ mod tests {
             batch_id: batch_id.to_string(),
             fetched_at: Utc::now(),
             parts,
+            payload_files: Vec::new(),
         }
     }
 
@@ -341,6 +387,52 @@ mod tests {
 
         let (parts, _) = read(&file).unwrap();
         assert_eq!(parts, written.parts);
+    }
+
+    #[test]
+    fn binary_payloads_come_back_as_sibling_files() {
+        let dir = TempDir::new();
+        let mut written = batch("b-1", vec![RawPart::new("listing", "GET s3://b/p", "[]")]);
+        written.payload_files = vec![
+            PayloadFile {
+                name: "focus-1.parquet".to_string(),
+                // Not UTF-8, on purpose: a String body could not hold this.
+                bytes: vec![0x50, 0x41, 0x52, 0x31, 0x00, 0xff],
+            },
+            PayloadFile {
+                name: "focus-0.parquet".to_string(),
+                bytes: b"PAR1....PAR1".to_vec(),
+            },
+        ];
+
+        write(&dir.0, &written).unwrap();
+        let reread =
+            read_batch(&dir.0, "AWS", "acct-1", &BillingPeriod::new(2026, 8), "b-1").unwrap();
+
+        assert_eq!(reread.parts, written.parts);
+        // Sorted by name on the way back in, so normalization is stable.
+        let names: Vec<&str> = reread
+            .payload_files
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["focus-0.parquet", "focus-1.parquet"]);
+        assert_eq!(reread.payload_files[0].bytes, b"PAR1....PAR1");
+        assert_eq!(
+            reread.payload_files[1].bytes,
+            vec![0x50, 0x41, 0x52, 0x31, 0x00, 0xff]
+        );
+    }
+
+    #[test]
+    fn a_payload_file_name_cannot_escape_its_directory() {
+        let dir = TempDir::new();
+        let mut written = batch("b-1", vec![RawPart::new("p", "", "{}")]);
+        written.payload_files = vec![PayloadFile {
+            name: "../evil.parquet".to_string(),
+            bytes: vec![],
+        }];
+        assert!(write(&dir.0, &written).is_err());
     }
 
     #[test]
