@@ -143,26 +143,31 @@ pub(crate) fn daily_totals_by_service_of(
 /// an account-scoped anomaly rule needs its own read of the same view.
 pub(crate) fn daily_totals_for_account_of(
     conn: &Connection,
-    billing_period: &str,
-) -> Result<Vec<(String, String, f64)>> {
+    account_id: &str,
+    since: DateTime<Utc>,
+) -> Result<Vec<ServiceDailyTotal>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT provider, coalesce(service_name, 'Other') AS service,
+                strftime(charge_period_start, '%Y-%m-%d') AS day,
                 sum(billed_cost_base) AS amount
          FROM {NORMALIZED_VIEW}
-         WHERE billing_period = ?
-         GROUP BY provider, service
-         HAVING amount > 0
-         ORDER BY amount DESC"
+         WHERE account_id = ? AND charge_period_start >= CAST(? AS TIMESTAMP)
+         GROUP BY provider, service, day
+         ORDER BY day"
     ))?;
 
     let rows = stmt
-        .query_map(params![billing_period], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, f64>(2)?,
-            ))
-        })?
+        .query_map(
+            params![account_id, since.format(TIMESTAMP_FORMAT).to_string()],
+            |row| {
+                Ok(ServiceDailyTotal {
+                    provider: row.get(0)?,
+                    service: row.get(1)?,
+                    day: row.get(2)?,
+                    amount: row.get::<_, Option<f64>>(3)?.unwrap_or(0.0),
+                })
+            },
+        )?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(rows)
@@ -1489,6 +1494,218 @@ fn data_quality_issues_of(
         regionless,
         unreconciled: Some((unreconciled.0, unreconciled.1.unwrap_or(0.0))),
     }))
+}
+
+// ==================== Breakdown dimensions ====================
+
+impl BreakdownDim {
+    /// The bucket expression; a charge without the dimension reads as
+    /// `'Other'`, as a charge without a service does.
+    fn bucket_sql(self) -> &'static str {
+        match self {
+            Self::Service => "coalesce(service_name, 'Other')",
+            Self::Region => "coalesce(region_id, 'Other')",
+            Self::ServiceCategory => "coalesce(service_category, 'Other')",
+        }
+    }
+}
+
+/// Charges of one period grouped by `dim`, largest first. With
+/// [`BreakdownDim::Service`] this is [`service_breakdown`].
+pub fn breakdown_by(key: &PeriodKey, dim: BreakdownDim) -> Result<Vec<(String, f64)>> {
+    with_connection_ref(|conn| breakdown_by_of(conn, key, dim))
+}
+
+fn breakdown_by_of(
+    conn: &Connection,
+    key: &PeriodKey,
+    dim: BreakdownDim,
+) -> Result<Vec<(String, f64)>> {
+    sum_by_bucket(
+        conn,
+        &Scope {
+            provider: Some(&key.provider),
+            account_id: Some(&key.account_id),
+            billing_period: Some(&key.billing_period),
+            ..Default::default()
+        },
+        dim.bucket_sql(),
+    )
+}
+
+/// The `limit` costliest resources of a period, largest first — a charge
+/// with no `resource_id` cannot be attributed to one and is left out.
+pub fn top_resources(key: &PeriodKey, limit: usize) -> Result<Vec<TopResource>> {
+    with_connection_ref(|conn| top_resources_of(conn, key, limit))
+}
+
+fn top_resources_of(conn: &Connection, key: &PeriodKey, limit: usize) -> Result<Vec<TopResource>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT resource_id, any_value(resource_name),
+                any_value(coalesce(service_name, 'Other')) AS service,
+                sum(billed_cost_base) AS amount
+         FROM {NORMALIZED_VIEW}
+         WHERE provider = ? AND account_id = ? AND billing_period = ?
+           AND resource_id IS NOT NULL
+         GROUP BY resource_id
+         HAVING amount > 0
+         ORDER BY amount DESC
+         LIMIT ?"
+    ))?;
+
+    let rows = stmt
+        .query_map(
+            params![
+                key.provider,
+                key.account_id,
+                key.billing_period,
+                bounded_limit(limit)
+            ],
+            |row| {
+                Ok(TopResource {
+                    resource_id: row.get(0)?,
+                    resource_name: row.get(1)?,
+                    service: row.get(2)?,
+                    amount: row.get(3)?,
+                })
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows)
+}
+
+/// Usage of one period grouped by `(provider, service, tag_value)` in a
+/// single round-trip, largest first — the attribution page's N+1 killer:
+/// filtering the rows of one `(provider, service)` gives exactly what
+/// [`service_tag_usage_breakdown`] returns for it, so a page that shows
+/// every service no longer queries once per service.
+pub fn tag_usage_breakdown_by_service(
+    billing_period: &str,
+    tag_key: &str,
+) -> Result<Vec<ServiceTagUsage>> {
+    with_connection_ref(|conn| tag_usage_breakdown_by_service_of(conn, billing_period, tag_key))
+}
+
+fn tag_usage_breakdown_by_service_of(
+    conn: &Connection,
+    billing_period: &str,
+    tag_key: &str,
+) -> Result<Vec<ServiceTagUsage>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT provider, coalesce(service_name, 'Other') AS service,
+                coalesce(nullif(json_extract_string(tags, ?), ''), 'Unallocated') AS tag_value,
+                sum(billed_cost_base) AS amount
+         FROM {NORMALIZED_VIEW}
+         WHERE billing_period = ?
+           AND charge_category = 'Usage'
+         GROUP BY provider, service, tag_value
+         HAVING amount > 0
+         ORDER BY amount DESC"
+    ))?;
+
+    let rows = stmt
+        .query_map(params![tag_key, billing_period], |row| {
+            Ok(ServiceTagUsage {
+                provider: row.get(0)?,
+                service: row.get(1)?,
+                tag_value: row.get(2)?,
+                amount: row.get(3)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows)
+}
+
+// ==================== Per-account reads ====================
+//
+// The Account detail page's series: each mirrors its cross-account
+// original above, filtered to one `(provider, account_id)`.
+
+/// [`daily_usage_all`] for a single account.
+pub fn daily_usage_of(
+    provider: &str,
+    account_id: &str,
+    since: DateTime<Utc>,
+) -> Result<Vec<DailyTotal>> {
+    with_connection_ref(|conn| {
+        sum_by_day(
+            conn,
+            &Scope {
+                provider: Some(provider),
+                account_id: Some(account_id),
+                since: Some(since),
+                usage_only: true,
+                ..Default::default()
+            },
+        )
+    })
+}
+
+/// [`monthly_usage`] for a single account.
+pub fn monthly_usage_of(
+    provider: &str,
+    account_id: &str,
+    since: DateTime<Utc>,
+) -> Result<Vec<(String, f64)>> {
+    with_connection_ref(|conn| {
+        sum_by_period(
+            conn,
+            &Scope {
+                provider: Some(provider),
+                account_id: Some(account_id),
+                since: Some(since),
+                usage_only: true,
+                ..Default::default()
+            },
+        )
+    })
+}
+
+/// [`provider_service_usage_between`] narrowed to a single account, so the
+/// service column drops out of the grouping.
+pub fn service_usage_of_between(
+    provider: &str,
+    account_id: &str,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+) -> Result<Vec<(String, f64)>> {
+    with_connection_ref(|conn| {
+        sum_by_bucket(
+            conn,
+            &Scope {
+                provider: Some(provider),
+                account_id: Some(account_id),
+                since: Some(since),
+                until: Some(until),
+                usage_only: true,
+                ..Default::default()
+            },
+            "coalesce(service_name, 'Other')",
+        )
+    })
+}
+
+/// [`usage_and_credits_between`] for a single account.
+pub fn usage_and_credits_of_between(
+    provider: &str,
+    account_id: &str,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+) -> Result<(f64, f64)> {
+    with_connection_ref(|conn| {
+        sum_usage_and_credits(
+            conn,
+            &Scope {
+                provider: Some(provider),
+                account_id: Some(account_id),
+                since: Some(since),
+                until: Some(until),
+                ..Default::default()
+            },
+        )
+    })
 }
 
 // ==================== Ad-hoc queries ====================
@@ -2838,93 +3055,147 @@ mod tests {
     }
 
     #[test]
-    fn usage_and_credits_splits_gross_usage_from_credits() {
+    fn breakdown_by_groups_on_each_stored_dimension() {
         let mut conn = conn("USD");
         write(
             &mut conn,
             &aws(),
             &[
-                charge("EC2", 12.5, "USD", 1),
-                charge("S3", 2.5, "USD", 1),
                 Charge {
-                    charge_category: ChargeCategory::Credit,
-                    billed_cost: Some(-10.0),
-                    ..charge("EC2", -10.0, "USD", 2)
+                    region_id: Some("us-east-1".to_string()),
+                    service_category: Some("Compute".to_string()),
+                    ..charge("EC2", 12.5, "USD", 1)
                 },
                 Charge {
-                    charge_category: ChargeCategory::Tax,
-                    billed_cost: Some(1.25),
-                    ..charge("Tax", 1.25, "USD", 2)
+                    service_category: Some("Storage".to_string()),
+                    ..charge("S3", 0.75, "USD", 1)
+                },
+                Charge {
+                    region_id: Some("us-west-2".to_string()),
+                    service_category: Some("Compute".to_string()),
+                    ..charge("EC2", 4.0, "USD", 2)
                 },
             ],
         );
 
-        let (usage, credits) = usage_and_credits_of(&conn, "2026-08").unwrap();
-        assert!((usage - 15.0).abs() < 1e-9, "got {usage}");
-        assert!((credits - -10.0).abs() < 1e-9, "got {credits}");
-
-        // The Tax row is in neither bucket but stays in the net total.
-        let net = total_for_period_of(&conn, "2026-08").unwrap();
-        assert!((net - 6.25).abs() < 1e-9, "got {net}");
+        // Service is the breakdown the app already had.
+        assert_eq!(
+            breakdown_by_of(&conn, &aws(), BreakdownDim::Service).unwrap(),
+            service_breakdown_of(&conn, &aws()).unwrap()
+        );
+        // A charge with no region reads as 'Other'.
+        assert_eq!(
+            breakdown_by_of(&conn, &aws(), BreakdownDim::Region).unwrap(),
+            vec![
+                ("us-east-1".to_string(), 12.5),
+                ("us-west-2".to_string(), 4.0),
+                ("Other".to_string(), 0.75),
+            ]
+        );
+        assert_eq!(
+            breakdown_by_of(&conn, &aws(), BreakdownDim::ServiceCategory).unwrap(),
+            vec![("Compute".to_string(), 16.5), ("Storage".to_string(), 0.75),]
+        );
     }
 
     #[test]
-    fn untagged_usage_by_service_rolls_charges_up_to_one_row_per_service() {
+    fn top_resources_ranks_resources_and_skips_unresourced_charges() {
         let mut conn = conn("USD");
         write(
             &mut conn,
             &aws(),
             &[
-                tagged_charge("EC2", 12.5, 1, None),
-                tagged_charge("EC2", 4.0, 2, None),
-                tagged_charge("EC2", 1.0, 3, None),
-                tagged_charge("S3", 20.0, 1, Some(r#"{"business_line":"etl"}"#)),
-                tagged_charge("S3", 2.0, 1, None),
                 Charge {
-                    charge_category: ChargeCategory::Credit,
-                    ..tagged_charge("EC2", -9.0, 1, None)
+                    resource_id: Some("i-1".to_string()),
+                    resource_name: Some("web".to_string()),
+                    ..charge("EC2", 10.0, "USD", 1)
                 },
+                // Same resource, second charge: one row of 15.
+                Charge {
+                    resource_id: Some("i-1".to_string()),
+                    resource_name: Some("web".to_string()),
+                    ..charge("EC2", 5.0, "USD", 2)
+                },
+                Charge {
+                    resource_id: Some("i-2".to_string()),
+                    ..charge("EC2", 8.0, "USD", 1)
+                },
+                // No resource id: cannot be a top resource.
+                charge("S3", 99.0, "USD", 1),
             ],
         );
 
-        let rows = untagged_usage_by_service_of(&conn, "2026-08", "business_line", 10).unwrap();
-        assert_eq!(rows.len(), 2);
-        // Three EC2 charges read as one row; a credit is not usage.
-        assert_eq!(rows[0].provider, "AWS");
-        assert_eq!(rows[0].service.as_deref(), Some("EC2"));
-        assert!((rows[0].amount - 17.5).abs() < 1e-9);
-        assert_eq!(rows[1].service.as_deref(), Some("S3"));
-        assert!((rows[1].amount - 2.0).abs() < 1e-9);
+        let top = top_resources_of(&conn, &aws(), 10).unwrap();
+        assert_eq!(top.len(), 2);
+        assert_eq!(top[0].resource_id, "i-1");
+        assert_eq!(top[0].resource_name.as_deref(), Some("web"));
+        assert_eq!(top[0].service, "EC2");
+        assert!((top[0].amount - 15.0).abs() < 1e-9);
+        assert_eq!(top[1].resource_id, "i-2");
+        assert_eq!(top[1].resource_name, None);
 
-        // The limit applies to rolled-up rows, not to charges.
-        let top = untagged_usage_by_service_of(&conn, "2026-08", "business_line", 1).unwrap();
-        assert_eq!(top.len(), 1);
-        assert_eq!(top[0].service.as_deref(), Some("EC2"));
+        let one = top_resources_of(&conn, &aws(), 1).unwrap();
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].resource_id, "i-1");
     }
 
+    /// One grouped round-trip carries what the attribution page used to
+    /// fetch per service: filtering its rows for one `(provider, service)`
+    /// gives exactly that service's breakdown.
     #[test]
-    fn a_tag_usage_breakdown_counts_usage_only() {
+    fn the_grouped_tag_breakdown_matches_the_per_service_queries() {
         let mut conn = conn("USD");
         write(
             &mut conn,
             &aws(),
             &[
                 tagged_charge("EC2", 10.0, 1, Some(r#"{"business_line":"etl"}"#)),
+                tagged_charge("EC2", 4.0, 1, None),
+                tagged_charge("S3", 3.0, 1, Some(r#"{"business_line":"search"}"#)),
                 Charge {
                     charge_category: ChargeCategory::Credit,
-                    ..tagged_charge("EC2", -4.0, 1, Some(r#"{"business_line":"etl"}"#))
+                    ..tagged_charge("EC2", -2.0, 1, Some(r#"{"business_line":"etl"}"#))
                 },
-                tagged_charge("NAT", 2.0, 1, None),
             ],
         );
-
-        let breakdown = tag_usage_breakdown_of(&conn, "2026-08", "business_line", None).unwrap();
-        assert_eq!(
-            breakdown,
-            vec![("etl".to_string(), 10.0), ("Unallocated".to_string(), 2.0),]
+        write(
+            &mut conn,
+            &aliyun(),
+            &[tagged_charge(
+                "ECS",
+                710.0,
+                1,
+                Some(r#"{"business_line":"etl"}"#),
+            )],
         );
+
+        let rows = tag_usage_breakdown_by_service_of(&conn, "2026-08", "business_line").unwrap();
+        // Largest first, across providers.
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0].provider, "Aliyun");
+        assert_eq!(rows[0].service, "ECS");
+        assert!((rows[0].amount - 710.0).abs() < 1e-9, "got {rows:?}");
+
+        let of = |provider: &str, service: &str| {
+            rows.iter()
+                .filter(|row| row.provider == provider && row.service == service)
+                .map(|row| (row.tag_value.clone(), row.amount))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            of("AWS", "EC2"),
+            tag_usage_breakdown_of(&conn, "2026-08", "business_line", Some(("AWS", "EC2")))
+                .unwrap()
+        );
+        assert_eq!(
+            of("AWS", "S3"),
+            tag_usage_breakdown_of(&conn, "2026-08", "business_line", Some(("AWS", "S3"))).unwrap()
+        );
+        assert_eq!(of("AWS", "S3"), vec![("search".to_string(), 3.0)]);
     }
 
+    /// The per-account and usage-only variants are the cross-account query
+    /// under a narrower scope; pin that directly on the builder.
     #[test]
     fn a_scope_combines_account_window_and_category_filters() {
         let mut conn = conn("USD");

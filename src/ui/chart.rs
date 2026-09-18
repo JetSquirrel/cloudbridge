@@ -336,3 +336,683 @@ pub fn hover_overlay(
             .into_any_element(),
     ])
 }
+
+// ==================== Treemap heatmap ====================
+//
+// The Attribution page's composition view, borrowed from Wealthfolio's
+// composition chart: tile area is the bucket's current-period cost, tile
+// color is its month-over-month move on a saturating ramp. This is a cost
+// app, so the ramp is inverted against a portfolio's: more spend heats
+// toward the accent (the movers table's attention color for a positive
+// delta), less spend toward the olive (the theme's positive).
+
+/// The largest buckets get their own tile; the tail folds into one
+/// "<N> more" tile. Past this count the thin tiles are unreadable.
+pub const TILE_CAP: usize = 11;
+
+/// Heat-ramp constant: a ±50% month-over-month move maps to t = 0.5,
+/// halfway to the saturated end of the ramp.
+const RAMP_K: f64 = 0.5;
+
+/// Breathing room between tiles, in px — canvas-mirroring geometry, like
+/// the Sankey's gaps, so it tracks the pixel-exact layout rather than the
+/// font scale.
+const TILE_GAP: f32 = 1.0;
+const TILE_RADIUS: f32 = 3.0;
+/// Inset of a tile's label from its top-left corner.
+const TILE_PAD: f32 = 6.0;
+
+/// One treemap tile: a breakdown bucket of the current period, with the
+/// same bucket's previous-period total for the heat color.
+#[derive(Clone, Debug)]
+pub struct TreemapItem {
+    pub label: String,
+    /// Current-period cost; the tile's area is proportional to it.
+    pub amount: f64,
+    /// Previous-period cost; zero marks a bucket with no base to compare
+    /// against (a new bucket).
+    pub previous: f64,
+}
+
+impl TreemapItem {
+    pub fn new(label: impl Into<String>, amount: f64, previous: f64) -> Self {
+        Self {
+            label: label.into(),
+            amount,
+            previous,
+        }
+    }
+
+    /// Month-over-month change ratio; `None` when there is no
+    /// previous-period base (a new bucket).
+    pub fn change(&self) -> Option<f64> {
+        (self.previous > 0.0).then(|| (self.amount - self.previous) / self.previous)
+    }
+}
+
+/// The `cap` largest buckets as tiles, with the tail folded into one
+/// "<N> more" tile. Both periods are summed over the tail so its heat is
+/// as honest as a named bucket's.
+pub fn top_tiles(mut items: Vec<TreemapItem>, cap: usize) -> Vec<TreemapItem> {
+    items.sort_by(|a, b| b.amount.total_cmp(&a.amount));
+    if items.len() <= cap {
+        return items;
+    }
+    let tail = items.split_off(cap);
+    let (amount, previous) = tail.iter().fold((0.0, 0.0), |(a, p), item| {
+        (a + item.amount, p + item.previous)
+    });
+    items.push(TreemapItem::new(
+        format!("{} more", tail.len()),
+        amount,
+        previous,
+    ));
+    items
+}
+
+/// Saturating ramp t = |m| / (|m| + k): rises quickly for small moves and
+/// flattens as they grow, so a doubling and a tenfold move both read as
+/// extreme without one blowing out the scale.
+pub fn heat_t(m: f64) -> f64 {
+    let m = m.abs();
+    m / (m + RAMP_K)
+}
+
+/// Mix two colors in RGB space (hue lerps swing through unrelated colors
+/// when one end is a desaturated neutral).
+pub fn mix_color(a: Hsla, b: Hsla, t: f32) -> Hsla {
+    let t = t.clamp(0.0, 1.0);
+    let a = Rgba::from(a);
+    let b = Rgba::from(b);
+    Hsla::from(Rgba {
+        r: a.r + (b.r - a.r) * t,
+        g: a.g + (b.g - a.g) * t,
+        b: a.b + (b.b - a.b) * t,
+        a: a.a + (b.a - a.a) * t,
+    })
+}
+
+/// A tile's heat color from its MoM change: cost up ramps from the neutral
+/// grey toward `up`, cost down toward `down`, ~zero stays neutral, and a
+/// bucket with no previous base takes `new`. Pure over the resolved theme
+/// colors so the tests can drive it without GPUI.
+pub fn heat_color(change: Option<f64>, up: Hsla, down: Hsla, neutral: Hsla, new: Hsla) -> Hsla {
+    match change {
+        None => new,
+        Some(m) if m > 0.0 => mix_color(neutral, up, heat_t(m) as f32),
+        Some(m) => mix_color(neutral, down, heat_t(m) as f32),
+    }
+}
+
+/// Luminance-aware label color for a tile background: `dark` on light
+/// tiles, `light` on dark ones.
+pub fn text_on(bg: Hsla, dark: Hsla, light: Hsla) -> Hsla {
+    let rgb = Rgba::from(bg);
+    let luminance = 0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b;
+    if luminance > 0.55 {
+        dark
+    } else {
+        light
+    }
+}
+
+/// Squarified treemap layout: one `[x, y, w, h]` rect per value, in input
+/// order, packed into `width`×`height` with areas proportional to the
+/// values. Pure geometry — the canvas resolves it to window space and the
+/// tests cover it without GPUI.
+pub fn squarify(values: &[f64], width: f32, height: f32) -> Vec<[f32; 4]> {
+    let mut rects = vec![[0.0; 4]; values.len()];
+    let total: f64 = values.iter().sum();
+    if values.is_empty() || total <= 0.0 || width <= 0.0 || height <= 0.0 {
+        return rects;
+    }
+    let scale = width as f64 * height as f64 / total;
+    // Biggest first; squarified layouts degenerate otherwise.
+    let mut order: Vec<usize> = (0..values.len()).collect();
+    order.sort_by(|&a, &b| values[b].total_cmp(&values[a]));
+    let areas: Vec<f64> = order.iter().map(|&i| values[i].max(0.0) * scale).collect();
+
+    let (mut x, mut y, mut w, mut h) = (0.0f64, 0.0f64, width as f64, height as f64);
+    let mut row: Vec<usize> = Vec::new();
+    let (mut row_sum, mut row_min, mut row_max) = (0.0f64, f64::INFINITY, 0.0f64);
+
+    // The worst aspect ratio a row would produce laid along `side`: with
+    // the row's areas summing to `sum`, the band is `sum / side` thick and
+    // each tile extends `area * side / sum` along the side.
+    let worst = |sum: f64, min: f64, max: f64, side: f64| -> f64 {
+        let s2 = side * side;
+        ((s2 * max) / (sum * sum)).max((sum * sum) / (s2 * min))
+    };
+
+    for i in 0..areas.len() {
+        let area = areas[i];
+        let side = w.min(h);
+        // Add to the current row while that improves (or starts) it; a
+        // zero-length side means the rect is spent — the remaining tiles
+        // collapse onto its edge.
+        if !row.is_empty()
+            && side > 0.0
+            && worst(row_sum + area, row_min.min(area), row_max.max(area), side)
+                > worst(row_sum, row_min, row_max, side)
+        {
+            lay_row(
+                &row, &areas, &order, &mut rects, &mut x, &mut y, &mut w, &mut h,
+            );
+            row.clear();
+            row_sum = 0.0;
+            row_min = f64::INFINITY;
+            row_max = 0.0;
+        }
+        row.push(i);
+        row_sum += area;
+        row_min = row_min.min(area);
+        row_max = row_max.max(area);
+    }
+    if !row.is_empty() {
+        lay_row(
+            &row, &areas, &order, &mut rects, &mut x, &mut y, &mut w, &mut h,
+        );
+    }
+    rects
+}
+
+/// Lay one row out as a band across the remaining rect's short side and
+/// advance the remaining rect past it.
+#[allow(clippy::too_many_arguments)]
+fn lay_row(
+    row: &[usize],
+    areas: &[f64],
+    order: &[usize],
+    rects: &mut [[f32; 4]],
+    x: &mut f64,
+    y: &mut f64,
+    w: &mut f64,
+    h: &mut f64,
+) {
+    let sum: f64 = row.iter().map(|&i| areas[i]).sum();
+    if *w <= *h {
+        // Short side is the width: a horizontal band across the top.
+        let band = if *w > 0.0 { sum / *w } else { 0.0 };
+        let mut cursor = *x;
+        for &i in row {
+            let item_w = if band > 0.0 { areas[i] / band } else { 0.0 };
+            rects[order[i]] = [cursor as f32, *y as f32, item_w as f32, band as f32];
+            cursor += item_w;
+        }
+        *y += band;
+        *h = (*h - band).max(0.0);
+    } else {
+        // Short side is the height: a vertical band down the left.
+        let band = if *h > 0.0 { sum / *h } else { 0.0 };
+        let mut cursor = *y;
+        for &i in row {
+            let item_h = if band > 0.0 { areas[i] / band } else { 0.0 };
+            rects[order[i]] = [*x as f32, cursor as f32, band as f32, item_h as f32];
+            cursor += item_h;
+        }
+        *x += band;
+        *w = (*w - band).max(0.0);
+    }
+}
+
+/// Prepaint state for the treemap canvas: every tile quad and label,
+/// resolved to window space.
+struct TreemapLayout {
+    tiles: Vec<(Bounds<Pixels>, Hsla)>,
+    labels: Vec<(ShapedLine, Point<Pixels>, Pixels)>,
+}
+
+/// The Attribution treemap heatmap: one tile per bucket, area ∝ current
+/// cost, color from the MoM heat ramp. Labels are painted inside tiles big
+/// enough to carry them (name, plus the amount when a second line fits);
+/// every tile's exact numbers live in the hover tooltip.
+///
+/// Hover interactivity mirrors [`spend_area_chart`]: the prepaint writes
+/// the tile bounds (window space) into the shared cell each frame, which
+/// the caller uses to hit-test the mouse and to position the tooltip.
+pub fn treemap_heatmap(
+    cx: &App,
+    items: &[TreemapItem],
+    currency: &str,
+    height: Rems,
+    hover: &TreemapHover,
+) -> impl IntoElement {
+    // Cost up takes the accent — the movers table's attention color for a
+    // positive delta; cost down takes the olive, the theme's positive.
+    // New buckets take the warning yellow so they never read as a neutral
+    // zero.
+    let up = theme::accent(cx);
+    let down = theme::olive(cx);
+    let neutral = theme::grey(cx);
+    let new = theme::warning_text(cx);
+    let dark = theme::text_primary(cx);
+    let light = theme::on_accent(cx);
+
+    // The closures are 'static, so the tiles cross over as owned values.
+    let tiles: Vec<TreemapItem> = items.to_vec();
+    let currency = currency.to_string();
+    let cells = hover.tiles_cell();
+
+    canvas(
+        move |bounds, window, _cx| {
+            let w: f32 = bounds.size.width.into();
+            let h: f32 = bounds.size.height.into();
+            let values: Vec<f64> = tiles.iter().map(|t| t.amount).collect();
+            let rects = squarify(&values, w, h);
+
+            // ~text_xs at the current density.
+            let font_size = rems(0.6875).to_pixels(window.rem_size());
+            let line_height = font_size * 1.4;
+
+            let mut tile_bounds = Vec::with_capacity(rects.len());
+            let mut layout = TreemapLayout {
+                tiles: Vec::with_capacity(rects.len()),
+                labels: Vec::new(),
+            };
+            for (item, [x, y, tw, th]) in tiles.iter().zip(rects.iter()) {
+                let rect = Bounds {
+                    origin: point(
+                        bounds.origin.x + px(*x + TILE_GAP),
+                        bounds.origin.y + px(*y + TILE_GAP),
+                    ),
+                    size: size(
+                        px((tw - 2.0 * TILE_GAP).max(0.0)),
+                        px((th - 2.0 * TILE_GAP).max(0.0)),
+                    ),
+                };
+                tile_bounds.push(rect);
+                let color = heat_color(item.change(), up, down, neutral, new);
+                layout.tiles.push((rect, color));
+
+                // Labels: shaped here, painted below; a tile too small for
+                // its text carries none rather than spilling over its
+                // neighbors (the Sankey's thin-node rule).
+                let inner_w: f32 = (f32::from(rect.size.width) - 2.0 * TILE_PAD).max(0.0);
+                let inner_h: f32 = (f32::from(rect.size.height) - 2.0 * TILE_PAD).max(0.0);
+                let text_color = text_on(color, dark, light);
+                let name = SharedString::from(item.label.clone());
+                let amount = SharedString::from(fmt::amount(item.amount, &currency));
+                let name_line = shape_tile_label(&name, font_size, text_color, window);
+                if inner_h >= f32::from(line_height) && f32::from(name_line.width()) <= inner_w {
+                    let origin = point(rect.origin.x + px(TILE_PAD), rect.origin.y + px(TILE_PAD));
+                    layout.labels.push((name_line, origin, line_height));
+                    let amount_line = shape_tile_label(&amount, font_size, text_color, window);
+                    if inner_h >= 2.0 * f32::from(line_height)
+                        && f32::from(amount_line.width()) <= inner_w
+                    {
+                        let origin = point(
+                            rect.origin.x + px(TILE_PAD),
+                            rect.origin.y + px(TILE_PAD) + line_height,
+                        );
+                        layout.labels.push((amount_line, origin, line_height));
+                    }
+                }
+            }
+            *cells.borrow_mut() = tile_bounds;
+            layout
+        },
+        move |_bounds, layout, window, cx| {
+            for (bounds, color) in &layout.tiles {
+                window
+                    .paint_quad(fill(*bounds, *color).corner_radii(Corners::all(px(TILE_RADIUS))));
+            }
+            for (line, origin, line_height) in &layout.labels {
+                let _ = line.paint(*origin, *line_height, TextAlign::Left, None, window, cx);
+            }
+        },
+    )
+    .w_full()
+    .h(height)
+}
+
+/// Shape one line of tile text with the window's current text style.
+fn shape_tile_label(
+    text: &SharedString,
+    font_size: Pixels,
+    color: Hsla,
+    window: &mut Window,
+) -> ShapedLine {
+    let run = TextRun {
+        len: text.len(),
+        font: window.text_style().font(),
+        color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    window
+        .text_system()
+        .shape_line(text.clone(), font_size, &[run], None)
+}
+
+/// Hover state for a [`treemap_heatmap`]: which tile the mouse is on, plus
+/// the tile-bounds cell the canvas rewrites every frame. One per treemap;
+/// the owning view keeps it and clears it whenever the underlying data
+/// reloads or the dimension switches (stale bounds would tag the wrong
+/// tile).
+pub struct TreemapHover {
+    /// The tile under the mouse, if any.
+    index: Option<usize>,
+    /// The tile bounds in window space, in the tiles' data order.
+    tiles: Rc<RefCell<Vec<Bounds<Pixels>>>>,
+}
+
+impl TreemapHover {
+    pub fn new() -> Self {
+        Self {
+            index: None,
+            tiles: Rc::new(RefCell::new(Vec::new())),
+        }
+    }
+
+    /// Forget the hovered tile; call when the treemap's data changes.
+    pub fn clear(&mut self) {
+        self.index = None;
+    }
+
+    pub fn index(&self) -> Option<usize> {
+        self.index
+    }
+
+    pub fn set(&mut self, index: Option<usize>) {
+        self.index = index;
+    }
+
+    /// The cell a [`treemap_heatmap`] writes its tile bounds into.
+    pub fn tiles_cell(&self) -> Rc<RefCell<Vec<Bounds<Pixels>>>> {
+        self.tiles.clone()
+    }
+
+    /// The tile containing a window-space point, if any.
+    pub fn tile_at(&self, x: f32, y: f32) -> Option<usize> {
+        let position = point(px(x), px(y));
+        self.tiles
+            .borrow()
+            .iter()
+            .position(|b| b.contains(&position))
+    }
+}
+
+impl Default for TreemapHover {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Hovered-tile outline plus tooltip with the tile's exact amount and MoM
+/// move. Positions come from the cell the canvas wrote on the previous
+/// frame — the same one-frame-lag idiom as [`hover_overlay`].
+pub fn treemap_hover_overlay(
+    cx: &App,
+    hover: &TreemapHover,
+    items: &[TreemapItem],
+    currency: &str,
+    rem: Pixels,
+) -> Option<Vec<AnyElement>> {
+    let index = hover.index()?;
+    let tiles = hover.tiles.borrow();
+    let tile = *tiles.get(index)?;
+    let item = items.get(index)?;
+
+    // The canvas extent, derived from the union of the tiles, to clamp the
+    // tooltip inside the chart.
+    let canvas_left = tiles
+        .iter()
+        .map(|b| f32::from(b.origin.x))
+        .fold(f32::INFINITY, f32::min);
+    let canvas_top = tiles
+        .iter()
+        .map(|b| f32::from(b.origin.y))
+        .fold(f32::INFINITY, f32::min);
+    let canvas_right = tiles
+        .iter()
+        .map(|b| f32::from(b.origin.x) + f32::from(b.size.width))
+        .fold(f32::NEG_INFINITY, f32::max);
+    if !canvas_left.is_finite() || !canvas_right.is_finite() {
+        return None;
+    }
+
+    let tip_w: f32 = rems(11.0).to_pixels(rem).into();
+    let tile_left = f32::from(tile.origin.x) - canvas_left;
+    let tile_top = f32::from(tile.origin.y) - canvas_top;
+    let tile_w: f32 = tile.size.width.into();
+    let tile_h: f32 = tile.size.height.into();
+    let canvas_w = canvas_right - canvas_left;
+
+    // Above the tile unless there is no headroom; 48px / 12px / 4px at
+    // the default rem.
+    let headroom: f32 = rems(3.0).to_pixels(rem).into();
+    let below: f32 = rems(0.75).to_pixels(rem).into();
+    let buf: f32 = rems(0.25).to_pixels(rem).into();
+    let tip_left = (tile_left + tile_w / 2.0 - tip_w / 2.0).clamp(0.0, (canvas_w - tip_w).max(0.0));
+    let tip_top = if tile_top > headroom + buf {
+        tile_top - headroom
+    } else {
+        tile_top + tile_h + below
+    };
+
+    let mom = match item.change() {
+        Some(m) => {
+            let color = if m > 0.0 {
+                theme::accent(cx)
+            } else if m < 0.0 {
+                theme::olive(cx)
+            } else {
+                theme::text_muted(cx)
+            };
+            div()
+                .text_xs()
+                .text_color(color)
+                .child(format!("{} vs last month", fmt::change_pct(m * 100.0)))
+        }
+        None => div()
+            .text_xs()
+            .text_color(theme::warning_text(cx))
+            .child("New this period".to_string()),
+    };
+
+    Some(vec![
+        // Hovered-tile outline: the heat color stays put, a hairline ring
+        // marks the selection.
+        div()
+            .absolute()
+            .left(px(tile_left))
+            .top(px(tile_top))
+            .w(px(tile_w))
+            .h(px(tile_h))
+            .rounded(px(TILE_RADIUS))
+            .border_2()
+            .border_color(theme::text_primary(cx))
+            .into_any_element(),
+        theme::card(cx)
+            .absolute()
+            .left(px(tip_left))
+            .top(px(tip_top))
+            .w(px(tip_w))
+            .px_2()
+            .py_1()
+            .shadow_md()
+            .v_flex()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme::text_muted(cx))
+                    .child(item.label.clone()),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme::text_primary(cx))
+                    .child(fmt::amount(item.amount, currency)),
+            )
+            .child(mom)
+            .into_any_element(),
+    ])
+}
+
+#[cfg(test)]
+mod tests {
+    // Explicit imports only: a `use super::*` glob re-pulls `gpui_kit::*`
+    // into the test expansion and tips the crate over the default macro
+    // recursion limit.
+    use super::{heat_color, heat_t, mix_color, squarify, text_on, top_tiles, TreemapItem};
+    use gpui_kit::{Hsla, Rgba};
+
+    fn approx(a: f32, b: f32) -> bool {
+        (a - b).abs() < 0.01
+    }
+
+    /// Edge-touching tiles are not an overlap; the epsilon absorbs the
+    /// f32 rounding where one tile's edge meets the next's.
+    fn overlaps(a: &[f32; 4], b: &[f32; 4]) -> bool {
+        const EPS: f32 = 0.01;
+        a[0] + EPS < b[0] + b[2]
+            && b[0] + EPS < a[0] + a[2]
+            && a[1] + EPS < b[1] + b[3]
+            && b[1] + EPS < a[1] + a[3]
+    }
+
+    #[test]
+    fn squarify_handles_degenerate_input() {
+        assert!(squarify(&[], 100.0, 100.0).is_empty());
+        assert_eq!(squarify(&[1.0], 0.0, 100.0), vec![[0.0; 4]]);
+        assert_eq!(squarify(&[0.0, 0.0], 100.0, 100.0), vec![[0.0; 4]; 2]);
+    }
+
+    #[test]
+    fn squarify_single_tile_fills_the_rect() {
+        let rects = squarify(&[42.0], 200.0, 100.0);
+        assert_eq!(rects, vec![[0.0, 0.0, 200.0, 100.0]]);
+    }
+
+    #[test]
+    fn squarify_preserves_total_area_and_order() {
+        let values = [600.0, 300.0, 100.0, 50.0, 25.0];
+        let rects = squarify(&values, 400.0, 200.0);
+        assert_eq!(rects.len(), values.len());
+        let painted: f32 = rects.iter().map(|r| r[2] * r[3]).sum();
+        assert!(approx(painted, 400.0 * 200.0), "painted area {painted}");
+        // Areas stay proportional to the values, in input order.
+        let total: f64 = values.iter().sum();
+        for (rect, value) in rects.iter().zip(values.iter()) {
+            let want = (value / total) as f32 * 400.0 * 200.0;
+            assert!(
+                approx(rect[2] * rect[3], want),
+                "tile area {} vs {want}",
+                rect[2] * rect[3]
+            );
+        }
+    }
+
+    #[test]
+    fn squarify_never_overlaps_and_stays_in_bounds() {
+        let values = [
+            500.0, 250.0, 120.0, 80.0, 30.0, 12.0, 6.0, 2.0, 1.0, 0.5, 0.25,
+        ];
+        let rects = squarify(&values, 333.0, 217.0);
+        for (i, a) in rects.iter().enumerate() {
+            assert!(a[0] >= -0.01 && a[1] >= -0.01, "tile {i} out of bounds");
+            assert!(
+                a[0] + a[2] <= 333.01 && a[1] + a[3] <= 217.01,
+                "tile {i} out of bounds"
+            );
+            for b in rects.iter().skip(i + 1) {
+                assert!(!overlaps(a, b), "tiles {i} overlap: {a:?} vs {b:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn squarify_equal_values_make_squarish_tiles() {
+        // The point of the squarified layout: no slivers for equal weights.
+        let values = [1.0; 6];
+        let rects = squarify(&values, 300.0, 300.0);
+        for rect in &rects {
+            let aspect = (rect[2] / rect[3]).max(rect[3] / rect[2]);
+            assert!(aspect < 2.0, "sliver tile {rect:?} (aspect {aspect})");
+        }
+    }
+
+    #[test]
+    fn heat_ramp_saturates() {
+        assert_eq!(heat_t(0.0), 0.0);
+        // k = 0.5: a ±50% move lands halfway up the ramp.
+        assert!(approx(heat_t(0.5) as f32, 0.5));
+        assert!(approx(heat_t(-0.5) as f32, 0.5));
+        // Monotone, bounded below 1, and flattening at the extremes.
+        assert!(heat_t(1.0) > heat_t(0.5));
+        assert!(heat_t(10.0) < 1.0);
+        assert!(heat_t(10.0) - heat_t(5.0) < heat_t(1.0) - heat_t(0.5));
+    }
+
+    fn rgb(h: f32, s: f32, l: f32) -> Hsla {
+        Hsla { h, s, l, a: 1.0 }
+    }
+
+    #[test]
+    fn heat_color_picks_the_right_end() {
+        let up = rgb(0.05, 0.8, 0.5); // warm/attention
+        let down = rgb(0.3, 0.6, 0.4); // green/positive
+        let neutral = rgb(0.0, 0.0, 0.6);
+        let new = rgb(0.12, 0.9, 0.5);
+        // New buckets take the "new" color untouched.
+        assert_eq!(heat_color(None, up, down, neutral, new), new);
+        // Zero change stays neutral.
+        assert_eq!(heat_color(Some(0.0), up, down, neutral, new), neutral);
+        // A cost increase leans toward `up`, a decrease toward `down`, and
+        // a bigger move leans harder.
+        let small_up = Rgba::from(heat_color(Some(0.1), up, down, neutral, new));
+        let big_up = Rgba::from(heat_color(Some(2.0), up, down, neutral, new));
+        let up_rgb = Rgba::from(up);
+        assert!((big_up.r - up_rgb.r).abs() < (small_up.r - up_rgb.r).abs());
+        let down_tile = Rgba::from(heat_color(Some(-2.0), up, down, neutral, new));
+        let down_rgb = Rgba::from(down);
+        assert!((down_tile.g - down_rgb.g).abs() < 0.3);
+    }
+
+    #[test]
+    fn mix_color_endpoints_and_midpoint() {
+        let black = rgb(0.0, 0.0, 0.0);
+        let white = rgb(0.0, 0.0, 1.0);
+        assert_eq!(mix_color(black, white, 0.0), black);
+        assert_eq!(mix_color(black, white, 1.0), white);
+        let mid = Rgba::from(mix_color(black, white, 0.5));
+        assert!(approx(mid.r, 0.5) && approx(mid.g, 0.5) && approx(mid.b, 0.5));
+    }
+
+    #[test]
+    fn text_on_tracks_luminance() {
+        let dark = rgb(0.0, 0.0, 0.1);
+        let light = rgb(0.0, 0.0, 0.95);
+        assert_eq!(text_on(rgb(0.0, 0.0, 0.9), dark, light), dark);
+        assert_eq!(text_on(rgb(0.0, 0.0, 0.15), dark, light), light);
+    }
+
+    #[test]
+    fn top_tiles_folds_the_tail() {
+        let items: Vec<TreemapItem> = (0..20)
+            .map(|i| TreemapItem::new(format!("s{i}"), 100.0 - i as f64, 50.0))
+            .collect();
+        let tiles = top_tiles(items, 11);
+        assert_eq!(tiles.len(), 12);
+        assert_eq!(tiles[11].label, "9 more");
+        // The tail sums both periods, so its heat is honest.
+        let want: f64 = (11..20).map(|i| 100.0 - i as f64).sum();
+        assert!(approx(tiles[11].amount as f32, want as f32));
+        assert!(approx(tiles[11].previous as f32, 9.0 * 50.0));
+        // Largest first, and small inputs pass through untouched.
+        assert_eq!(tiles[0].label, "s0");
+        let few = top_tiles(vec![TreemapItem::new("a", 1.0, 1.0)], 11);
+        assert_eq!(few.len(), 1);
+    }
+
+    #[test]
+    fn change_ratio_marks_new_buckets() {
+        assert_eq!(TreemapItem::new("a", 10.0, 0.0).change(), None);
+        let m = TreemapItem::new("a", 15.0, 10.0).change().unwrap();
+        assert!((m - 0.5).abs() < 1e-9);
+        let m = TreemapItem::new("a", 5.0, 10.0).change().unwrap();
+        assert!((m + 0.5).abs() < 1e-9);
+    }
+}

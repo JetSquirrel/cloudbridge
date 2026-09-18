@@ -1,14 +1,20 @@
 //! Attribution View — how every dollar travels from the source that billed
-//! it to the business line that caused it.
+//! it to the business line that caused it, with drill-downs by service,
+//! region, and service category over the same period.
 
 use std::collections::HashMap;
 
-use gpui_kit::component::{button::*, StyledExt};
+use anyhow::Result;
+use chrono::Utc;
+use gpui_kit::component::{button::*, Sizable as _, StyledExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use super::{data, fmt, theme};
+use super::{chart, data, fmt, theme};
+use crate::cloud::BillingPeriod;
+use crate::ledger::query::{self, BreakdownDim};
 use crate::ui::theme::CardOutline as _;
+use crate::{db, ingest};
 
 /// Sankey drawing constants.
 const SANKEY_HEIGHT: f32 = 420.0;
@@ -147,10 +153,136 @@ struct SankeyLayout {
     ribbons: Vec<(Path<Pixels>, Hsla)>,
 }
 
+/// Which dimension the page breaks the period down by. `Tag` is the
+/// classic view — the Sankey and the Unallocated card; the other three are
+/// flat breakdowns over the ledger's stored dimensions.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DrillDim {
+    Tag,
+    Service,
+    Region,
+    ServiceCategory,
+}
+
+impl DrillDim {
+    const ALL: [DrillDim; 4] = [
+        DrillDim::Tag,
+        DrillDim::Service,
+        DrillDim::Region,
+        DrillDim::ServiceCategory,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            DrillDim::Tag => "Tag",
+            DrillDim::Service => "Service",
+            DrillDim::Region => "Region",
+            DrillDim::ServiceCategory => "Category",
+        }
+    }
+
+    fn id(self) -> &'static str {
+        match self {
+            DrillDim::Tag => "dim-tag",
+            DrillDim::Service => "dim-service",
+            DrillDim::Region => "dim-region",
+            DrillDim::ServiceCategory => "dim-category",
+        }
+    }
+
+    /// The breakdown card's title in this dimension. `Tag` never renders
+    /// the card; its title only keeps the match total.
+    fn title(self) -> &'static str {
+        match self {
+            DrillDim::Tag => "By business line",
+            DrillDim::Service => "By service",
+            DrillDim::Region => "By region",
+            DrillDim::ServiceCategory => "By service category",
+        }
+    }
+
+    /// The bucket column's table header.
+    fn bucket_header(self) -> &'static str {
+        match self {
+            DrillDim::Tag => "BUSINESS LINE",
+            DrillDim::Service => "SERVICE",
+            DrillDim::Region => "REGION",
+            DrillDim::ServiceCategory => "SERVICE CATEGORY",
+        }
+    }
+
+    /// Footnote under a breakdown that has an 'Other' bucket, naming what
+    /// landed there.
+    fn other_caption(self) -> &'static str {
+        match self {
+            DrillDim::Tag => "Charges with no business-line tag read as 'Other'.",
+            DrillDim::Service => "Charges with no service read as 'Other'.",
+            DrillDim::Region => "Charges with no region read as 'Other'.",
+            DrillDim::ServiceCategory => "Charges with no service category read as 'Other'.",
+        }
+    }
+
+    /// This dimension's rows of the loaded drill-down.
+    fn rows(self, drilldown: &DrilldownData) -> &[(String, f64)] {
+        match self {
+            DrillDim::Tag => &[],
+            DrillDim::Service => &drilldown.by_service,
+            DrillDim::Region => &drilldown.by_region,
+            DrillDim::ServiceCategory => &drilldown.by_category,
+        }
+    }
+
+    /// The previous period's rows, the treemap's heat base.
+    fn prev_rows(self, drilldown: &DrilldownData) -> &[(String, f64)] {
+        match self {
+            DrillDim::Tag => &[],
+            DrillDim::Service => &drilldown.prev_by_service,
+            DrillDim::Region => &drilldown.prev_by_region,
+            DrillDim::ServiceCategory => &drilldown.prev_by_category,
+        }
+    }
+}
+
+/// How the non-tag breakdown card presents its buckets: the MoM heat
+/// treemap or the classic share table.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BreakdownMode {
+    Map,
+    Table,
+}
+
+impl BreakdownMode {
+    const ALL: [BreakdownMode; 2] = [BreakdownMode::Map, BreakdownMode::Table];
+
+    fn label(self) -> &'static str {
+        match self {
+            BreakdownMode::Map => "Map",
+            BreakdownMode::Table => "Table",
+        }
+    }
+
+    fn id(self) -> &'static str {
+        match self {
+            BreakdownMode::Map => "mode-map",
+            BreakdownMode::Table => "mode-table",
+        }
+    }
+}
+
 /// Attribution View
 pub struct AttributionView {
     /// The loaded page data, once the background load has landed.
     data: Option<data::AttributionData>,
+    /// The breakdowns behind the non-tag dimensions and the Top resources
+    /// card; lands in the same flight as `data`.
+    drilldown: Option<DrilldownData>,
+    /// The dimension the header switcher has selected.
+    dim: DrillDim,
+    /// Map vs. table for the non-tag breakdown card.
+    breakdown_mode: BreakdownMode,
+    /// Treemap hover state (tile under the mouse + the canvas's per-frame
+    /// tile-bounds cell); drives the hover outline and tooltip.
+    treemap_hover: chart::TreemapHover,
     /// Why the last load failed, if it did.
     error: Option<String>,
     /// Whether a load is in flight.
@@ -164,6 +296,10 @@ impl AttributionView {
     pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut view = Self {
             data: None,
+            drilldown: None,
+            dim: DrillDim::Tag,
+            breakdown_mode: BreakdownMode::Map,
+            treemap_hover: chart::TreemapHover::new(),
             error: None,
             loading: true,
             load_generation: 0,
@@ -182,22 +318,32 @@ impl AttributionView {
         self.load(cx);
     }
 
-    /// Load the page's data off the UI thread; the ledger query is
-    /// blocking.
+    /// Load the page's data off the UI thread; the ledger queries are
+    /// blocking. The drill-down rides in the same flight, so switching the
+    /// dimension later is a re-render, not a reload.
     fn load(&mut self, cx: &mut Context<Self>) {
         self.loading = true;
         self.load_generation += 1;
         let generation = self.load_generation;
         cx.spawn(async move |this, cx| {
-            let outcome = smol::unblock(data::load_attribution).await;
+            let outcome = smol::unblock(|| -> Result<_> {
+                let attribution = data::load_attribution()?;
+                let drilldown = load_drilldown()?;
+                Ok((attribution, drilldown))
+            })
+            .await;
             this.update(cx, |view, cx| {
                 if view.load_generation != generation {
                     return;
                 }
                 match outcome {
-                    Ok(loaded) => {
+                    Ok((loaded, drilldown)) => {
                         view.data = Some(loaded);
+                        view.drilldown = Some(drilldown);
                         view.error = None;
+                        // New tiles land in new places; a stale hover
+                        // would tag the wrong bucket.
+                        view.treemap_hover.clear();
                     }
                     Err(e) => {
                         view.error = Some(format!("Could not load attribution: {e}"));
@@ -211,17 +357,59 @@ impl AttributionView {
         .detach();
     }
 
-    fn render_header(&self, cx: &Context<Self>, total: Option<(f64, &str)>) -> impl IntoElement {
+    fn render_header(
+        &self,
+        cx: &mut Context<Self>,
+        total: Option<(f64, &str)>,
+    ) -> impl IntoElement {
         let caption = total.map(|(amount, currency)| {
             format!("{} this billing period", fmt::amount(amount, currency))
         });
-        div().w_full().h_flex().items_center().child(
-            div()
-                .v_flex()
-                .gap_1()
-                .child(theme::page_title(cx, "Attribution"))
-                .when_some(caption, |el, text| el.child(theme::caption(cx, text))),
-        )
+        let selected = self.dim;
+        div()
+            .w_full()
+            .h_flex()
+            .items_center()
+            .justify_between()
+            .child(
+                div()
+                    .v_flex()
+                    .gap_1()
+                    .child(theme::page_title(cx, "Attribution"))
+                    .when_some(caption, |el, text| el.child(theme::caption(cx, text))),
+            )
+            .child(
+                div()
+                    .h_flex()
+                    .items_center()
+                    .gap_1()
+                    .p_1()
+                    .rounded_full()
+                    .border_1()
+                    .border_color(theme::card_border(cx))
+                    .children(DrillDim::ALL.iter().map(|dim| {
+                        let active = *dim == selected;
+                        let button = Button::new(dim.id())
+                            .label(dim.label())
+                            .small()
+                            .rounded_full()
+                            .custom(theme::range_pill(cx, active))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if this.dim != *dim {
+                                    // Every dimension's data loads up
+                                    // front, so a switch is instant.
+                                    this.dim = *dim;
+                                    this.treemap_hover.clear();
+                                    cx.notify();
+                                }
+                            }));
+                        if active {
+                            button.card_outline(cx).font_weight(FontWeight::MEDIUM)
+                        } else {
+                            button
+                        }
+                    })),
+            )
     }
 
     fn render_path_row(&self, cx: &Context<Self>, steps: &[data::PathStep]) -> impl IntoElement {
@@ -556,6 +744,216 @@ impl AttributionView {
             )
     }
 
+    /// The flat breakdown of the selected non-tag dimension: the MoM heat
+    /// treemap by default, or one row per bucket, largest first, with a
+    /// share bar against the dimension's total.
+    fn render_breakdown_card(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+        drilldown: &DrilldownData,
+        dim: DrillDim,
+        currency: &str,
+    ) -> impl IntoElement {
+        let rows = dim.rows(drilldown);
+        let has_other = rows.iter().any(|(label, _)| label == "Other");
+        let selected = self.breakdown_mode;
+        let card = theme::card(cx).w_full().p_5().v_flex().gap_4().child(
+            div()
+                .h_flex()
+                .items_center()
+                .justify_between()
+                .child(theme::section_title(cx, dim.title()))
+                .child(
+                    div()
+                        .h_flex()
+                        .items_center()
+                        .gap_1()
+                        .p_1()
+                        .rounded_full()
+                        .border_1()
+                        .border_color(theme::card_border(cx))
+                        .children(BreakdownMode::ALL.iter().map(|mode| {
+                            let active = *mode == selected;
+                            let button = Button::new(mode.id())
+                                .label(mode.label())
+                                .small()
+                                .rounded_full()
+                                .custom(theme::range_pill(cx, active))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if this.breakdown_mode != *mode {
+                                        this.breakdown_mode = *mode;
+                                        this.treemap_hover.clear();
+                                        cx.notify();
+                                    }
+                                }));
+                            if active {
+                                button.card_outline(cx).font_weight(FontWeight::MEDIUM)
+                            } else {
+                                button
+                            }
+                        })),
+                ),
+        );
+
+        if rows.is_empty() {
+            return card.child(theme::caption(cx, "No usage in this period."));
+        }
+
+        match self.breakdown_mode {
+            BreakdownMode::Map => {
+                card.child(self.render_treemap_pane(window, cx, drilldown, dim, currency))
+            }
+            BreakdownMode::Table => card
+                .child(
+                    div()
+                        .h_flex()
+                        .items_center()
+                        .pb_2()
+                        .child(
+                            theme::header_cell(cx, dim.bucket_header())
+                                .flex_1()
+                                .min_w_0(),
+                        )
+                        .child(theme::header_cell(cx, "AMOUNT").w_24().text_right())
+                        .child(theme::header_cell(cx, "SHARE").w_32().px_2()),
+                )
+                .child(div().v_flex().children(rows.iter().map(|(label, amount)| {
+                    breakdown_row(cx, label, *amount, total(rows), currency)
+                })))
+                .when(has_other, |el| {
+                    el.child(theme::caption(cx, dim.other_caption()))
+                }),
+        }
+    }
+
+    /// The treemap heatmap pane: tile area is the bucket's current cost,
+    /// tile color its MoM move. The wrapper maps the mouse position to a
+    /// tile via the canvas's published bounds; the overlay draws the
+    /// hovered-tile outline and the tooltip on top.
+    fn render_treemap_pane(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+        drilldown: &DrilldownData,
+        dim: DrillDim,
+        currency: &str,
+    ) -> impl IntoElement {
+        let items = chart::top_tiles(
+            treemap_items(dim.rows(drilldown), dim.prev_rows(drilldown)),
+            chart::TILE_CAP,
+        );
+        div()
+            .id("treemap-pane")
+            .w_full()
+            .relative()
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                let x: f32 = event.position.x.into();
+                let y: f32 = event.position.y.into();
+                let hit = this.treemap_hover.tile_at(x, y);
+                if hit != this.treemap_hover.index() {
+                    this.treemap_hover.set(hit);
+                    cx.notify();
+                }
+            }))
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if !*hovered && this.treemap_hover.index().is_some() {
+                    this.treemap_hover.clear();
+                    cx.notify();
+                }
+            }))
+            .child(chart::treemap_heatmap(
+                cx,
+                &items,
+                currency,
+                // 320px at the default 16px rem.
+                rems(20.0),
+                &self.treemap_hover,
+            ))
+            .when_some(
+                chart::treemap_hover_overlay(
+                    cx,
+                    &self.treemap_hover,
+                    &items,
+                    currency,
+                    window.rem_size(),
+                ),
+                |el, overlay| el.children(overlay),
+            )
+    }
+
+    /// The period's costliest resources across every account: display name
+    /// (falling back to the resource id), its service, and what it cost.
+    fn render_top_resources_card(
+        &self,
+        cx: &Context<Self>,
+        resources: &[query::TopResource],
+        currency: &str,
+    ) -> impl IntoElement {
+        let card = theme::card(cx)
+            .w_full()
+            .p_5()
+            .v_flex()
+            .gap_4()
+            .child(theme::section_title(cx, "Top resources"));
+
+        if resources.is_empty() {
+            return card.child(theme::caption(
+                cx,
+                "No resource-level usage this period — charges without a \
+                 resource id cannot be ranked.",
+            ));
+        }
+
+        card.child(
+            div()
+                .h_flex()
+                .items_center()
+                .pb_2()
+                .child(theme::header_cell(cx, "RESOURCE").flex_1().min_w_0())
+                .child(theme::header_cell(cx, "SERVICE").w_40())
+                .child(theme::header_cell(cx, "AMOUNT").w_24().text_right()),
+        )
+        .child(div().v_flex().children(resources.iter().map(|resource| {
+            let name = resource
+                .resource_name
+                .clone()
+                .unwrap_or_else(|| resource.resource_id.clone());
+            div()
+                .h_flex()
+                .items_center()
+                .py_2()
+                .border_t_1()
+                .border_color(theme::card_border(cx))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_sm()
+                        .text_color(theme::text_primary(cx))
+                        .child(name),
+                )
+                .child(
+                    div()
+                        .w_40()
+                        .text_sm()
+                        .text_color(theme::text_muted(cx))
+                        .child(resource.service.clone()),
+                )
+                .child(
+                    div()
+                        .w_24()
+                        .text_right()
+                        .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme::text_primary(cx))
+                        .child(fmt::amount(resource.amount, currency)),
+                )
+        })))
+    }
+
     fn render_empty_state(&self, cx: &Context<Self>) -> impl IntoElement {
         theme::card(cx)
             .w_full()
@@ -626,21 +1024,51 @@ impl AttributionView {
 }
 
 impl Render for AttributionView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body: AnyElement = if let Some(attribution) = &self.data {
             let content: AnyElement = if attribution.sankey.nodes.is_empty() {
                 self.render_empty_state(cx).into_any_element()
             } else {
+                let main: AnyElement = match self.dim {
+                    DrillDim::Tag => div()
+                        .v_flex()
+                        .gap_6()
+                        .child(self.render_path_row(cx, &attribution.path))
+                        .child(self.render_sankey_card(cx, &attribution.sankey))
+                        .child(self.render_unallocated_card(
+                            cx,
+                            &attribution.unallocated,
+                            &attribution.currency,
+                        ))
+                        .into_any_element(),
+                    dim => self
+                        .drilldown
+                        .as_ref()
+                        .map(|drilldown| {
+                            self.render_breakdown_card(
+                                window,
+                                cx,
+                                drilldown,
+                                dim,
+                                &attribution.currency,
+                            )
+                            .into_any_element()
+                        })
+                        // The drill-down lands in the same flight as the
+                        // Sankey; its absence means the load is settling.
+                        .unwrap_or_else(|| self.render_loading(cx).into_any_element()),
+                };
                 div()
                     .v_flex()
                     .gap_6()
-                    .child(self.render_path_row(cx, &attribution.path))
-                    .child(self.render_sankey_card(cx, &attribution.sankey))
-                    .child(self.render_unallocated_card(
-                        cx,
-                        &attribution.unallocated,
-                        &attribution.currency,
-                    ))
+                    .child(main)
+                    .when_some(self.drilldown.as_ref(), |el, drilldown| {
+                        el.child(self.render_top_resources_card(
+                            cx,
+                            &drilldown.top_resources,
+                            &attribution.currency,
+                        ))
+                    })
                     .into_any_element()
             };
             let total: f64 = attribution
@@ -699,4 +1127,178 @@ impl Render for AttributionView {
             .overflow_y_scroll()
             .child(body)
     }
+}
+
+// ==================== Drill-down data ====================
+//
+// The Sankey's loader lives in `data.rs`; the new dimensions are small
+// enough that their loader lives here, next to the view that renders them.
+// Both ledger reads are keyed on one account's period, so the cross-account
+// numbers the page shows are merged per account, the way the Accounts
+// page's MTD column is built.
+
+/// How many rows the Top resources card shows.
+const TOP_RESOURCE_COUNT: usize = 10;
+
+/// The numbers behind the Service / Region / Category dimensions and the
+/// Top resources card — current period across every account, plus the
+/// previous period's breakdowns as the treemap's heat base.
+struct DrilldownData {
+    by_service: Vec<(String, f64)>,
+    by_region: Vec<(String, f64)>,
+    by_category: Vec<(String, f64)>,
+    prev_by_service: Vec<(String, f64)>,
+    prev_by_region: Vec<(String, f64)>,
+    prev_by_category: Vec<(String, f64)>,
+    top_resources: Vec<query::TopResource>,
+}
+
+/// Load the drill-down data. Blocking; the view wraps it in the same
+/// `smol::unblock` as the Sankey load.
+fn load_drilldown() -> Result<DrilldownData> {
+    let period = BillingPeriod::containing(Utc::now());
+    let previous = period.previous();
+    let mut by_service = Vec::new();
+    let mut by_region = Vec::new();
+    let mut by_category = Vec::new();
+    let mut prev_by_service = Vec::new();
+    let mut prev_by_region = Vec::new();
+    let mut prev_by_category = Vec::new();
+    let mut top_resources = Vec::new();
+    for account in db::get_all_accounts()? {
+        let key = ingest::period_key(&account, &period);
+        merge_buckets(
+            &mut by_service,
+            query::breakdown_by(&key, BreakdownDim::Service)?,
+        );
+        merge_buckets(
+            &mut by_region,
+            query::breakdown_by(&key, BreakdownDim::Region)?,
+        );
+        merge_buckets(
+            &mut by_category,
+            query::breakdown_by(&key, BreakdownDim::ServiceCategory)?,
+        );
+        let prev_key = ingest::period_key(&account, &previous);
+        merge_buckets(
+            &mut prev_by_service,
+            query::breakdown_by(&prev_key, BreakdownDim::Service)?,
+        );
+        merge_buckets(
+            &mut prev_by_region,
+            query::breakdown_by(&prev_key, BreakdownDim::Region)?,
+        );
+        merge_buckets(
+            &mut prev_by_category,
+            query::breakdown_by(&prev_key, BreakdownDim::ServiceCategory)?,
+        );
+        top_resources.extend(query::top_resources(&key, TOP_RESOURCE_COUNT)?);
+    }
+    // Largest first in every dimension, as each per-account breakdown was.
+    for rows in [&mut by_service, &mut by_region, &mut by_category] {
+        rows.sort_by(|a, b| b.1.total_cmp(&a.1));
+    }
+    top_resources.sort_by(|a, b| b.amount.total_cmp(&a.amount));
+    top_resources.truncate(TOP_RESOURCE_COUNT);
+
+    Ok(DrilldownData {
+        by_service,
+        by_region,
+        by_category,
+        prev_by_service,
+        prev_by_region,
+        prev_by_category,
+        top_resources,
+    })
+}
+
+/// Add one account's breakdown into the cross-account one, bucket by
+/// bucket — the same idiom the Sankey's totals use in `data.rs`.
+fn merge_buckets(into: &mut Vec<(String, f64)>, rows: Vec<(String, f64)>) {
+    for (label, amount) in rows {
+        match into.iter_mut().find(|(existing, _)| *existing == label) {
+            Some((_, total)) => *total += amount,
+            None => into.push((label, amount)),
+        }
+    }
+}
+
+/// A breakdown's grand total, the share bars' denominator.
+fn total(rows: &[(String, f64)]) -> f64 {
+    rows.iter().map(|(_, amount)| amount).sum()
+}
+
+/// Pair the current breakdown with the previous period's so every treemap
+/// tile carries its own month-over-month base; a bucket with no previous
+/// period gets zero, which the heat map reads as "new".
+fn treemap_items(current: &[(String, f64)], previous: &[(String, f64)]) -> Vec<chart::TreemapItem> {
+    let previous: HashMap<&str, f64> = previous
+        .iter()
+        .map(|(label, amount)| (label.as_str(), *amount))
+        .collect();
+    current
+        .iter()
+        .map(|(label, amount)| {
+            chart::TreemapItem::new(
+                label.clone(),
+                *amount,
+                previous.get(label.as_str()).copied().unwrap_or(0.0),
+            )
+        })
+        .collect()
+}
+
+/// One breakdown row: bucket, amount, and a share-of-dimension bar. The
+/// 'Other' bucket — charges with no value for the dimension — reads muted
+/// so it is not mistaken for a real one.
+fn breakdown_row(cx: &App, label: &str, amount: f64, total: f64, currency: &str) -> Div {
+    let share = if total > 0.0 { amount / total } else { 0.0 };
+    let label_color = if label == "Other" {
+        theme::text_muted(cx)
+    } else {
+        theme::text_primary(cx)
+    };
+    div()
+        .h_flex()
+        .items_center()
+        .py_2()
+        .border_t_1()
+        .border_color(theme::card_border(cx))
+        .child(
+            div()
+                .flex_1()
+                // min_w_0 so a long bucket name truncates instead of
+                // pushing the amount columns out of the card.
+                .min_w_0()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_sm()
+                .text_color(label_color)
+                .child(label.to_string()),
+        )
+        .child(
+            div()
+                .w_24()
+                .text_right()
+                .text_sm()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(theme::text_primary(cx))
+                .child(fmt::amount(amount, currency)),
+        )
+        .child(
+            div().w_32().px_2().child(
+                div()
+                    .w_full()
+                    .h_2()
+                    .rounded_full()
+                    .bg(theme::sidebar_bg(cx))
+                    .child(
+                        div()
+                            .h_full()
+                            .w(relative(share as f32))
+                            .rounded_full()
+                            .bg(theme::accent(cx)),
+                    ),
+            ),
+        )
 }

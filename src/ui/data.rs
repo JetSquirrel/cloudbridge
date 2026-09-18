@@ -704,21 +704,30 @@ fn daily_chart(since: DateTime<Utc>, until: DateTime<Utc>) -> Result<SpendChart>
     Ok(daily_series(&by_day, since, until, true))
 }
 
-/// The 12-month chart: one point per calendar month of the window,
-/// zero-filled, and no baseline series.
-fn monthly_chart(now: DateTime<Utc>) -> Result<SpendChart> {
+/// The last 12 calendar billing periods ending with the one containing
+/// `now`, oldest first.
+fn trailing_year_periods(now: DateTime<Utc>) -> Vec<BillingPeriod> {
     let mut periods = vec![BillingPeriod::containing(now)];
     for _ in 0..11 {
         periods.push(periods.last().expect("one period seeded").previous());
     }
     periods.reverse();
+    periods
+}
 
-    let since = periods[0]
+/// Midnight at the start of the oldest period — the `since` of the usage
+/// query behind a 12-month chart.
+fn year_since(periods: &[BillingPeriod]) -> DateTime<Utc> {
+    periods[0]
         .start()
         .and_hms_opt(0, 0, 0)
         .expect("midnight exists")
-        .and_utc();
-    let by_period: BTreeMap<String, f64> = query::monthly_usage(since)?.into_iter().collect();
+        .and_utc()
+}
+
+/// A monthly series: one zero-filled point per period, and no baseline —
+/// a trailing mean over twelve totals would just lag them.
+fn monthly_series(by_period: &BTreeMap<String, f64>, periods: Vec<BillingPeriod>) -> SpendChart {
     let actual = periods
         .into_iter()
         .map(|period| {
@@ -727,11 +736,19 @@ fn monthly_chart(now: DateTime<Utc>) -> Result<SpendChart> {
             ChartPoint { label, amount }
         })
         .collect();
-
-    Ok(SpendChart {
+    SpendChart {
         actual,
         baseline: Vec::new(),
-    })
+    }
+}
+
+/// The 12-month chart.
+fn monthly_chart(now: DateTime<Utc>) -> Result<SpendChart> {
+    let periods = trailing_year_periods(now);
+    let by_period: BTreeMap<String, f64> = query::monthly_usage(year_since(&periods))?
+        .into_iter()
+        .collect();
+    Ok(monthly_series(&by_period, periods))
 }
 
 /// The "Where it went" rows of a business-line breakdown.
@@ -1341,8 +1358,24 @@ pub fn load_attribution() -> Result<AttributionData> {
         .collect();
 
     // (provider, service) → tag rows, assembled link by link so every
-    // column sums to the same usage total.
+    // column sums to the same usage total. One period-wide tag query
+    // covers every service, merged "Other" tails included — filtering its
+    // rows to one service gives exactly what a per-service breakdown
+    // query would return.
     let services = query::provider_service_usage(&period)?;
+    let mut tags_by_service: BTreeMap<(String, String), Vec<(String, f64)>> = BTreeMap::new();
+    for row in query::tag_usage_breakdown_by_service(&period, BUSINESS_LINE_TAG)? {
+        tags_by_service
+            .entry((row.provider, row.service))
+            .or_default()
+            .push((row.tag_value, row.amount));
+    }
+    let tags_of = |provider: &str, service: &str| {
+        tags_by_service
+            .get(&(provider.to_string(), service.to_string()))
+            .cloned()
+            .unwrap_or_default()
+    };
 
     // Per provider, keep the top services and merge the tail into one
     // "Other" node — tag breakdown included, so every column still sums to
@@ -1367,20 +1400,17 @@ pub fn load_attribution() -> Result<AttributionData> {
         let mut tail_tags: BTreeMap<String, f64> = BTreeMap::new();
         for (service, amount) in tail {
             tail_sum += amount;
-            for (tag, tag_amount) in
-                query::service_tag_usage_breakdown(&period, &provider, &service, BUSINESS_LINE_TAG)?
-            {
+            for (tag, tag_amount) in tags_of(&provider, &service) {
                 *tail_tags.entry(tag).or_insert(0.0) += tag_amount;
             }
         }
         for (service, amount) in rows {
-            let tags = query::service_tag_usage_breakdown(
-                &period,
-                &provider,
-                &service,
-                BUSINESS_LINE_TAG,
-            )?;
-            services.push((provider.clone(), service, amount, tags));
+            services.push((
+                provider.clone(),
+                service.clone(),
+                amount,
+                tags_of(&provider, &service),
+            ));
         }
         if tail_sum > 0.0 {
             services.push((
@@ -1824,52 +1854,31 @@ pub fn load_account_detail(account_id: &str, range: Range) -> Result<AccountDeta
     })
 }
 
-/// The detail page's daily chart: one zero-filled point per day of the
-/// window, no baseline.
+/// The detail page's daily chart, no baseline — the window query starts
+/// at `since`; the trailing-mean lookback is the overview's only.
 fn account_daily_chart(
     provider: &str,
     account_id: &str,
     since: DateTime<Utc>,
     until: DateTime<Utc>,
 ) -> Result<SpendChart> {
-    let by_day: BTreeMap<NaiveDate, f64> = query::daily_usage_of(provider, account_id, since)?
-        .into_iter()
-        .filter_map(|(day, amount)| {
-            NaiveDate::parse_from_str(&day, "%Y-%m-%d")
-                .ok()
-                .map(|day| (day, amount))
-        })
-        .collect();
-
-    let last = until.date_naive();
-    let mut day = since.date_naive();
-    let mut actual = Vec::new();
-    while day <= last {
-        actual.push(ChartPoint {
-            label: day.format("%Y-%m-%d").to_string(),
-            amount: by_day.get(&day).copied().unwrap_or(0.0),
-        });
-        day += chrono::Duration::days(1);
-    }
-
-    Ok(SpendChart {
-        actual,
-        baseline: Vec::new(),
-    })
+    let by_day = daily_map(query::daily_usage_of(provider, account_id, since)?);
+    Ok(daily_series(&by_day, since, until, false))
 }
 
-/// The detail page's 12-month chart: one zero-filled point per calendar
-/// month, no baseline.
+/// The detail page's 12-month chart.
 fn account_monthly_chart(
     provider: &str,
     account_id: &str,
     now: DateTime<Utc>,
 ) -> Result<SpendChart> {
-    let mut periods = vec![BillingPeriod::containing(now)];
-    for _ in 0..11 {
-        periods.push(periods.last().expect("one period seeded").previous());
-    }
-    periods.reverse();
+    let periods = trailing_year_periods(now);
+    let by_period: BTreeMap<String, f64> =
+        query::monthly_usage_of(provider, account_id, year_since(&periods))?
+            .into_iter()
+            .collect();
+    Ok(monthly_series(&by_period, periods))
+}
 
 // ==================== Query ====================
 
