@@ -202,6 +202,128 @@ pub struct MoverRow {
     pub drives: String,
 }
 
+/// One service of the month-over-month card: this month against last.
+pub struct ServiceMonthComparison {
+    pub service: String,
+    /// Net charged this month to date.
+    pub current: f64,
+    /// Net charged over the whole previous month.
+    pub previous: f64,
+    /// Percent change (signed); `None` when last month's base is under a
+    /// cent — the same dust-division rule as the headline percent.
+    pub change_pct: Option<f64>,
+}
+
+/// The MTD page's month-over-month card, from one
+/// [`query::period_over_period`] pass. Net, not gross usage: the
+/// comparison mirrors the headline spend number, so a credit-heavy month
+/// reads as what it cost rather than what was consumed. (The movers table
+/// stays the gross-usage per-service view.)
+pub struct MonthOverMonth {
+    /// Net charged this month to date.
+    pub current_total: f64,
+    /// Net charged over the whole previous month.
+    pub previous_total: f64,
+    /// Percent change of the totals (signed); `None` on a sub-cent
+    /// previous-month base.
+    pub change_pct: Option<f64>,
+    /// The largest services of the two months combined, biggest first.
+    pub services: Vec<ServiceMonthComparison>,
+    /// The "why it changed" section; `None` when the decomposition query
+    /// failed — the card still renders its totals without it.
+    pub decomposition: Option<ChangeDecomposition>,
+}
+
+/// The direction badge of one service movement in the "why it changed"
+/// section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MovementBadge {
+    Appeared,
+    Vanished,
+    Grown,
+    Shrunk,
+}
+
+impl MovementBadge {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Appeared => "Appeared",
+            Self::Vanished => "Vanished",
+            Self::Grown => "Grown",
+            Self::Shrunk => "Shrunk",
+        }
+    }
+}
+
+/// One charge-category delta of the "why it changed" section (usage, tax,
+/// credits, refunds…).
+pub struct CategoryDeltaRow {
+    pub category: String,
+    /// Net change of the category against last month (signed).
+    pub delta: f64,
+}
+
+/// One service movement of the "why it changed" section.
+pub struct ServiceMovementRow {
+    pub service: String,
+    pub badge: MovementBadge,
+    /// Net change of the service against last month (signed).
+    pub delta: f64,
+}
+
+/// The "why it changed" section of the month-over-month card, from one
+/// [`query::cost_change_decomposition`] pass: what the delta is made of,
+/// and whether those components add back up to it (Wealthfolio's
+/// data-quality-as-UI reconciliation check).
+pub struct ChangeDecomposition {
+    /// Top category deltas, largest absolute first.
+    pub categories: Vec<CategoryDeltaRow>,
+    /// Top service movements, largest absolute first.
+    pub movements: Vec<ServiceMovementRow>,
+    /// What the category split fails to explain of the total delta.
+    pub residual: f64,
+    /// Whether `residual` is small enough to ignore. When false the card
+    /// warns that the breakdown does not fully reconcile.
+    pub reconciled: bool,
+}
+
+/// How bad one data-quality finding is; declaration order is severity
+/// order, so `Critical` sorts last ascending and the strip reverses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DataQualitySeverity {
+    Info,
+    Warning,
+    Critical,
+}
+
+impl DataQualitySeverity {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Info => "Info",
+            Self::Warning => "Warning",
+            Self::Critical => "Critical",
+        }
+    }
+}
+
+/// One row of the data-quality warnings strip.
+pub struct DataQualityRow {
+    /// The dismissal key, `{kind}:{billing_period}`; the Dismiss button
+    /// stores it so the finding stays hidden for its period.
+    pub key: String,
+    pub severity: DataQualitySeverity,
+    /// User-readable, with the numbers in it (count included).
+    pub message: String,
+    /// Reporting-currency amount behind the issue, if it has one.
+    pub affected_amount: Option<f64>,
+}
+
+/// The band around card 2's month-end forecast.
+pub struct ForecastBand {
+    pub pessimistic: f64,
+    pub optimistic: f64,
+}
+
 /// Everything the Overview page renders, including the labels: the view
 /// renders, this decides what a range is called.
 pub struct OverviewData {
@@ -217,6 +339,17 @@ pub struct OverviewData {
     pub card2_label: &'static str,
     pub card2_value: f64,
     pub card2_caption: &'static str,
+    /// The optimistic/pessimistic band around card 2's forecast; only a
+    /// forecast range (MTD) carries one — a mean has no confidence band.
+    pub forecast_band: Option<ForecastBand>,
+    /// The flat "typical day" benchmark over the MTD chart, from the
+    /// 6-month trailing daily average; `None` without the history to
+    /// average (the chart then draws no benchmark line).
+    pub chart_benchmark: Option<f64>,
+    /// Data-quality findings for the current period, worst severity first;
+    /// empty when the period is clean (or the check failed — a missing
+    /// health strip must not take the page down).
+    pub data_quality: Vec<DataQualityRow>,
     /// The header caption's range part; the view appends the currency.
     pub window_caption: String,
     /// Movers table delta column header ("VS LAST MONTH", …).
@@ -230,6 +363,9 @@ pub struct OverviewData {
     pub chart: SpendChart,
     pub business_lines: Vec<BusinessLineRow>,
     pub movers: Vec<MoverRow>,
+    /// Month-over-month comparison; only the MTD range has a calendar
+    /// month to compare, so the rolling ranges carry `None`.
+    pub month_over_month: Option<MonthOverMonth>,
 }
 
 /// Chart title and caption of the daily ranges — MTD and 30d both plot
@@ -283,32 +419,22 @@ fn load_overview_mtd(now: DateTime<Utc>) -> Result<OverviewData> {
     let change_pct =
         (prev_mtd >= fmt::DUST_THRESHOLD).then(|| (mtd_usage - prev_mtd) / prev_mtd * 100.0);
 
-    // Forecast: usage MTD plus the recent run rate for the days left.
-    let current_days: Vec<(u32, f64)> = daily_all
-        .iter()
-        .filter(|(day, _)| day.starts_with(&current.label()))
-        .filter_map(|(day, amount)| {
-            day.get(8..10)
-                .and_then(|d| d.parse::<u32>().ok())
-                .map(|d| (d, *amount))
-        })
-        .collect();
-    let recent: Vec<f64> = current_days
-        .iter()
-        .map(|(_, amount)| *amount)
-        .filter(|amount| *amount > 0.0)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .take(7)
-        .collect();
-    let run_rate = if recent.is_empty() {
-        0.0
-    } else {
-        recent.iter().sum::<f64>() / recent.len() as f64
+    // The canonical run-rate forecast: MTD plus the mean daily rate —
+    // measured from the period's first charge, so a mid-month cold start
+    // does not drag it down — for the days left.
+    let forecast = query::forecast_for_period(&current.label())?;
+    // The confidence band around it; additive decoration, so a band
+    // failure must not take the card down.
+    let forecast_band = match query::forecast_bands_for_period(&current.label()) {
+        Ok(bands) => Some(ForecastBand {
+            pessimistic: bands.pessimistic,
+            optimistic: bands.optimistic,
+        }),
+        Err(e) => {
+            tracing::warn!("Could not compute the forecast bands: {}", e);
+            None
+        }
     };
-    let days_in_month = days_in(current.year, current.month);
-    let forecast = mtd_usage + run_rate * f64::from(days_in_month.saturating_sub(today));
 
     // Unallocated share of the current period's usage.
     let breakdown = query::tag_usage_breakdown(&current.label(), BUSINESS_LINE_TAG)?;
@@ -316,41 +442,68 @@ fn load_overview_mtd(now: DateTime<Utc>) -> Result<OverviewData> {
 
     let (open, critical, warning) = alert_counts();
 
-    // Baseline: the 7-day trailing mean ending the day before each point.
-    let by_day: BTreeMap<u32, f64> = current_days.iter().copied().collect();
-    let actual_days: Vec<(u32, f64)> = (1..=today)
-        .filter_map(|d| by_day.get(&d).map(|amount| (d, *amount)))
-        .collect();
-    let baseline = actual_days
-        .iter()
-        .map(|(day, _)| {
-            let window: Vec<f64> = (1..=7u32)
-                .filter_map(|back| day.checked_sub(back))
-                .map(|d| by_day.get(&d).copied().unwrap_or(0.0))
-                .collect();
-            ChartPoint {
-                label: format!("{}-{day:02}", current.label()),
-                amount: window.iter().sum::<f64>() / 7.0,
-            }
-        })
-        .collect();
-    let actual = actual_days
-        .into_iter()
-        .map(|(day, amount)| ChartPoint {
-            label: format!("{}-{day:02}", current.label()),
-            amount,
-        })
-        .collect();
+    // One point per day with data, against the 7-day trailing mean ending
+    // the day before it. The daily series reaches back before the month
+    // starts, so the first week's mean sees the previous month's days too.
+    let by_day = daily_map(daily_all);
+    let mut actual = Vec::new();
+    let mut baseline = Vec::new();
+    let mut day = current.start();
+    let today_date = now.date_naive();
+    while day <= today_date {
+        if let Some(amount) = by_day.get(&day) {
+            let label = day.format("%Y-%m-%d").to_string();
+            actual.push(ChartPoint {
+                label: label.clone(),
+                amount: *amount,
+            });
+            baseline.push(ChartPoint {
+                label,
+                amount: trailing_mean(&by_day, day),
+            });
+        }
+        day += chrono::Duration::days(1);
+    }
 
     let business_lines = business_lines(breakdown);
 
     // Movers: current vs previous period usage per (provider, service).
+    // One period-wide tag query resolves every mover's business line.
     let current_totals = query::provider_service_usage(&current.label())?;
     let previous_totals = query::provider_service_usage(&previous.label())?;
-    let period = current.label();
+    let drives = drives_by_service(query::tag_usage_breakdown_by_service(
+        &current.label(),
+        BUSINESS_LINE_TAG,
+    )?);
     let movers = movers(current_totals, &previous_totals, |provider, service| {
-        drives_of_period(&period, provider, service)
+        Ok(drives
+            .get(&(provider.to_string(), service.to_string()))
+            .cloned()
+            .unwrap_or_else(|| UNALLOCATED.to_string()))
     })?;
+
+    let decomposition = match query::cost_change_decomposition(&current.label()) {
+        Ok(decomposition) => Some(decomposition),
+        Err(e) => {
+            tracing::warn!("Could not decompose the month-over-month change: {}", e);
+            None
+        }
+    };
+    let month_over_month = month_over_month(
+        query::period_over_period(&current.label())?,
+        change_decomposition(decomposition),
+    );
+
+    // The "typical day" benchmark line over the chart: the flat value of
+    // the 6-month trailing daily average. Additive, like the band.
+    let chart_benchmark = benchmark_value(
+        query::trailing_daily_average(i64::from(today), 6).unwrap_or_else(|e| {
+            tracing::warn!("Could not compute the typical-day benchmark: {}", e);
+            Vec::new()
+        }),
+    );
+
+    let data_quality = load_data_quality(&current.label());
 
     Ok(OverviewData {
         currency: reporting_currency(),
@@ -369,8 +522,11 @@ fn load_overview_mtd(now: DateTime<Utc>) -> Result<OverviewData> {
         spend_label: "MONTH TO DATE",
         change_caption: "vs same day last month",
         card2_label: "MONTH-END FORECAST",
-        card2_value: forecast,
-        card2_caption: "MTD plus the mean of the last 7 days of daily usage",
+        card2_value: forecast.forecast,
+        card2_caption: "MTD plus the daily run rate for the rest of the month",
+        forecast_band,
+        chart_benchmark,
+        data_quality,
         window_caption: Range::Mtd.header_caption(now),
         movers_delta_header: "VS LAST MONTH",
         movers_title: "Biggest movers",
@@ -380,6 +536,7 @@ fn load_overview_mtd(now: DateTime<Utc>) -> Result<OverviewData> {
         chart: SpendChart { actual, baseline },
         business_lines,
         movers,
+        month_over_month: Some(month_over_month),
     })
 }
 
@@ -472,23 +629,46 @@ fn load_overview_window(range: Range, now: DateTime<Utc>) -> Result<OverviewData
         chart,
         business_lines: business_lines(breakdown),
         movers,
+        month_over_month: None,
     })
 }
 
-/// The rolling-range daily chart: one point per day of `[since, until)`,
-/// zero-filled so the series spans the whole window, plus the 7-day
-/// trailing mean whose window reaches a week before the range starts.
-fn daily_chart(since: DateTime<Utc>, until: DateTime<Utc>) -> Result<SpendChart> {
-    let by_day: BTreeMap<NaiveDate, f64> =
-        query::daily_usage_all(since - chrono::Duration::days(7))?
-            .into_iter()
-            .filter_map(|(day, amount)| {
-                NaiveDate::parse_from_str(&day, "%Y-%m-%d")
-                    .ok()
-                    .map(|day| (day, amount))
-            })
-            .collect();
+/// `(YYYY-MM-DD, amount)` rows keyed by date; a row that does not parse
+/// is dropped rather than failing the chart.
+fn daily_map(rows: Vec<(String, f64)>) -> BTreeMap<NaiveDate, f64> {
+    rows.into_iter()
+        .filter_map(|(day, amount)| {
+            NaiveDate::parse_from_str(&day, "%Y-%m-%d")
+                .ok()
+                .map(|day| (day, amount))
+        })
+        .collect()
+}
 
+/// The 7-day trailing mean ending the day before `day` — the daily
+/// ranges' baseline series, days without data counting as zero.
+fn trailing_mean(by_day: &BTreeMap<NaiveDate, f64>, day: NaiveDate) -> f64 {
+    (1..=7)
+        .map(|back| {
+            by_day
+                .get(&(day - chrono::Duration::days(back)))
+                .copied()
+                .unwrap_or(0.0)
+        })
+        .sum::<f64>()
+        / 7.0
+}
+
+/// A daily series over `[since, until]`: one zero-filled point per day.
+/// `with_baseline` adds the 7-day trailing mean — the cross-account
+/// overview's baseline; a single account's mean is noisier than it is
+/// informative, so the detail page goes without.
+fn daily_series(
+    by_day: &BTreeMap<NaiveDate, f64>,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    with_baseline: bool,
+) -> SpendChart {
     let last = until.date_naive();
     let mut actual = Vec::new();
     let mut baseline = Vec::new();
@@ -499,23 +679,22 @@ fn daily_chart(since: DateTime<Utc>, until: DateTime<Utc>) -> Result<SpendChart>
             label: label.clone(),
             amount: by_day.get(&day).copied().unwrap_or(0.0),
         });
-        let mean = (1..=7)
-            .map(|back| {
-                by_day
-                    .get(&(day - chrono::Duration::days(back)))
-                    .copied()
-                    .unwrap_or(0.0)
-            })
-            .sum::<f64>()
-            / 7.0;
-        baseline.push(ChartPoint {
-            label,
-            amount: mean,
-        });
+        if with_baseline {
+            baseline.push(ChartPoint {
+                label,
+                amount: trailing_mean(by_day, day),
+            });
+        }
         day += chrono::Duration::days(1);
     }
+    SpendChart { actual, baseline }
+}
 
-    Ok(SpendChart { actual, baseline })
+/// The rolling-range daily chart: the trailing-mean window reaches a week
+/// before the range starts, so the first week's baseline is real data.
+fn daily_chart(since: DateTime<Utc>, until: DateTime<Utc>) -> Result<SpendChart> {
+    let by_day = daily_map(query::daily_usage_all(since - chrono::Duration::days(7))?);
+    Ok(daily_series(&by_day, since, until, true))
 }
 
 /// The 12-month chart: one point per calendar month of the window,
@@ -601,16 +780,189 @@ fn movers(
         .collect()
 }
 
-/// The business line a service's period usage mostly drives, or
-/// "Unallocated".
-fn drives_of_period(period: &str, provider: &str, service: &str) -> Result<String> {
-    Ok(
-        query::service_tag_usage_breakdown(period, provider, service, BUSINESS_LINE_TAG)?
+/// The business line each `(provider, service)` of a period mostly
+/// drives, from one period-wide [`query::tag_usage_breakdown_by_service`]
+/// pass: the first non-Unallocated value wins — the rows are largest
+/// first, so that is the service's biggest tagged line — and a service
+/// with no tagged usage maps to "Unallocated".
+fn drives_by_service(rows: Vec<query::ServiceTagUsage>) -> BTreeMap<(String, String), String> {
+    let mut drives = BTreeMap::new();
+    for row in rows {
+        if row.tag_value == UNALLOCATED {
+            continue;
+        }
+        drives
+            .entry((row.provider, row.service))
+            .or_insert(row.tag_value);
+    }
+    drives
+}
+
+/// How many services the month-over-month card lists.
+const TOP_MONTH_OVER_MONTH_SERVICES: usize = 5;
+
+/// How many category deltas and service movements the "why it changed"
+/// section lists.
+const TOP_DECOMPOSITION_ROWS: usize = 5;
+
+/// The month-over-month card from one [`query::period_over_period`] pass:
+/// the totals' percent change, and the largest services of the two months
+/// with each side's amount and percent change. `decomposition` is the
+/// "why it changed" section, `None` when its query failed.
+fn month_over_month(
+    pop: query::PeriodOverPeriod,
+    decomposition: Option<ChangeDecomposition>,
+) -> MonthOverMonth {
+    let change_pct = (pop.previous_total >= fmt::DUST_THRESHOLD)
+        .then(|| (pop.current_total - pop.previous_total) / pop.previous_total * 100.0);
+
+    let previous: BTreeMap<String, f64> = pop.previous_by_service.into_iter().collect();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut services: Vec<ServiceMonthComparison> = Vec::new();
+    for (service, current) in pop.current_by_service {
+        let before = previous.get(&service).copied().unwrap_or(0.0);
+        seen.insert(service.clone());
+        services.push(ServiceMonthComparison {
+            change_pct: (before >= fmt::DUST_THRESHOLD)
+                .then(|| (current - before) / before * 100.0),
+            service,
+            current,
+            previous: before,
+        });
+    }
+    // A service that vanished this month still earned its row: it is a
+    // −100% mover.
+    for (service, before) in &previous {
+        if seen.contains(service) {
+            continue;
+        }
+        services.push(ServiceMonthComparison {
+            service: service.clone(),
+            current: 0.0,
+            previous: *before,
+            change_pct: (*before >= fmt::DUST_THRESHOLD).then_some(-100.0),
+        });
+    }
+    services.sort_by(|a, b| {
+        b.current
+            .max(b.previous)
+            .total_cmp(&a.current.max(a.previous))
+    });
+    services.truncate(TOP_MONTH_OVER_MONTH_SERVICES);
+
+    MonthOverMonth {
+        current_total: pop.current_total,
+        previous_total: pop.previous_total,
+        change_pct,
+        services,
+        decomposition,
+    }
+}
+
+/// The "why it changed" section from a
+/// [`query::CostChangeDecomposition`]: the top category deltas and service
+/// movements (both arrive largest-absolute first) plus the reconciliation
+/// flags the card warns from. `None` in means `None` out.
+fn change_decomposition(
+    decomposition: Option<query::CostChangeDecomposition>,
+) -> Option<ChangeDecomposition> {
+    let decomposition = decomposition?;
+    let badge = |kind: query::MovementKind| match kind {
+        query::MovementKind::Appeared => MovementBadge::Appeared,
+        query::MovementKind::Vanished => MovementBadge::Vanished,
+        query::MovementKind::Grown => MovementBadge::Grown,
+        query::MovementKind::Shrunk => MovementBadge::Shrunk,
+    };
+    Some(ChangeDecomposition {
+        categories: decomposition
+            .by_category
             .into_iter()
-            .find(|(value, _)| value != UNALLOCATED)
-            .map(|(value, _)| value)
-            .unwrap_or_else(|| UNALLOCATED.to_string()),
-    )
+            .take(TOP_DECOMPOSITION_ROWS)
+            .map(|row| CategoryDeltaRow {
+                category: row.category,
+                delta: row.delta,
+            })
+            .collect(),
+        movements: decomposition
+            .by_service
+            .into_iter()
+            .take(TOP_DECOMPOSITION_ROWS)
+            .map(|row| ServiceMovementRow {
+                badge: badge(row.kind),
+                service: row.service,
+                delta: row.delta,
+            })
+            .collect(),
+        residual: decomposition.residual,
+        reconciled: decomposition.reconciled,
+    })
+}
+
+/// The flat "typical day" benchmark of a trailing-average series: the
+/// series is flat within a month, so its last value is the line. `None`
+/// when the series is empty or nothing but dust — the Wealthfolio rule is
+/// to skip the overlay when there is no real history to average, and a
+/// flat zero line is exactly that.
+fn benchmark_value(series: Vec<(String, f64)>) -> Option<f64> {
+    let (_, value) = series.last()?;
+    (*value >= fmt::DUST_THRESHOLD).then_some(*value)
+}
+
+/// The data-quality strip rows for a period, worst severity first. The
+/// check is additive page decoration: a failed check logs and yields an
+/// empty strip rather than taking the page down.
+///
+/// Findings the user already dismissed for this period are filtered out
+/// here, at the data layer, so a refresh cannot resurrect them — the strip
+/// reappears only when a load surfaces a finding that is new (a different
+/// kind, or a new period).
+fn load_data_quality(billing_period: &str) -> Vec<DataQualityRow> {
+    let issues =
+        query::data_quality_issues(billing_period, BUSINESS_LINE_TAG).unwrap_or_else(|e| {
+            tracing::warn!("Could not check the period's data quality: {}", e);
+            Vec::new()
+        });
+    let dismissed = db::dismissed_quality_issue_keys().unwrap_or_else(|e| {
+        tracing::warn!("Could not read the dismissed data-quality issues: {}", e);
+        std::collections::HashSet::new()
+    });
+    data_quality_rows(billing_period, issues, &dismissed)
+}
+
+/// The strip rows of a set of findings: dismissal keys assigned, dismissed
+/// findings dropped, severity mapped, Critical first.
+fn data_quality_rows(
+    billing_period: &str,
+    issues: Vec<query::DataQualityIssue>,
+    dismissed: &std::collections::HashSet<String>,
+) -> Vec<DataQualityRow> {
+    let mut rows: Vec<DataQualityRow> = issues
+        .into_iter()
+        .map(|issue| DataQualityRow {
+            key: issue.dismissal_key(billing_period),
+            severity: match issue.severity {
+                query::IssueSeverity::Info => DataQualitySeverity::Info,
+                query::IssueSeverity::Warning => DataQualitySeverity::Warning,
+                query::IssueSeverity::Critical => DataQualitySeverity::Critical,
+            },
+            message: issue.message,
+            affected_amount: issue.affected_amount,
+        })
+        .filter(|row| !dismissed.contains(&row.key))
+        .collect();
+    rows.sort_by_key(|row| std::cmp::Reverse(row.severity));
+    rows
+}
+
+/// Persistently dismiss data-quality findings by their dismissal keys, so
+/// they stay hidden for their billing period across sessions and
+/// refreshes. Blocking, but a single-row write per key — the views call it
+/// straight from the Dismiss click handler.
+pub fn dismiss_quality_issues(keys: &[String]) -> Result<()> {
+    for key in keys {
+        db::dismiss_quality_issue(key)?;
+    }
+    Ok(())
 }
 
 /// [`drives_of_period`] over a charge-time window.
@@ -664,18 +1016,6 @@ fn alert_counts() -> (usize, usize, usize) {
         .filter(|a| a.severity == alerts::Severity::Warning)
         .count();
     (open.len(), critical, warning)
-}
-
-/// Days in a calendar month.
-fn days_in(year: i32, month: u32) -> u32 {
-    let (next_year, next_month) = if month == 12 {
-        (year + 1, 1)
-    } else {
-        (year, month + 1)
-    };
-    let first = chrono::NaiveDate::from_ymd_opt(year, month, 1).expect("a valid month");
-    let next = chrono::NaiveDate::from_ymd_opt(next_year, next_month, 1).expect("a valid month");
-    (next - first).num_days() as u32
 }
 
 // ==================== Accounts ====================
@@ -1525,3 +1865,219 @@ pub fn load_sync_status() -> Result<SyncStatus> {
         next_fetch_at: last.map(|at| at + chrono::Duration::hours(hours)),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Midnight UTC of a `YYYY-MM-DD`, for chart tests.
+    fn at(date: NaiveDate) -> DateTime<Utc> {
+        date.and_hms_opt(0, 0, 0)
+            .expect("midnight exists")
+            .and_utc()
+    }
+
+    #[test]
+    fn trailing_mean_counts_missing_days_as_zero() {
+        let day = NaiveDate::from_ymd_opt(2026, 9, 8).expect("a real date");
+        let mut by_day = BTreeMap::new();
+        by_day.insert(day - chrono::Duration::days(1), 70.0);
+        by_day.insert(day - chrono::Duration::days(7), 7.0);
+        // 70 + 7 over 7 days; the five days without data count as zero.
+        assert_eq!(trailing_mean(&by_day, day), 11.0);
+        // The day itself never feeds its own baseline.
+        by_day.insert(day, 700.0);
+        assert_eq!(trailing_mean(&by_day, day), 11.0);
+    }
+
+    #[test]
+    fn daily_series_zero_fills_and_baselines_on_demand() {
+        let first = NaiveDate::from_ymd_opt(2026, 9, 1).expect("a real date");
+        let last = NaiveDate::from_ymd_opt(2026, 9, 3).expect("a real date");
+        let mut by_day = BTreeMap::new();
+        by_day.insert(
+            NaiveDate::from_ymd_opt(2026, 9, 2).expect("a real date"),
+            5.0,
+        );
+
+        let chart = daily_series(&by_day, at(first), at(last), false);
+        let amounts: Vec<f64> = chart.actual.iter().map(|p| p.amount).collect();
+        assert_eq!(amounts, vec![0.0, 5.0, 0.0]);
+        assert!(chart.baseline.is_empty());
+
+        let chart = daily_series(&by_day, at(first), at(last), true);
+        assert_eq!(chart.baseline.len(), chart.actual.len());
+    }
+
+    #[test]
+    fn drives_prefers_the_largest_tagged_line() {
+        let rows = vec![
+            query::ServiceTagUsage {
+                provider: "aws".to_string(),
+                service: "EC2".to_string(),
+                tag_value: UNALLOCATED.to_string(),
+                amount: 100.0,
+            },
+            query::ServiceTagUsage {
+                provider: "aws".to_string(),
+                service: "EC2".to_string(),
+                tag_value: "payments".to_string(),
+                amount: 50.0,
+            },
+            query::ServiceTagUsage {
+                provider: "aws".to_string(),
+                service: "S3".to_string(),
+                tag_value: "analytics".to_string(),
+                amount: 10.0,
+            },
+        ];
+        let drives = drives_by_service(rows);
+        assert_eq!(
+            drives.get(&("aws".to_string(), "EC2".to_string())),
+            Some(&"payments".to_string())
+        );
+        assert_eq!(
+            drives.get(&("aws".to_string(), "S3".to_string())),
+            Some(&"analytics".to_string())
+        );
+        assert!(!drives.contains_key(&("gcp".to_string(), "EC2".to_string())));
+    }
+
+    #[test]
+    fn month_over_month_unions_both_months() {
+        let mom = month_over_month(
+            query::PeriodOverPeriod {
+                current_total: 150.0,
+                previous_total: 100.0,
+                current_by_service: vec![("EC2".to_string(), 150.0)],
+                previous_by_service: vec![("EC2".to_string(), 80.0), ("Retired".to_string(), 20.0)],
+            },
+            None,
+        );
+        assert_eq!(mom.change_pct, Some(50.0));
+
+        assert_eq!(mom.services.len(), 2);
+        let ec2 = &mom.services[0];
+        assert_eq!(ec2.service, "EC2");
+        assert_eq!((ec2.current, ec2.previous), (150.0, 80.0));
+        assert_eq!(ec2.change_pct, Some(87.5));
+        // A service that vanished this month is a −100% mover.
+        let retired = &mom.services[1];
+        assert_eq!(retired.service, "Retired");
+        assert_eq!((retired.current, retired.previous), (0.0, 20.0));
+        assert_eq!(retired.change_pct, Some(-100.0));
+        assert!(mom.decomposition.is_none());
+    }
+
+    #[test]
+    fn month_over_month_skips_delta_on_a_dust_base() {
+        let mom = month_over_month(
+            query::PeriodOverPeriod {
+                current_total: 10.0,
+                previous_total: 0.0,
+                current_by_service: vec![("EC2".to_string(), 10.0)],
+                previous_by_service: Vec::new(),
+            },
+            None,
+        );
+        assert_eq!(mom.change_pct, None);
+        assert_eq!(mom.services[0].change_pct, None);
+    }
+
+    /// A decomposition with every movement kind and more rows than the
+    /// section lists.
+    fn sample_decomposition() -> query::CostChangeDecomposition {
+        query::CostChangeDecomposition {
+            billing_period: "2026-09".to_string(),
+            previous_period: "2026-08".to_string(),
+            current_total: 150.0,
+            previous_total: 100.0,
+            total_delta: 50.0,
+            by_category: (0..7)
+                .map(|i| query::CategoryDelta {
+                    category: format!("Category{i}"),
+                    current: 10.0 + f64::from(i),
+                    previous: 10.0,
+                    delta: f64::from(i),
+                })
+                .collect(),
+            by_service: vec![
+                query::ServiceMovement {
+                    service: "NewSvc".to_string(),
+                    kind: query::MovementKind::Appeared,
+                    current: 40.0,
+                    previous: 0.0,
+                    delta: 40.0,
+                },
+                query::ServiceMovement {
+                    service: "GoneSvc".to_string(),
+                    kind: query::MovementKind::Vanished,
+                    current: 0.0,
+                    previous: 20.0,
+                    delta: -20.0,
+                },
+                query::ServiceMovement {
+                    service: "BigSvc".to_string(),
+                    kind: query::MovementKind::Grown,
+                    current: 100.0,
+                    previous: 90.0,
+                    delta: 10.0,
+                },
+                query::ServiceMovement {
+                    service: "SmallSvc".to_string(),
+                    kind: query::MovementKind::Shrunk,
+                    current: 10.0,
+                    previous: 15.0,
+                    delta: -5.0,
+                },
+            ],
+            residual: 2.5,
+            reconciled: false,
+        }
+    }
+
+    #[test]
+    fn change_decomposition_maps_badges_and_truncates() {
+        let why = change_decomposition(Some(sample_decomposition())).expect("Some in, Some out");
+        // Seven category rows in, five out.
+        assert_eq!(why.categories.len(), TOP_DECOMPOSITION_ROWS);
+        assert_eq!(why.movements.len(), 4);
+        let badges: Vec<MovementBadge> = why.movements.iter().map(|row| row.badge).collect();
+        assert_eq!(
+            badges,
+            vec![
+                MovementBadge::Appeared,
+                MovementBadge::Vanished,
+                MovementBadge::Grown,
+                MovementBadge::Shrunk,
+            ]
+        );
+        // The reconciliation flags pass through untouched.
+        assert!(!why.reconciled);
+        assert_eq!(why.residual, 2.5);
+    }
+
+    #[test]
+    fn change_decomposition_passes_none_through() {
+        assert!(change_decomposition(None).is_none());
+    }
+
+    #[test]
+    fn benchmark_value_skips_empty_and_dust_series() {
+        assert_eq!(benchmark_value(Vec::new()), None);
+        // A fresh ledger averages to a flat zero line: no real history,
+        // no overlay.
+        let zeros = (1..=5)
+            .map(|day| (format!("2026-09-{day:02}"), 0.0))
+            .collect();
+        assert_eq!(benchmark_value(zeros), None);
+    }
+
+    #[test]
+    fn benchmark_value_takes_the_flat_value() {
+        let series = (1..=5)
+            .map(|day| (format!("2026-09-{day:02}"), 42.0))
+            .collect();
+        assert_eq!(benchmark_value(series), Some(42.0));
+    }
+

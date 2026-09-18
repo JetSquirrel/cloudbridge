@@ -290,6 +290,15 @@ impl OverviewView {
                                             theme::olive(cx),
                                             "7-day baseline",
                                         ))
+                                    })
+                                    // Only the MTD chart carries the
+                                    // typical-day benchmark line.
+                                    .when(d.chart_benchmark.is_some(), |el| {
+                                        el.child(legend_dotted(
+                                            cx,
+                                            theme::grey(cx),
+                                            "Typical day (6-mo avg)",
+                                        ))
                                     }),
                             ),
                     )
@@ -428,6 +437,12 @@ impl OverviewView {
                 self.chart_hover.points_cell(),
                 self.chart_hover.bounds_cell(),
             ))
+            // The typical-day benchmark: a flat dotted grey line layered
+            // over the chart canvas.
+            .when_some(
+                d.chart_benchmark.map(|value| benchmark_frac(d, value)),
+                |el, frac| el.child(benchmark_overlay(cx, frac)),
+            )
             .when_some(
                 chart::hover_overlay(
                     cx,
@@ -480,6 +495,10 @@ impl Render for OverviewView {
                 .child(render_stats(cx, d))
                 .child(self.render_middle(d, window, cx))
                 .child(render_movers(cx, d))
+                // MTD only; the rolling ranges carry no month-over-month.
+                .when_some(d.month_over_month.as_ref(), |el, mom| {
+                    el.child(render_month_over_month(cx, &d.currency, mom))
+                })
                 .into_any_element(),
         };
 
@@ -558,7 +577,15 @@ fn render_stats(cx: &App, d: &data::OverviewData) -> impl IntoElement {
             fmt::amount(d.card2_value, currency),
             div()
                 .text_color(theme::text_muted(cx))
-                .child(d.card2_caption),
+                .child(match &d.forecast_band {
+                    // MTD: the confidence band under the point forecast.
+                    Some(band) => format!(
+                        "range {}–{}",
+                        fmt::amount(band.pessimistic, currency),
+                        fmt::amount(band.optimistic, currency)
+                    ),
+                    None => d.card2_caption.to_string(),
+                }),
         ))
         .child(theme::stat_card(
             cx,
@@ -695,6 +722,238 @@ fn render_movers(cx: &App, d: &data::OverviewData) -> impl IntoElement {
         )
 }
 
+/// "Month over month" card (MTD range only): net this month to date
+/// against the whole of last month, total and per service.
+fn render_month_over_month(
+    cx: &App,
+    currency: &str,
+    mom: &data::MonthOverMonth,
+) -> impl IntoElement {
+    let delta = mom.change_pct.map(|pct| {
+        let color = if pct < 0.0 {
+            theme::text_muted(cx)
+        } else {
+            theme::accent(cx)
+        };
+        div()
+            .text_sm()
+            .text_color(color)
+            .child(fmt::change_pct(pct))
+    });
+    theme::card(cx)
+        .w_full()
+        .p_5()
+        .v_flex()
+        .gap_4()
+        .child(theme::section_title(cx, "Month over month"))
+        .child(
+            div()
+                .h_flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme::text_muted(cx))
+                        .child(format!(
+                            "{} so far vs {} in all of last month",
+                            fmt::amount(mom.current_total, currency),
+                            fmt::amount(mom.previous_total, currency)
+                        )),
+                )
+                .when_some(delta, |el, delta| el.child(delta)),
+        )
+        .child(
+            div()
+                .v_flex()
+                .child(
+                    div()
+                        .h_flex()
+                        .items_center()
+                        .pb_2()
+                        .child(theme::header_cell(cx, "SERVICE").flex_1().min_w_0())
+                        .child(theme::header_cell(cx, "THIS MONTH").w_24().text_right())
+                        .child(theme::header_cell(cx, "LAST MONTH").w_24().text_right())
+                        .child(theme::header_cell(cx, "CHANGE").w_40().text_right()),
+                )
+                .children(mom.services.iter().map(|row| {
+                    let (delta_text, delta_color) = match row.change_pct {
+                        Some(pct) if pct < 0.0 => (fmt::change_pct(pct), theme::text_muted(cx)),
+                        Some(pct) => (fmt::change_pct(pct), theme::accent(cx)),
+                        // No meaningful previous-month base to compare
+                        // against.
+                        None => ("—".to_string(), theme::text_muted(cx)),
+                    };
+                    div()
+                        .h_flex()
+                        .items_center()
+                        .py_3()
+                        .border_t_1()
+                        .border_color(theme::card_border(cx))
+                        .child(
+                            div()
+                                .flex_1()
+                                // min_w_0 so a long service name truncates
+                                // instead of pushing the amount columns
+                                // out of the card.
+                                .min_w_0()
+                                .text_sm()
+                                .text_color(theme::text_primary(cx))
+                                .child(row.service.clone()),
+                        )
+                        .child(
+                            div()
+                                .w_24()
+                                .text_right()
+                                .text_sm()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(theme::text_primary(cx))
+                                .child(fmt::amount(row.current, currency)),
+                        )
+                        .child(
+                            div()
+                                .w_24()
+                                .text_right()
+                                .text_sm()
+                                .text_color(theme::text_muted(cx))
+                                .child(fmt::amount(row.previous, currency)),
+                        )
+                        .child(
+                            div()
+                                .w_40()
+                                .text_right()
+                                .text_sm()
+                                .text_color(delta_color)
+                                .child(delta_text),
+                        )
+                })),
+        )
+        // The "why it changed" decomposition; absent when its query
+        // failed, the card then shows totals only.
+        .when_some(mom.decomposition.as_ref(), |el, why| {
+            el.child(render_why_it_changed(cx, currency, why))
+        })
+}
+
+/// The "why it changed" section of the month-over-month card: the top
+/// charge-category deltas and the top service movements with their
+/// Appeared/Vanished/Grown/Shrunk badge, plus a warning when the
+/// components do not add back up to the delta they claim to explain.
+fn render_why_it_changed(
+    cx: &App,
+    currency: &str,
+    why: &data::ChangeDecomposition,
+) -> impl IntoElement {
+    div()
+        .v_flex()
+        .gap_3()
+        .pt_4()
+        .border_t_1()
+        .border_color(theme::card_border(cx))
+        .child(theme::section_title(cx, "Why it changed"))
+        .child(
+            div()
+                .h_flex()
+                .items_start()
+                .gap_6()
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .v_flex()
+                        .gap_1()
+                        .child(theme::header_cell(cx, "BY CATEGORY"))
+                        .children(why.categories.iter().map(|row| {
+                            div()
+                                .h_flex()
+                                .items_center()
+                                .justify_between()
+                                .py_1()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(theme::text_muted(cx))
+                                        .child(row.category.clone()),
+                                )
+                                .child(delta_amount(cx, row.delta, currency))
+                        })),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .v_flex()
+                        .gap_1()
+                        .child(theme::header_cell(cx, "BY SERVICE"))
+                        .children(why.movements.iter().map(|row| {
+                            let badge_fg = match row.badge {
+                                data::MovementBadge::Appeared | data::MovementBadge::Grown => {
+                                    theme::accent(cx)
+                                }
+                                data::MovementBadge::Vanished | data::MovementBadge::Shrunk => {
+                                    theme::text_muted(cx)
+                                }
+                            };
+                            div()
+                                .h_flex()
+                                .items_center()
+                                .gap_2()
+                                .py_1()
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        // min_w_0 so a long service name
+                                        // truncates instead of pushing the
+                                        // badge and delta out.
+                                        .min_w_0()
+                                        .text_sm()
+                                        .text_color(theme::text_primary(cx))
+                                        .child(row.service.clone()),
+                                )
+                                .child(theme::pill(
+                                    row.badge.label(),
+                                    theme::sidebar_bg(cx),
+                                    badge_fg,
+                                ))
+                                .child(delta_amount(cx, row.delta, currency))
+                        })),
+                ),
+        )
+        // Wealthfolio's data-quality-as-UI rule: a decomposition that
+        // does not reconcile says so, with the unexplained amount.
+        .when(!why.reconciled, |el| {
+            el.child(
+                div()
+                    .text_xs()
+                    .text_color(theme::warning_text(cx))
+                    .child(format!(
+                    "This breakdown leaves {} unexplained — the components don't fully reconcile.",
+                    fmt::amount(why.residual.abs(), currency)
+                )),
+            )
+        })
+}
+
+/// A signed money delta, colored like the page's change percents: rises
+/// in the accent, drops muted.
+fn delta_amount(cx: &App, delta: f64, currency: &str) -> Div {
+    let color = if delta < 0.0 {
+        theme::text_muted(cx)
+    } else {
+        theme::accent(cx)
+    };
+    let text = if delta >= 0.0 {
+        format!("+{}", fmt::amount(delta, currency))
+    } else {
+        fmt::amount(delta, currency)
+    };
+    div()
+        .text_sm()
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(color)
+        .child(text)
+}
+
 fn legend_solid(cx: &App, color: Hsla, label: &'static str) -> Div {
     div()
         .h_flex()
@@ -731,6 +990,71 @@ fn legend_dashed(cx: &App, color: Hsla, label: &'static str) -> Div {
                 .text_color(theme::text_muted(cx))
                 .child(label),
         )
+}
+
+fn legend_dotted(cx: &App, color: Hsla, label: &'static str) -> Div {
+    div()
+        .h_flex()
+        .items_center()
+        .gap_2()
+        .child(
+            div()
+                .h_flex()
+                .items_center()
+                .gap_0p5()
+                // Decorative 2×2 dots at the default rem; rem-based so
+                // they zoom with the base font.
+                .children((0..4).map(|_| div().w_0p5().h_0p5().rounded_full().bg(color))),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme::text_muted(cx))
+                .child(label),
+        )
+}
+
+/// Where the flat benchmark value falls on the chart's y-axis (0.0 =
+/// bottom, 1.0 = top), using the chart canvas's own padded range over the
+/// same two series (actual + baseline).
+fn benchmark_frac(d: &data::OverviewData, value: f64) -> f32 {
+    let (min, max) = chart::padded_y_range(
+        d.chart
+            .actual
+            .iter()
+            .chain(d.chart.baseline.iter())
+            .map(|point| point.amount),
+    );
+    (((value - min) / (max - min)) as f32).clamp(0.0, 1.0)
+}
+
+/// The typical-day benchmark line, layered absolutely over the chart
+/// canvas: a dotted grey horizontal line at the benchmark's y, visually
+/// distinct from the dashed olive 7-day baseline.
+fn benchmark_overlay(cx: &App, frac: f32) -> impl IntoElement {
+    let color = theme::grey(cx);
+    canvas(
+        move |bounds, _window, _cx| {
+            let left: f32 = bounds.origin.x.into();
+            let top: f32 = bounds.origin.y.into();
+            let width: f32 = bounds.size.width.into();
+            let height: f32 = bounds.size.height.into();
+            (left, top + height * (1.0 - frac), left + width)
+        },
+        move |_bounds, (left, y, right), window, _cx| {
+            // 1px stroke, 2px dash / 4px gap at the default rem.
+            let rem = window.rem_size();
+            let mut line =
+                PathBuilder::stroke(rems(0.0625).to_pixels(rem)).dash_array(&[px(2.0), px(4.0)]);
+            line.move_to(point(px(left), px(y)));
+            line.line_to(point(px(right), px(y)));
+            if let Ok(path) = line.build() {
+                window.paint_path(path, color);
+            }
+        },
+    )
+    .absolute()
+    .inset_0()
 }
 
 /// Bar color for a business line: "Unallocated" is grey, everything else

@@ -22,6 +22,25 @@ const Y_PAD_FRAC: f64 = 0.15;
 /// chrome, not structure, so it sits one step further back.
 const GUIDE_OPACITY: f32 = 0.4;
 
+/// The y-range the canvas maps data onto: the series min/max widened by
+/// [`Y_PAD_FRAC`] on both ends, falling back to 0..=1 for an empty or flat
+/// series. Overlays that land on the chart's scale (the Overview's
+/// benchmark line) derive from this same range.
+pub(crate) fn padded_y_range(values: impl IntoIterator<Item = f64>) -> (f64, f64) {
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    for v in values {
+        min = min.min(v);
+        max = max.max(v);
+    }
+    if !min.is_finite() || !max.is_finite() || min >= max {
+        min = 0.0;
+        max = 1.0;
+    }
+    let pad = (max - min) * Y_PAD_FRAC;
+    (min - pad, max + pad)
+}
+
 /// The Overview spend chart: a smooth area chart of actual usage in the
 /// accent color over a dashed olive 7-day baseline, with faint horizontal
 /// gridlines and no axis labels. An empty `baseline` (the 12-month range)
@@ -56,19 +75,7 @@ pub fn spend_area_chart(
             let h: f32 = bounds.size.height.into();
             *bounds_cell.borrow_mut() = Some(bounds);
 
-            let mut min = f64::INFINITY;
-            let mut max = f64::NEG_INFINITY;
-            for v in actual.iter().chain(baseline.iter()) {
-                min = min.min(*v);
-                max = max.max(*v);
-            }
-            if !min.is_finite() || !max.is_finite() || min >= max {
-                min = 0.0;
-                max = 1.0;
-            }
-            let pad = (max - min) * Y_PAD_FRAC;
-            min -= pad;
-            max += pad;
+            let (min, max) = padded_y_range(actual.iter().chain(baseline.iter()).copied());
 
             let to_points = |data: &[f64]| -> Vec<(f32, f32)> {
                 let denom = (data.len().saturating_sub(1)).max(1) as f32;

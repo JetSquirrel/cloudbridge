@@ -144,10 +144,19 @@ data in the browser (`src/web/`). Everything above that — `src/ui/`, `app.rs`,
 `alerts.rs`, `model.rs` — is shared and compiles for both, so **a change to a
 page must keep building for wasm**, not just for the desktop.
 
-`.github/workflows/ci.yml` includes advisory wasm and MSRV checks. The wasm
-job skips when the web build script, bridge manifest or fonts directory is
-absent from the checkout. Once the web sources are tracked and CI is verified,
-remove its `continue-on-error` to enforce the shared-code build requirement.
+The two backends select and group charges their own way, but stop there.
+Anything computed *from* those groups is `src/analytics.rs`: the run-rate
+forecast and its bands, the period comparison, the cost-change decomposition,
+the trailing daily average, balance burn and the data-quality findings, plus
+the billing-period arithmetic. It is pure — `now` is an argument, nothing
+opens a store — and it carries the tests for all of it. **A new statistic goes
+there, not into a `query.rs`**; what belongs in a `query.rs` is the read that
+feeds it. The demo bill is the same arrangement: `src/demo_data.rs` builds the
+rows, each target's `ledger::demo` writes them.
+
+`.github/workflows/ci.yml` builds the web demo as a **required** job — it is
+the only thing that notices when the two backends' signatures drift apart, or
+when a page stops compiling for wasm. The MSRV check beside it stays advisory.
 The MSRV job reads `package.rust-version` from `Cargo.toml` (currently 1.95).
 The locked `gpui-pre` dependency uses `std::hint::cold_path`, stabilized in
 Rust 1.95; `cargo +1.94.0 check --locked` fails on this API on macOS ARM64.

@@ -123,9 +123,14 @@ Open `http://localhost:8000/`. The script runs `cargo +nightly build --lib
 generated `web/site/assets/` directory. Do not keep hand-authored assets there.
 The browser backend uses in-memory demo data, not real provider credentials.
 
-A change to anything under `src/ui/`, `app.rs`, `alerts.rs` or `model.rs`
-is shared by both targets, so it must keep building for wasm, not just for
-the desktop.
+A change to anything under `src/ui/`, `app.rs`, `alerts.rs`, `model.rs`,
+`analytics.rs` or `demo_data.rs` is shared by both targets, so it must keep
+building for wasm, not just for the desktop. CI enforces it.
+
+The split inside a read is worth knowing: each backend selects and groups
+charges its own way — SQL on the desktop, a fold over vectors in the browser
+— and everything computed from those groups lives in `analytics.rs`, once.
+A new statistic goes there, not into a `query.rs`.
 
 ## Project structure
 
@@ -136,6 +141,9 @@ cloudbridge/
 │   ├── lib.rs             # Library root; selects the backend per target (cfg)
 │   ├── app.rs             # Application state and actions
 │   ├── model.rs           # Domain types shared by both targets
+│   ├── analytics.rs       # Statistics both backends compute: forecasts,
+│   │                      # comparisons, decomposition, data quality
+│   ├── demo_data.rs       # The demo bill, as rows; each target writes them
 │   ├── config.rs          # Application configuration
 │   ├── db.rs              # Desktop: application database (accounts, rules, events)
 │   ├── store.rs           # Handle to the backend the UI talks to
