@@ -1197,7 +1197,7 @@ dependencies = [
  "hmac",
  "keyring",
  "quick-xml 0.42.0",
- "rand 0.8.8",
+ "rand 0.9.5",
  "serde",
  "serde_json",
  "sha1",

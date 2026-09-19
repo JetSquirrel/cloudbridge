@@ -22,7 +22,7 @@
 //! drops a quantity Cost Explorer reports against the unit `N/A`.
 
 use anyhow::Result;
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Utc};
 
 use super::{period, periods_in_column, text_of, Record, Sheet};
 use crate::cloud::{BillingPeriod, Normalized, RawBatch};
@@ -198,18 +198,14 @@ fn charge_period(
 ) -> (DateTime<Utc>, DateTime<Utc>) {
     match super::date(record.get(columns.date)) {
         Some(day) => (
-            midnight(day),
-            midnight(day.succ_opt().expect("a bill date has a following day")),
+            crate::analytics::midnight(day),
+            crate::analytics::midnight(day.succ_opt().expect("a bill date has a following day")),
         ),
         None => (
-            midnight(row_period.start()),
-            midnight(row_period.end_exclusive()),
+            crate::analytics::midnight(row_period.start()),
+            crate::analytics::midnight(row_period.end_exclusive()),
         ),
     }
-}
-
-fn midnight(day: NaiveDate) -> DateTime<Utc> {
-    day.and_hms_opt(0, 0, 0).expect("midnight exists").and_utc()
 }
 
 #[cfg(test)]

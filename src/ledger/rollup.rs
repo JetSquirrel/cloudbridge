@@ -250,25 +250,23 @@ mod tests {
         crate::ledger::write_period(conn, key, &batch_id, charges, None, Channel::Api).unwrap();
     }
 
-    /// Every rollup row as a comparable tuple:
-    /// (provider, account, day, service, region, currency,
-    ///  billed, billed_base, count, reporting currency, built_at).
-    #[allow(clippy::type_complexity)]
-    fn rows(
-        conn: &Connection,
-    ) -> Vec<(
-        String,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        String,
-        Option<f64>,
-        Option<f64>,
-        i64,
-        String,
-        String,
-    )> {
+    /// A rollup row, as `rows` reads it.
+    #[derive(Debug, PartialEq)]
+    struct RollupRow {
+        provider: String,
+        account_id: String,
+        day: String,
+        service_name: Option<String>,
+        region_id: Option<String>,
+        billing_currency: String,
+        billed_cost: Option<f64>,
+        billed_cost_base: Option<f64>,
+        charge_count: i64,
+        reporting_currency: String,
+        built_at: String,
+    }
+
+    fn rows(conn: &Connection) -> Vec<RollupRow> {
         let mut stmt = conn
             .prepare(
                 "SELECT provider, account_id, CAST(day AS VARCHAR), service_name, region_id,
@@ -279,19 +277,19 @@ mod tests {
             )
             .unwrap();
         stmt.query_map([], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-                row.get(5)?,
-                row.get(6)?,
-                row.get(7)?,
-                row.get(8)?,
-                row.get(9)?,
-                row.get(10)?,
-            ))
+            Ok(RollupRow {
+                provider: row.get(0)?,
+                account_id: row.get(1)?,
+                day: row.get(2)?,
+                service_name: row.get(3)?,
+                region_id: row.get(4)?,
+                billing_currency: row.get(5)?,
+                billed_cost: row.get(6)?,
+                billed_cost_base: row.get(7)?,
+                charge_count: row.get(8)?,
+                reporting_currency: row.get(9)?,
+                built_at: row.get(10)?,
+            })
         })
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
@@ -364,12 +362,18 @@ mod tests {
 
         let rolled: Vec<_> = rows(&conn)
             .into_iter()
-            .filter(|(provider, account, ..)| provider == "AWS" && account == "acct-1")
-            .map(
-                |(_, _, day, service, region, currency, billed, base, count, _, _)| {
-                    (day, service, region, currency, billed, base, count)
-                },
-            )
+            .filter(|row| row.provider == "AWS" && row.account_id == "acct-1")
+            .map(|row| {
+                (
+                    row.day,
+                    row.service_name,
+                    row.region_id,
+                    row.billing_currency,
+                    row.billed_cost,
+                    row.billed_cost_base,
+                    row.charge_count,
+                )
+            })
             .collect();
 
         assert_eq!(rolled, direct);
@@ -398,7 +402,7 @@ mod tests {
 
         let untouched_before: Vec<_> = rows(&conn)
             .into_iter()
-            .filter(|(_, account, day, ..)| account == "acct-2" || day.starts_with("2026-07"))
+            .filter(|row| row.account_id == "acct-2" || row.day.starts_with("2026-07"))
             .collect();
 
         // The provider reissues August without RDS and with EC2 corrected.
@@ -409,19 +413,21 @@ mod tests {
         let after = rows(&conn);
         let aws_august: Vec<_> = after
             .iter()
-            .filter(|(provider, account, day, ..)| {
-                provider == "AWS" && account == "acct-1" && day.starts_with("2026-08")
+            .filter(|row| {
+                row.provider == "AWS"
+                    && row.account_id == "acct-1"
+                    && row.day.starts_with("2026-08")
             })
             .collect();
         assert_eq!(aws_august.len(), 1);
-        assert_eq!(aws_august[0].3.as_deref(), Some("EC2"));
-        assert_eq!(aws_august[0].6, Some(11.0));
+        assert_eq!(aws_august[0].service_name.as_deref(), Some("EC2"));
+        assert_eq!(aws_august[0].billed_cost, Some(11.0));
 
         // July and the other account are byte-for-byte what they were,
         // built_at included — the refresh did not touch them.
         let untouched_after: Vec<_> = after
             .into_iter()
-            .filter(|(_, account, day, ..)| account == "acct-2" || day.starts_with("2026-07"))
+            .filter(|row| row.account_id == "acct-2" || row.day.starts_with("2026-07"))
             .collect();
         assert_eq!(untouched_after, untouched_before);
     }
@@ -457,17 +463,17 @@ mod tests {
         assert!(is_current_of(&conn, "USD").unwrap());
         // Built for USD, it is not current for any other currency.
         assert!(!is_current_of(&conn, "CNY").unwrap());
-        assert_eq!(rows(&conn)[0].7, Some(710.0 * 0.1408));
+        assert_eq!(rows(&conn)[0].billed_cost_base, Some(710.0 * 0.1408));
 
         // The currency change itself triggers the rebuild.
         schema::apply_reporting_currency(&conn, "CNY").unwrap();
 
         assert!(is_current_of(&conn, "CNY").unwrap());
         let row = rows(&conn).into_iter().next().unwrap();
-        assert_eq!(row.9, "CNY");
+        assert_eq!(row.reporting_currency, "CNY");
         // Source sums are currency-agnostic; the converted ones are not.
-        assert_eq!(row.6, Some(710.0));
-        assert_eq!(row.7, Some(710.0));
+        assert_eq!(row.billed_cost, Some(710.0));
+        assert_eq!(row.billed_cost_base, Some(710.0));
     }
 
     #[test]
@@ -496,8 +502,8 @@ mod tests {
         // the reading view leaves it — but the source sum and the row are
         // there, and the rollup still counts as current.
         let row = rows(&conn).into_iter().next().unwrap();
-        assert_eq!(row.6, Some(100.0));
-        assert_eq!(row.7, None);
+        assert_eq!(row.billed_cost, Some(100.0));
+        assert_eq!(row.billed_cost_base, None);
         assert!(is_current_of(&conn, "USD").unwrap());
     }
 
@@ -515,6 +521,6 @@ mod tests {
         // A full rebuild is the path that catches what day-bounded
         // refreshes cannot.
         assert_eq!(rebuild_all_of(&conn).unwrap(), 1);
-        assert_eq!(rows(&conn)[0].2, "2026-07-31");
+        assert_eq!(rows(&conn)[0].day, "2026-07-31");
     }
 }

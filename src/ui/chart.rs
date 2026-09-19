@@ -472,7 +472,12 @@ pub fn squarify(values: &[f64], width: f32, height: f32) -> Vec<[f32; 4]> {
     order.sort_by(|&a, &b| values[b].total_cmp(&values[a]));
     let areas: Vec<f64> = order.iter().map(|&i| values[i].max(0.0) * scale).collect();
 
-    let (mut x, mut y, mut w, mut h) = (0.0f64, 0.0f64, width as f64, height as f64);
+    let mut rect = Remaining {
+        x: 0.0,
+        y: 0.0,
+        w: width as f64,
+        h: height as f64,
+    };
     let mut row: Vec<usize> = Vec::new();
     let (mut row_sum, mut row_min, mut row_max) = (0.0f64, f64::INFINITY, 0.0f64);
 
@@ -486,7 +491,7 @@ pub fn squarify(values: &[f64], width: f32, height: f32) -> Vec<[f32; 4]> {
 
     for i in 0..areas.len() {
         let area = areas[i];
-        let side = w.min(h);
+        let side = rect.w.min(rect.h);
         // Add to the current row while that improves (or starts) it; a
         // zero-length side means the rect is spent — the remaining tiles
         // collapse onto its edge.
@@ -495,9 +500,7 @@ pub fn squarify(values: &[f64], width: f32, height: f32) -> Vec<[f32; 4]> {
             && worst(row_sum + area, row_min.min(area), row_max.max(area), side)
                 > worst(row_sum, row_min, row_max, side)
         {
-            lay_row(
-                &row, &areas, &order, &mut rects, &mut x, &mut y, &mut w, &mut h,
-            );
+            lay_row(&row, &areas, &order, &mut rects, &mut rect);
             row.clear();
             row_sum = 0.0;
             row_min = f64::INFINITY;
@@ -509,49 +512,51 @@ pub fn squarify(values: &[f64], width: f32, height: f32) -> Vec<[f32; 4]> {
         row_max = row_max.max(area);
     }
     if !row.is_empty() {
-        lay_row(
-            &row, &areas, &order, &mut rects, &mut x, &mut y, &mut w, &mut h,
-        );
+        lay_row(&row, &areas, &order, &mut rects, &mut rect);
     }
     rects
 }
 
+/// The rect still to fill, advanced as each row is laid out.
+struct Remaining {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+}
+
 /// Lay one row out as a band across the remaining rect's short side and
 /// advance the remaining rect past it.
-#[allow(clippy::too_many_arguments)]
 fn lay_row(
     row: &[usize],
     areas: &[f64],
     order: &[usize],
     rects: &mut [[f32; 4]],
-    x: &mut f64,
-    y: &mut f64,
-    w: &mut f64,
-    h: &mut f64,
+    rect: &mut Remaining,
 ) {
     let sum: f64 = row.iter().map(|&i| areas[i]).sum();
-    if *w <= *h {
+    if rect.w <= rect.h {
         // Short side is the width: a horizontal band across the top.
-        let band = if *w > 0.0 { sum / *w } else { 0.0 };
-        let mut cursor = *x;
+        let band = if rect.w > 0.0 { sum / rect.w } else { 0.0 };
+        let mut cursor = rect.x;
         for &i in row {
             let item_w = if band > 0.0 { areas[i] / band } else { 0.0 };
-            rects[order[i]] = [cursor as f32, *y as f32, item_w as f32, band as f32];
+            rects[order[i]] = [cursor as f32, rect.y as f32, item_w as f32, band as f32];
             cursor += item_w;
         }
-        *y += band;
-        *h = (*h - band).max(0.0);
+        rect.y += band;
+        rect.h = (rect.h - band).max(0.0);
     } else {
         // Short side is the height: a vertical band down the left.
-        let band = if *h > 0.0 { sum / *h } else { 0.0 };
-        let mut cursor = *y;
+        let band = if rect.h > 0.0 { sum / rect.h } else { 0.0 };
+        let mut cursor = rect.y;
         for &i in row {
             let item_h = if band > 0.0 { areas[i] / band } else { 0.0 };
-            rects[order[i]] = [*x as f32, cursor as f32, band as f32, item_h as f32];
+            rects[order[i]] = [rect.x as f32, cursor as f32, band as f32, item_h as f32];
             cursor += item_h;
         }
-        *x += band;
-        *w = (*w - band).max(0.0);
+        rect.x += band;
+        rect.w = (rect.w - band).max(0.0);
     }
 }
 

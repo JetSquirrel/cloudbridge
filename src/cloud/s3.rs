@@ -166,18 +166,18 @@ impl S3Client {
             ("host".to_string(), host),
             ("x-amz-date".to_string(), amz_date.clone()),
         ];
-        let auth = sigv4_authorization(
-            "s3",
+        let auth = sigv4_authorization(&SigV4Request {
+            service: "s3",
             region,
-            &self.access_key_id,
-            &self.secret_access_key,
-            "GET",
+            key_id: &self.access_key_id,
+            secret: &self.secret_access_key,
+            method: "GET",
             path,
             query,
-            &headers,
-            &amz_date,
-            "UNSIGNED-PAYLOAD",
-        );
+            headers: &headers,
+            amz_date: &amz_date,
+            payload_hash: "UNSIGNED-PAYLOAD",
+        });
 
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
@@ -283,55 +283,69 @@ fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
     mac.finalize().into_bytes().to_vec()
 }
 
-/// AWS Signature Version 4, header-based auth. `headers` are the headers
-/// that will be sent and signed (must include `host` and `x-amz-date`);
-/// they are sorted internally. `payload_hash` is the hex SHA-256 of the
-/// body, or `UNSIGNED-PAYLOAD` for S3 HTTPS requests.
-#[allow(clippy::too_many_arguments)]
-fn sigv4_authorization(
-    service: &str,
-    region: &str,
-    key_id: &str,
-    secret: &str,
-    method: &str,
-    path: &str,
-    query: &[(String, String)],
-    headers: &[(String, String)],
-    amz_date: &str,
-    payload_hash: &str,
-) -> String {
-    let date_stamp = &amz_date[..8];
-    let scope = format!("{date_stamp}/{region}/{service}/aws4_request");
+/// Everything a SigV4 authorization header is computed from.
+struct SigV4Request<'a> {
+    service: &'a str,
+    region: &'a str,
+    key_id: &'a str,
+    secret: &'a str,
+    method: &'a str,
+    path: &'a str,
+    query: &'a [(String, String)],
+    /// The headers that will be sent and signed (must include `host` and
+    /// `x-amz-date`); they are sorted internally.
+    headers: &'a [(String, String)],
+    amz_date: &'a str,
+    /// The hex SHA-256 of the body, or `UNSIGNED-PAYLOAD` for S3 HTTPS
+    /// requests.
+    payload_hash: &'a str,
+}
 
-    let mut params: Vec<(String, String)> = query.to_vec();
+/// AWS Signature Version 4, header-based auth.
+fn sigv4_authorization(request: &SigV4Request<'_>) -> String {
+    let date_stamp = &request.amz_date[..8];
+    let scope = format!(
+        "{date_stamp}/{}/{}/aws4_request",
+        request.region, request.service
+    );
+
+    let mut params: Vec<(String, String)> = request.query.to_vec();
     params.sort();
     let canonical_query: Vec<String> = params
         .iter()
         .map(|(k, v)| format!("{}={}", uri_encode(k), uri_encode(v)))
         .collect();
 
-    let mut signed: Vec<(String, String)> = headers.to_vec();
+    let mut signed: Vec<(String, String)> = request.headers.to_vec();
     signed.sort();
     let canonical_headers: String = signed.iter().map(|(k, v)| format!("{k}:{v}\n")).collect();
     let signed_headers: Vec<&str> = signed.iter().map(|(k, _)| k.as_str()).collect();
     let signed_headers = signed_headers.join(";");
     let canonical_request = format!(
-        "{method}\n{path}\n{}\n{canonical_headers}\n{signed_headers}\n{payload_hash}",
-        canonical_query.join("&")
+        "{}\n{}\n{}\n{canonical_headers}\n{signed_headers}\n{}",
+        request.method,
+        request.path,
+        canonical_query.join("&"),
+        request.payload_hash
     );
     let string_to_sign = format!(
-        "AWS4-HMAC-SHA256\n{amz_date}\n{scope}\n{}",
+        "AWS4-HMAC-SHA256\n{}\n{scope}\n{}",
+        request.amz_date,
         sha256_hex(canonical_request.as_bytes())
     );
 
-    let k_date = hmac_sha256(format!("AWS4{secret}").as_bytes(), date_stamp.as_bytes());
-    let k_region = hmac_sha256(&k_date, region.as_bytes());
-    let k_service = hmac_sha256(&k_region, service.as_bytes());
+    let k_date = hmac_sha256(
+        format!("AWS4{}", request.secret).as_bytes(),
+        date_stamp.as_bytes(),
+    );
+    let k_region = hmac_sha256(&k_date, request.region.as_bytes());
+    let k_service = hmac_sha256(&k_region, request.service.as_bytes());
     let k_signing = hmac_sha256(&k_service, b"aws4_request");
     let signature = hex(&hmac_sha256(&k_signing, string_to_sign.as_bytes()));
 
     format!(
-        "AWS4-HMAC-SHA256 Credential={key_id}/{scope}, SignedHeaders={signed_headers}, Signature={signature}"
+        "AWS4-HMAC-SHA256 Credential={}/{scope}, SignedHeaders={signed_headers}, Signature={signature}",
+        request.key_id
     )
 }
 
@@ -384,18 +398,18 @@ mod tests {
             ("host".to_string(), "iam.amazonaws.com".to_string()),
             ("x-amz-date".to_string(), "20150830T123600Z".to_string()),
         ];
-        let auth = sigv4_authorization(
-            "iam",
-            "us-east-1",
-            "AKIDEXAMPLE",
-            "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
-            "GET",
-            "/",
-            &query,
-            &headers,
-            "20150830T123600Z",
-            &sha256_hex(b""),
-        );
+        let auth = sigv4_authorization(&SigV4Request {
+            service: "iam",
+            region: "us-east-1",
+            key_id: "AKIDEXAMPLE",
+            secret: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+            method: "GET",
+            path: "/",
+            query: &query,
+            headers: &headers,
+            amz_date: "20150830T123600Z",
+            payload_hash: &sha256_hex(b""),
+        });
         assert_eq!(
             auth,
             "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/iam/aws4_request, \

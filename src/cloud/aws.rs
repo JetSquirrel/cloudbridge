@@ -27,6 +27,21 @@ pub struct AwsCloudService {
     export_uri: Option<String>,
 }
 
+/// One request to sign: everything SigV4 needs beyond the service's own
+/// credentials. `region` is the account's own, except for the services —
+/// Cost Explorer — whose endpoint exists in us-east-1 alone.
+struct SigningRequest<'a> {
+    method: &'a str,
+    service: &'a str,
+    region: &'a str,
+    host: &'a str,
+    uri: &'a str,
+    query_string: &'a str,
+    headers: &'a [(String, String)],
+    payload: &'a str,
+    timestamp: DateTime<Utc>,
+}
+
 impl AwsCloudService {
     pub fn new(
         access_key_id: String,
@@ -137,27 +152,16 @@ impl AwsCloudService {
     }
 
     /// Create AWS Signature V4 signature
-    #[allow(clippy::too_many_arguments)]
-    fn sign_request(
-        &self,
-        method: &str,
-        service: &str,
-        host: &str,
-        uri: &str,
-        query_string: &str,
-        headers: &[(String, String)],
-        payload: &str,
-        timestamp: DateTime<Utc>,
-    ) -> Result<String> {
-        let amz_date = timestamp.format("%Y%m%dT%H%M%SZ").to_string();
-        let date_stamp = timestamp.format("%Y%m%d").to_string();
+    fn sign_request(&self, request: &SigningRequest<'_>) -> Result<String> {
+        let amz_date = request.timestamp.format("%Y%m%dT%H%M%SZ").to_string();
+        let date_stamp = request.timestamp.format("%Y%m%d").to_string();
 
         // 1. Create canonical request
-        let payload_hash = Self::sha256_hash(payload.as_bytes());
+        let payload_hash = Self::sha256_hash(request.payload.as_bytes());
 
         // Collect all headers (including host and x-amz-date)
-        let mut all_headers: Vec<(String, String)> = headers.to_vec();
-        all_headers.push(("host".to_string(), host.to_string()));
+        let mut all_headers: Vec<(String, String)> = request.headers.to_vec();
+        all_headers.push(("host".to_string(), request.host.to_string()));
         all_headers.push(("x-amz-date".to_string(), amz_date.clone()));
         all_headers.push(("x-amz-content-sha256".to_string(), payload_hash.clone()));
 
@@ -177,11 +181,19 @@ impl AwsCloudService {
 
         let canonical_request = format!(
             "{}\n{}\n{}\n{}\n{}\n{}",
-            method, uri, query_string, canonical_headers, signed_headers, payload_hash
+            request.method,
+            request.uri,
+            request.query_string,
+            canonical_headers,
+            signed_headers,
+            payload_hash
         );
 
         // 2. Create string to sign
-        let credential_scope = format!("{}/{}/{}/aws4_request", date_stamp, self.region, service);
+        let credential_scope = format!(
+            "{}/{}/{}/aws4_request",
+            date_stamp, request.region, request.service
+        );
         let string_to_sign = format!(
             "AWS4-HMAC-SHA256\n{}\n{}\n{}",
             amz_date,
@@ -194,8 +206,8 @@ impl AwsCloudService {
             format!("AWS4{}", self.secret_access_key).as_bytes(),
             date_stamp.as_bytes(),
         );
-        let k_region = Self::hmac_sha256(&k_date, self.region.as_bytes());
-        let k_service = Self::hmac_sha256(&k_region, service.as_bytes());
+        let k_region = Self::hmac_sha256(&k_date, request.region.as_bytes());
+        let k_service = Self::hmac_sha256(&k_region, request.service.as_bytes());
         let k_signing = Self::hmac_sha256(&k_service, b"aws4_request");
         let signature = hex::encode(Self::hmac_sha256(&k_signing, string_to_sign.as_bytes()));
 
@@ -211,7 +223,6 @@ impl AwsCloudService {
     /// Call STS GetCallerIdentity API
     fn call_sts_get_caller_identity(&self) -> Result<StsCallerIdentity> {
         let timestamp = Utc::now();
-        let service = "sts";
         let host = format!("sts.{}.amazonaws.com", self.region);
         let uri = "/";
         let query_string = "Action=GetCallerIdentity&Version=2011-06-15";
@@ -219,8 +230,17 @@ impl AwsCloudService {
         let amz_date = timestamp.format("%Y%m%dT%H%M%SZ").to_string();
         let payload_hash = Self::sha256_hash(b"");
 
-        let authorization =
-            self.sign_request("GET", service, &host, uri, query_string, &[], "", timestamp)?;
+        let authorization = self.sign_request(&SigningRequest {
+            method: "GET",
+            service: "sts",
+            region: &self.region,
+            host: &host,
+            uri,
+            query_string,
+            headers: &[],
+            payload: "",
+            timestamp,
+        })?;
 
         let url = format!("https://{}{}?{}", host, uri, query_string);
 
@@ -250,7 +270,6 @@ impl AwsCloudService {
     /// Note: the Cost Explorer endpoint only exists in us-east-1.
     fn cost_and_usage_raw(&self, request: &serde_json::Value) -> Result<String> {
         let timestamp = Utc::now();
-        let service = "ce";
         let ce_region = "us-east-1";
         let host = format!("ce.{}.amazonaws.com", ce_region);
         let uri = "/";
@@ -270,9 +289,17 @@ impl AwsCloudService {
             ),
         ];
 
-        let authorization = self.sign_request_with_region(
-            "POST", service, ce_region, &host, uri, "", &headers, &payload, timestamp,
-        )?;
+        let authorization = self.sign_request(&SigningRequest {
+            method: "POST",
+            service: "ce",
+            region: ce_region,
+            host: &host,
+            uri,
+            query_string: "",
+            headers: &headers,
+            payload: &payload,
+            timestamp,
+        })?;
 
         let url = format!("https://{}{}", host, uri);
 
@@ -316,79 +343,6 @@ impl AwsCloudService {
         }
 
         Ok(body)
-    }
-
-    /// Sign with specified region (for services like Cost Explorer that are only available in specific regions)
-    #[allow(clippy::too_many_arguments)]
-    fn sign_request_with_region(
-        &self,
-        method: &str,
-        service: &str,
-        region: &str,
-        host: &str,
-        uri: &str,
-        query_string: &str,
-        headers: &[(String, String)],
-        payload: &str,
-        timestamp: DateTime<Utc>,
-    ) -> Result<String> {
-        let amz_date = timestamp.format("%Y%m%dT%H%M%SZ").to_string();
-        let date_stamp = timestamp.format("%Y%m%d").to_string();
-
-        // 1. Create canonical request
-        let payload_hash = Self::sha256_hash(payload.as_bytes());
-
-        // Collect all headers (including host and x-amz-date)
-        let mut all_headers: Vec<(String, String)> = headers.to_vec();
-        all_headers.push(("host".to_string(), host.to_string()));
-        all_headers.push(("x-amz-date".to_string(), amz_date.clone()));
-        all_headers.push(("x-amz-content-sha256".to_string(), payload_hash.clone()));
-
-        // Sort by lowercase key
-        all_headers.sort_by_key(|(name, _)| name.to_lowercase());
-
-        let canonical_headers: String = all_headers
-            .iter()
-            .map(|(k, v)| format!("{}:{}\n", k.to_lowercase(), v.trim()))
-            .collect();
-
-        let signed_headers: String = all_headers
-            .iter()
-            .map(|(k, _)| k.to_lowercase())
-            .collect::<Vec<_>>()
-            .join(";");
-
-        let canonical_request = format!(
-            "{}\n{}\n{}\n{}\n{}\n{}",
-            method, uri, query_string, canonical_headers, signed_headers, payload_hash
-        );
-
-        // 2. Create string to sign - use the passed region instead of self.region
-        let credential_scope = format!("{}/{}/{}/aws4_request", date_stamp, region, service);
-        let string_to_sign = format!(
-            "AWS4-HMAC-SHA256\n{}\n{}\n{}",
-            amz_date,
-            credential_scope,
-            Self::sha256_hash(canonical_request.as_bytes())
-        );
-
-        // 3. Calculate signature - use the passed region
-        let k_date = Self::hmac_sha256(
-            format!("AWS4{}", self.secret_access_key).as_bytes(),
-            date_stamp.as_bytes(),
-        );
-        let k_region = Self::hmac_sha256(&k_date, region.as_bytes());
-        let k_service = Self::hmac_sha256(&k_region, service.as_bytes());
-        let k_signing = Self::hmac_sha256(&k_service, b"aws4_request");
-        let signature = hex::encode(Self::hmac_sha256(&k_signing, string_to_sign.as_bytes()));
-
-        // 4. Create authorization header
-        let authorization = format!(
-            "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
-            self.access_key_id, credential_scope, signed_headers, signature
-        );
-
-        Ok(authorization)
     }
 }
 
@@ -606,7 +560,7 @@ pub fn normalize(batch: &RawBatch) -> Result<Normalized> {
 fn parse_day(date: &str) -> Result<DateTime<Utc>> {
     let day = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
         .map_err(|e| anyhow!("Unexpected Cost Explorer date {:?}: {}", date, e))?;
-    Ok(day.and_hms_opt(0, 0, 0).expect("midnight exists").and_utc())
+    Ok(crate::analytics::midnight(day))
 }
 
 /// STS Caller Identity

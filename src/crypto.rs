@@ -1,7 +1,7 @@
 //! Encryption module - for encrypting stored AK/SK
 
 use aes_gcm::{
-    aead::{Aead, KeyInit, OsRng},
+    aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
 };
 use anyhow::{anyhow, Result};
@@ -26,7 +26,7 @@ impl CryptoManager {
     /// Generate new encryption key
     pub fn generate_key() -> [u8; KEY_SIZE] {
         let mut key = [0u8; KEY_SIZE];
-        OsRng.fill_bytes(&mut key);
+        rand::rng().fill_bytes(&mut key);
         key
     }
 
@@ -53,7 +53,7 @@ impl CryptoManager {
     #[allow(dead_code)]
     pub fn encrypt(&self, plaintext: &str) -> Result<String> {
         let mut nonce_bytes = [0u8; NONCE_SIZE];
-        OsRng.fill_bytes(&mut nonce_bytes);
+        rand::rng().fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         let ciphertext = self

@@ -13,7 +13,7 @@
 //! fix is to add an alias and the message is what says which.
 
 use anyhow::Result;
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Utc};
 
 use super::{date, period, periods_in_column, tags_json, text_of, Record, Sheet};
 use crate::cloud::{deduction, BillingPeriod, Normalized, RawBatch};
@@ -207,18 +207,14 @@ fn charge_period(
 ) -> (DateTime<Utc>, DateTime<Utc>) {
     match columns.day.and_then(|column| date(record.get(column))) {
         Some(day) => (
-            midnight(day),
-            midnight(day.succ_opt().expect("a bill date has a following day")),
+            crate::analytics::midnight(day),
+            crate::analytics::midnight(day.succ_opt().expect("a bill date has a following day")),
         ),
         None => (
-            midnight(row_period.start()),
-            midnight(row_period.end_exclusive()),
+            crate::analytics::midnight(row_period.start()),
+            crate::analytics::midnight(row_period.end_exclusive()),
         ),
     }
-}
-
-fn midnight(day: NaiveDate) -> DateTime<Utc> {
-    day.and_hms_opt(0, 0, 0).expect("midnight exists").and_utc()
 }
 
 /// The currency a row is billed in, as a code.
