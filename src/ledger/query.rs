@@ -2071,6 +2071,49 @@ mod tests {
         conn
     }
 
+    /// The tag rollups call `json_extract_string` and the raw store writes
+    /// and re-reads its batches as Parquet, so both extensions have to be
+    /// there without duckdb downloading anything: under the hardened runtime
+    /// library validation refuses to map an extension signed by another
+    /// team, and a runner with no route to the extension repository cannot
+    /// autoload one at all. The `json` and `parquet` features on the duckdb
+    /// dependency compile them in, which this asserts by turning both
+    /// autoload and auto-install off first.
+    #[test]
+    fn extensions_are_compiled_in() {
+        let conn = Connection::open_in_memory().expect("in-memory duckdb");
+        conn.execute_batch(
+            "SET extension_directory='/tmp/cloudbridge-no-extensions';
+             SET autoinstall_known_extensions=false;
+             SET autoload_known_extensions=false;",
+        )
+        .expect("settings apply");
+
+        let value: String = conn
+            .query_row(
+                r#"SELECT json_extract_string('{"env":"prod"}', '$.env')"#,
+                [],
+                |row| row.get(0),
+            )
+            .expect("json works without a downloaded extension");
+
+        assert_eq!(value, "prod");
+
+        let file = std::env::temp_dir().join("cloudbridge_compiled_in.parquet");
+        let path = file.to_string_lossy().replace('\'', "''");
+        conn.execute_batch(&format!(
+            "COPY (SELECT 'prod' AS env) TO '{path}' (FORMAT PARQUET);
+             CREATE TABLE probe AS SELECT env FROM read_parquet('{path}');"
+        ))
+        .expect("parquet works without a downloaded extension");
+        let env: String = conn
+            .query_row("SELECT env FROM probe", [], |row| row.get(0))
+            .expect("the written row reads back");
+
+        assert_eq!(env, "prod");
+        std::fs::remove_file(&file).ok();
+    }
+
     fn at(day: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 8, day, 0, 0, 0).unwrap()
     }

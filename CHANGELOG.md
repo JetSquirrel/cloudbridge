@@ -46,6 +46,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exact versions — the nightly by date (`WEB_TOOLCHAIN` in
   `scripts/build-web.sh`), the icons to what `Cargo.lock` resolved
 
+### Fixed
+- DuckDB's json and parquet extensions are compiled into the binary
+  (`features = ["bundled", "json", "parquet"]`) instead of being autoloaded
+  at runtime. A signed macOS build cannot map an extension signed by another
+  team — library validation fails with "different Team IDs" — and a CI
+  runner with no route to the extension repository cannot download one at
+  all, which is how the Parquet re-read in `cloud::raw` failed there
+
 ## [0.3.1] - 2026-09-12
 
 A consistency pass over the whole interface: one shared set of cards,
