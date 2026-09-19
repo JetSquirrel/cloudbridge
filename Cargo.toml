@@ -65,7 +65,9 @@ hex = "0.4"
 # Database
 duckdb = { version = "1", features = ["bundled"] }
 
-quick-xml = { version = "0.36", features = ["serialize"] }
+# XML for the S3 export listing. 0.41 is the first release past
+# RUSTSEC-2026-0194 and RUSTSEC-2026-0195, both of which are in 0.36.
+quick-xml = { version = "0.42", features = ["serialize"] }
 
 # Encryption (for AK/SK secure storage)
 aes-gcm = "0.10"
