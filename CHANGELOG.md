@@ -26,6 +26,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   FAQ and the install guide. Everything the browser build needs is under
   `web/`: the static shell in `web/site/`, the `smol::unblock` bridge in
   `web/smol-bridge/`
+- **Monthly budget rules, with a budget editor on the Rules page.** Budgets
+  stop being a stored amount nobody evaluates: a Monthly budgets card holds
+  an amount and an alert percentage per account, consumed against what the
+  ledger says this month in the reporting currency, and an "Account budget"
+  rule kind checks a percentage or an amount threshold against cost to date
+  or the month-end forecast. Budget alerts land in the alert centre with
+  their own filter chip
+- **Cost-anomaly rules can be scoped to one account.** The daily series,
+  the dedupe key and the event context all carry the scope, and the breach
+  test tolerates an import still in flight — a spike that completed
+  yesterday still fires when today has only been partly read
+- **A read-only SQL console.** The Query page runs one statement against
+  the local ledger — a reading statement only, checked with string literals
+  and comments stripped so a `SELECT` naming a `DELETE` column is not
+  mistaken for one. A template picker offers starter queries, and a result
+  past the row budget is truncated rather than rendered. Desktop only; the
+  browser demo does not build the page
+- **A period broken down by dimension.** Attribution gains a dimension
+  switcher — the tag view it had, plus service, region and service
+  category — drawn as a treemap (area is cost, colour is the
+  month-over-month change) or as share-bar rows, with a Top resources card
+  for the period's costliest resources. The account detail page gains the
+  same drill-down at account scope
+- **Data-quality findings you can dismiss.** The Accounts page grows a Data
+  health card, the Overview a strip under the header, and the account
+  detail page its own account's findings: usage whose currency could not be
+  converted, usage with no value for the attribution tag, usage with no
+  region, and adjustments no charge explains. A finding is dismissed per
+  kind and billing period and the dismissal persists; one that no longer
+  applies shows again next period
 
 ### Changed
 - The statistics every backend has to agree on — the run-rate forecast, its
@@ -45,6 +75,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The web build's nightly toolchain and its icon catalogue are pinned to
   exact versions — the nightly by date (`WEB_TOOLCHAIN` in
   `scripts/build-web.sh`), the icons to what `Cargo.lock` resolved
+- Day-grain reads no longer aggregate the whole normalized view on every
+  load: a `daily_cost_rollup` table (ledger schema v3) keeps the same
+  numbers, refreshed for the period an ingest touched and rebuilt in full
+  when the reporting currency changes or the demo bill is seeded or cleared
+
+### Security
+- rustls is upgraded past RUSTSEC-2026-0285 (TLS 1.3 handshake messages
+  accepted across encryption level boundaries), reached through ureq, the
+  desktop sync HTTP client; quick-xml, which parses the S3 export channel's
+  XML, is upgraded past RUSTSEC-2026-0194 and -0195. The browser build
+  compiles neither
+
+## [0.3.2] - 2026-09-16
 
 ### Fixed
 - DuckDB's json and parquet extensions are compiled into the binary
@@ -426,6 +469,8 @@ next.
 
 ## Version History
 
+- **0.3.2** - DuckDB's json and parquet extensions compiled in, fixing signed and offline builds
+- **0.3.1** - One shared set of theme components, and a signed, notarized macOS build
 - **0.3.0** - Bill file import, a range-selectable Overview, and a GPUI Kit interface
 - **0.2.0** - DeepSeek support, and a FOCUS billing ledger behind the dashboard
 - **0.1.2** - Documentation site and packaging fixes

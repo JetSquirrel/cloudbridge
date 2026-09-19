@@ -10,7 +10,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use duckdb::{params, Connection};
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::alerts::{AlertEvent, AlertRule, AlertStatus, Severity};
 use crate::cloud::{self, BillingPeriod, BudgetInfo, BudgetStatus, CloudAccount};
@@ -20,9 +20,8 @@ use crate::crypto::get_crypto_manager;
 use crate::ledger::{query, PeriodKey};
 use crate::secret_store;
 
-lazy_static::lazy_static! {
-    static ref DB_CONNECTION: Arc<Mutex<Option<Connection>>> = Arc::new(Mutex::new(None));
-}
+static DB_CONNECTION: LazyLock<Arc<Mutex<Option<Connection>>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(None)));
 
 /// Schema version of the application-state database.
 ///
@@ -72,7 +71,9 @@ pub fn init_database() -> Result<()> {
     let conn = Connection::open(&db_path)?;
     prepare_schema(&conn)?;
 
-    let mut db = DB_CONNECTION.lock().unwrap();
+    let mut db = DB_CONNECTION
+        .lock()
+        .map_err(|e| anyhow::anyhow!("Failed to get database connection: {}", e))?;
     *db = Some(conn);
 
     tracing::info!("Database initialized: {:?}", db_path);
@@ -497,11 +498,18 @@ fn get_connection() -> Result<std::sync::MutexGuard<'static, Option<Connection>>
     Ok(db)
 }
 
+/// The connection inside a guard from [`get_connection`], which has already
+/// refused an uninitialized database.
+fn connection_of<'a>(db: &'a std::sync::MutexGuard<'_, Option<Connection>>) -> &'a Connection {
+    db.as_ref()
+        .expect("get_connection refused an empty connection")
+}
+
 /// Run a read against the app-state connection, for callers (the alerting
 /// engine) that hold several stores at once.
 pub(crate) fn with_connection<T>(f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
     let db = get_connection()?;
-    f(db.as_ref().unwrap())
+    f(connection_of(&db))
 }
 
 /// Save a cloud account: the credentials to the OS keyring, everything
@@ -530,7 +538,7 @@ pub fn save_account(
     };
 
     let db = get_connection()?;
-    let conn = db.as_ref().unwrap();
+    let conn = connection_of(&db);
 
     conn.execute(
         r#"
@@ -596,7 +604,7 @@ pub fn account_context(
 /// that must not read the key itself.
 fn set_access_key_hint(account_id: &str, access_key_id: &str) -> Result<()> {
     let db = get_connection()?;
-    let conn = db.as_ref().unwrap();
+    let conn = connection_of(&db);
 
     conn.execute(
         "UPDATE cloud_accounts SET access_key_hint = ? WHERE id = ?",
@@ -690,7 +698,7 @@ pub(crate) fn get_all_accounts_of(conn: &Connection) -> Result<Vec<CloudAccount>
 /// Delete cloud account
 pub fn delete_account(account_id: &str) -> Result<()> {
     let db = get_connection()?;
-    let conn = db.as_ref().unwrap();
+    let conn = connection_of(&db);
 
     // Dependants first: nothing references cloud_accounts through a foreign
     // key any more, so the order is ours to keep.
@@ -716,7 +724,7 @@ pub fn delete_account(account_id: &str) -> Result<()> {
 /// Save or update budget for an account
 pub fn save_budget(budget: &BudgetInfo) -> Result<()> {
     let db = get_connection()?;
-    let conn = db.as_ref().unwrap();
+    let conn = connection_of(&db);
 
     conn.execute(
         r#"
@@ -780,7 +788,7 @@ pub(crate) fn get_budget_of(conn: &Connection, account_id: &str) -> Result<Optio
 /// Get all budgets
 pub fn get_all_budgets() -> Result<Vec<BudgetInfo>> {
     let db = get_connection()?;
-    let conn = db.as_ref().unwrap();
+    let conn = connection_of(&db);
 
     let mut stmt = conn.prepare(
         "SELECT account_id, monthly_budget, currency, alert_threshold, created_at, updated_at
@@ -816,7 +824,7 @@ pub fn get_all_budgets() -> Result<Vec<BudgetInfo>> {
 /// Delete budget for an account
 pub fn delete_budget(account_id: &str) -> Result<()> {
     let db = get_connection()?;
-    let conn = db.as_ref().unwrap();
+    let conn = connection_of(&db);
 
     conn.execute(
         "DELETE FROM budgets WHERE account_id = ?",
@@ -909,7 +917,7 @@ pub fn get_all_budget_statuses() -> Result<Vec<BudgetStatus>> {
 /// Record that an account was successfully refreshed.
 pub fn mark_account_synced(account_id: &str, at: DateTime<Utc>) -> Result<()> {
     let db = get_connection()?;
-    let conn = db.as_ref().unwrap();
+    let conn = connection_of(&db);
 
     conn.execute(
         "UPDATE cloud_accounts SET last_synced_at = ? WHERE id = ?",

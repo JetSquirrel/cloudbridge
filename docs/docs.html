@@ -595,7 +595,7 @@ cargo run --release</code></pre>
 
                     <section id="alerts">
                         <h2 data-i18n="docs.alerts.title">Alerts &amp; rules</h2>
-                        <p data-i18n="docs.alerts.p1">Rules are evaluated against the ledger when the app opens and when the Alerts page loads. They do not run while the app is closed. Three rules ship enabled; review their settings on the Rules page and disable rules you do not need.</p>
+                        <p data-i18n="docs.alerts.p1">Rules are evaluated against the ledger when the app opens and after each refresh. They do not run while the app is closed; opening the Alerts page re-checks whether open alerts have resolved. Three rules ship enabled; review their settings on the Rules page and disable rules you do not need.</p>
                         <table class="docs-table">
                             <thead>
                                 <tr><th data-i18n="docs.alerts.rule">Rule</th><th data-i18n="docs.alerts.fires">Fires when</th><th data-i18n="docs.alerts.default">Default</th></tr>

@@ -700,10 +700,7 @@ fn load_health(account_id: &str) -> Result<AccountHealth> {
         .find(|account| account.id == account_id)
         .ok_or_else(|| anyhow::anyhow!("No account {account_id}"))?;
     let key = ingest::period_key(&account, &BillingPeriod::containing(Utc::now()));
-    let dismissed = db::dismissed_quality_issue_keys().unwrap_or_else(|e| {
-        tracing::warn!("Could not read the dismissed data-quality issues: {}", e);
-        Default::default()
-    });
+    let dismissed = data::dismissed_quality_keys();
     let mut issues = Vec::new();
     let mut dismiss_keys = Vec::new();
     for issue in data_quality_issues(&key.billing_period, data::BUSINESS_LINE_TAG)? {

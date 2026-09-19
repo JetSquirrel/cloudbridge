@@ -647,3 +647,58 @@ pub struct AdhocResult {
     pub truncated: bool,
     pub elapsed_ms: u64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn day(year: i32, month: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(year, month, day).expect("a real date")
+    }
+
+    #[test]
+    fn a_period_is_the_month_an_instant_falls_in() {
+        let instant = day(2026, 9, 19)
+            .and_hms_opt(12, 0, 0)
+            .expect("midday exists")
+            .and_utc();
+
+        assert_eq!(
+            BillingPeriod::containing(instant),
+            BillingPeriod::new(2026, 9)
+        );
+        assert_eq!(BillingPeriod::new(2026, 9).label(), "2026-09");
+    }
+
+    #[test]
+    fn a_periods_bounds_are_the_first_of_its_month_and_the_next() {
+        let period = BillingPeriod::new(2026, 2);
+
+        assert_eq!(period.start(), day(2026, 2, 1));
+        assert_eq!(period.end_exclusive(), day(2026, 3, 1));
+    }
+
+    #[test]
+    fn december_rolls_over_into_january() {
+        let december = BillingPeriod::new(2026, 12);
+
+        assert_eq!(december.end_exclusive(), day(2027, 1, 1));
+        assert_eq!(december.previous(), BillingPeriod::new(2026, 11));
+        assert_eq!(
+            BillingPeriod::new(2026, 1).previous(),
+            BillingPeriod::new(2025, 12)
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "a valid billing period")]
+    fn a_period_that_is_not_a_month_has_no_start() {
+        let _ = BillingPeriod::new(2026, 13).start();
+    }
+
+    #[test]
+    #[should_panic(expected = "a valid billing period")]
+    fn a_period_that_is_not_a_month_has_no_end() {
+        let _ = BillingPeriod::new(2026, 13).end_exclusive();
+    }
+}

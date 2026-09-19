@@ -16,6 +16,7 @@ use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
 use serde_json::json;
 use std::collections::BTreeMap;
 
+use crate::analytics;
 use crate::cloud::BudgetInfo;
 use crate::db;
 use crate::ledger::query;
@@ -373,16 +374,6 @@ impl Breach {
     }
 }
 
-/// The mean daily cost of the seven calendar days before `day`; a day with
-/// no charges counts as zero.
-fn trailing_mean(daily: &BTreeMap<NaiveDate, f64>, day: NaiveDate) -> f64 {
-    let sum: f64 = (1..=7)
-        .filter_map(|back| day.checked_sub_days(chrono::Days::new(back)))
-        .map(|before| daily.get(&before).copied().unwrap_or(0.0))
-        .sum();
-    sum / 7.0
-}
-
 /// Whether the latest days of a service's daily costs are a run of
 /// breaches: each of the last `consecutive` days above `multiplier` × its
 /// own trailing 7-day mean.
@@ -396,7 +387,7 @@ pub fn detect_breach(
     consecutive: u64,
 ) -> Option<Breach> {
     let (&last, _) = daily.iter().next_back()?;
-    let baseline = trailing_mean(daily, last);
+    let baseline = analytics::trailing_mean(daily, last);
     if baseline <= 0.0 || daily[&last] <= baseline * multiplier {
         return None;
     }
@@ -405,7 +396,7 @@ pub fn detect_breach(
     // breached its own baseline.
     let mut first = last;
     while let Some(previous) = first.pred_opt() {
-        let mean = trailing_mean(daily, previous);
+        let mean = analytics::trailing_mean(daily, previous);
         match daily.get(&previous) {
             Some(&amount) if mean > 0.0 && amount > mean * multiplier => first = previous,
             _ => break,

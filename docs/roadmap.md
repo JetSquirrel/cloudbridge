@@ -72,7 +72,8 @@ and DeepSeek. Alibaba Cloud's detail export adds instance and billing-item
 rows, including model-level detail for Model Studio (百炼). DeepSeek's
 API provides balances; its cost export supplies spend detail. The anomaly,
 balance-floor and untagged-ratio rules evaluate the ledger on open and
-when the Alerts page loads, not while the app is closed.
+after each ingest; opening the Alerts page only re-checks whether open
+alerts have resolved, and nothing runs while the app is closed.
 
 ## P0 — FOCUS normalization (historical implementation notes)
 
@@ -325,18 +326,24 @@ than rendering a blank chart.
   *Partly landed early, in 0.3.0:* the alerting engine runs a daily-versus-
   7-day-trailing-baseline rule per `(source, service)`, and an alert says
   what it saw — the day's figure, the baseline it broke, the length of the
-  streak, and the month-end figure if it holds. What is still owed is the
-  resource level and a true period-over-period attribution of the delta.
+  streak, and the month-end figure if it holds. The period-over-period side
+  has since landed on main: the cost-change decomposition in
+  `analytics.rs` attributes the delta, and the Attribution page breaks a
+  period down by service, region or service category. What is still owed is
+  the resource level.
 - **Budget alerts.** *Partly landed:* the balance-floor rule fires on a
-  prepaid balance falling below an account's budget, or a default floor.
-  A budget *per service or tag* is still owed, and so is the budget UI —
-  `BudgetInfo` and its queries exist with nothing calling them.
+  prepaid balance falling below an account's budget, or a default floor,
+  and the budget UI is no longer missing — the Rules page edits a monthly
+  budget per account, and an "Account budget" rule checks it against cost
+  to date or the month-end forecast (landed on main, not yet released).
+  A budget *per service or tag* is still owed.
 - **Month-end snapshot freezing**, built on `ingest_batch`.
 
 A desktop app cannot alert while it is closed. Budget alerts are scoped as
 "notify on open, plus a monthly review", or a lightweight tray resident —
 we will not promise real-time alerting in the README. As landed, rules are
-evaluated on open and when the Alerts page loads, and the docs say so.
+evaluated on open and after each refresh, opening the Alerts page re-checks
+whether open alerts have resolved, and the docs say so.
 
 ## P3
 

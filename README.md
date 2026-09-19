@@ -26,7 +26,8 @@ required.
   to business line; unallocated usage stays visible.
 - **Review changes that matter.** Configurable rules flag unusual daily spend,
   low prepaid balances, and unallocated costs. Rules run when the app opens
-  and when the Alerts page loads—not while it is closed.
+  and after each refresh; opening the Alerts page re-checks whether open
+  alerts have resolved. Nothing runs while the app is closed.
 - **Report in one currency.** Original billing amounts are preserved; a dated,
   built-in exchange-rate table converts them for display. Missing rates are
   reported rather than silently treated as 1:1. Rates are not live market data.

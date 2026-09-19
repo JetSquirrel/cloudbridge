@@ -23,9 +23,6 @@ pub struct BalanceInfo {
 /// DeepSeek balance response
 #[derive(Debug, Deserialize)]
 pub struct BalanceResponse {
-    /// Whether balance is sufficient for API calls
-    #[allow(dead_code)]
-    pub is_available: bool,
     /// Balance info array
     pub balance_infos: Vec<BalanceInfo>,
 }

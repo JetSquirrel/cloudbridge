@@ -325,6 +325,16 @@ pub fn decompose(
 
 // ==================== Trailing-average overlay ====================
 
+/// The mean daily cost of the seven calendar days before `day`; a day with
+/// no charges counts as zero.
+pub fn trailing_mean(daily: &BTreeMap<NaiveDate, f64>, day: NaiveDate) -> f64 {
+    let sum: f64 = (1..=7)
+        .filter_map(|back| day.checked_sub_days(chrono::Days::new(back)))
+        .map(|before| daily.get(&before).copied().unwrap_or(0.0))
+        .sum();
+    sum / 7.0
+}
+
 /// The charge-time window [`trailing_average`] reads usage from, as
 /// `(start, end_exclusive)` — `None` for degenerate inputs, which produce an
 /// empty series and need no read at all.
@@ -809,6 +819,27 @@ mod tests {
         assert!(reconciled);
         let (_, reconciled) = reconcile(0.0, 5.0);
         assert!(!reconciled);
+    }
+
+    #[test]
+    fn the_trailing_mean_averages_the_seven_days_before() {
+        // Seven full days before, totalling 700.
+        let daily: BTreeMap<NaiveDate, f64> = (1..=7)
+            .map(|back| (day(2026, 9, 8 - back), 100.0))
+            .collect();
+        assert_eq!(trailing_mean(&daily, day(2026, 9, 8)), 100.0);
+
+        // Days with no data count as zero: 70 + 7 over seven days.
+        let sparse = BTreeMap::from([(day(2026, 9, 7), 70.0), (day(2026, 9, 1), 7.0)]);
+        assert_eq!(trailing_mean(&sparse, day(2026, 9, 8)), 11.0);
+
+        // The day itself never feeds its own baseline, and an empty map
+        // reads zero.
+        assert_eq!(
+            trailing_mean(&BTreeMap::from([(day(2026, 9, 8), 700.0)]), day(2026, 9, 8)),
+            0.0
+        );
+        assert_eq!(trailing_mean(&BTreeMap::new(), day(2026, 9, 8)), 0.0);
     }
 
     #[test]

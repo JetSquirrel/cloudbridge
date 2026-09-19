@@ -22,6 +22,7 @@ use std::path::PathBuf;
 
 use super::fmt;
 use crate::alerts::{self, AlertKind, AlertStatus, AlertView, RuleView};
+use crate::analytics;
 use crate::cloud::registry;
 use crate::cloud::{BillingPeriod, BudgetInfo, BudgetStatus};
 use crate::ledger::query;
@@ -459,7 +460,7 @@ fn load_overview_mtd(now: DateTime<Utc>) -> Result<OverviewData> {
             });
             baseline.push(ChartPoint {
                 label,
-                amount: trailing_mean(&by_day, day),
+                amount: analytics::trailing_mean(&by_day, day),
             });
         }
         day += chrono::Duration::days(1);
@@ -652,20 +653,6 @@ fn daily_map(rows: Vec<(String, f64)>) -> BTreeMap<NaiveDate, f64> {
         .collect()
 }
 
-/// The 7-day trailing mean ending the day before `day` — the daily
-/// ranges' baseline series, days without data counting as zero.
-fn trailing_mean(by_day: &BTreeMap<NaiveDate, f64>, day: NaiveDate) -> f64 {
-    (1..=7)
-        .map(|back| {
-            by_day
-                .get(&(day - chrono::Duration::days(back)))
-                .copied()
-                .unwrap_or(0.0)
-        })
-        .sum::<f64>()
-        / 7.0
-}
-
 /// A daily series over `[since, until]`: one zero-filled point per day.
 /// `with_baseline` adds the 7-day trailing mean — the cross-account
 /// overview's baseline; a single account's mean is noisier than it is
@@ -689,7 +676,7 @@ fn daily_series(
         if with_baseline {
             baseline.push(ChartPoint {
                 label,
-                amount: trailing_mean(by_day, day),
+                amount: analytics::trailing_mean(by_day, day),
             });
         }
         day += chrono::Duration::days(1);
@@ -932,6 +919,16 @@ fn benchmark_value(series: Vec<(String, f64)>) -> Option<f64> {
     (*value >= fmt::DUST_THRESHOLD).then_some(*value)
 }
 
+/// The dismissal keys the data-quality surfaces filter by. A failed read
+/// logs and yields an empty set rather than taking the page down — the
+/// findings simply all show.
+pub(crate) fn dismissed_quality_keys() -> std::collections::HashSet<String> {
+    db::dismissed_quality_issue_keys().unwrap_or_else(|e| {
+        tracing::warn!("Could not read the dismissed data-quality issues: {}", e);
+        std::collections::HashSet::new()
+    })
+}
+
 /// The data-quality strip rows for a period, worst severity first. The
 /// check is additive page decoration: a failed check logs and yields an
 /// empty strip rather than taking the page down.
@@ -946,10 +943,7 @@ fn load_data_quality(billing_period: &str) -> Vec<DataQualityRow> {
             tracing::warn!("Could not check the period's data quality: {}", e);
             Vec::new()
         });
-    let dismissed = db::dismissed_quality_issue_keys().unwrap_or_else(|e| {
-        tracing::warn!("Could not read the dismissed data-quality issues: {}", e);
-        std::collections::HashSet::new()
-    });
+    let dismissed = dismissed_quality_keys();
     data_quality_rows(billing_period, issues, &dismissed)
 }
 
@@ -2182,19 +2176,6 @@ mod tests {
         date.and_hms_opt(0, 0, 0)
             .expect("midnight exists")
             .and_utc()
-    }
-
-    #[test]
-    fn trailing_mean_counts_missing_days_as_zero() {
-        let day = NaiveDate::from_ymd_opt(2026, 9, 8).expect("a real date");
-        let mut by_day = BTreeMap::new();
-        by_day.insert(day - chrono::Duration::days(1), 70.0);
-        by_day.insert(day - chrono::Duration::days(7), 7.0);
-        // 70 + 7 over 7 days; the five days without data count as zero.
-        assert_eq!(trailing_mean(&by_day, day), 11.0);
-        // The day itself never feeds its own baseline.
-        by_day.insert(day, 700.0);
-        assert_eq!(trailing_mean(&by_day, day), 11.0);
     }
 
     #[test]

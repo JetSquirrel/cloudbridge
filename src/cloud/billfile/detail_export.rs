@@ -246,3 +246,154 @@ fn describe(record: &Record<'_>, columns: &Columns) -> String {
     .collect::<Vec<_>>()
     .join(" / ")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cloud::raw::RawPart;
+    use crate::ledger::{Charge, ChargeCategory};
+
+    /// The narrowest layout the parser reads: a month, a product, the
+    /// three money columns and one deduction.
+    static LAYOUT: Layout = Layout {
+        anchors: &["BillingCycle"],
+        billing_cycle: &["BillingCycle"],
+        billing_date: &["BillingDate"],
+        product_name: &["ProductName"],
+        product_code: &["ProductCode"],
+        product_detail: &[],
+        billing_item: &["BillingItem"],
+        instance_id: &["InstanceId"],
+        instance_name: &[],
+        region: &["Region"],
+        currency: &["Currency"],
+        default_currency: "CNY",
+        usage: &["Usage"],
+        usage_unit: &[],
+        tag: &["Tags"],
+        gross: &["GrossAmount"],
+        net: &["NetAmount"],
+        deductions: &[("DiscountAmount", &["DiscountAmount"])],
+    };
+
+    const PART: &str = "test_bill_detail";
+
+    fn recorded_batch(text: &str, period: BillingPeriod) -> RawBatch {
+        RawBatch {
+            provider: "Test".to_string(),
+            account_id: "acct-0".to_string(),
+            period,
+            batch_id: "b-1".to_string(),
+            fetched_at: "2026-09-02T02:00:00Z".parse().unwrap(),
+            parts: vec![RawPart::new(PART, "file", text)],
+            payload_files: Vec::new(),
+        }
+    }
+
+    fn charges(text: &str, period: BillingPeriod) -> Vec<Charge> {
+        normalize(&LAYOUT, &recorded_batch(text, period), PART)
+            .unwrap()
+            .charges
+    }
+
+    #[test]
+    fn a_well_formed_row_decomposes_into_a_usage_row_and_a_credit() {
+        let text = "BillingCycle,ProductName,ProductCode,BillingItem,InstanceId,Region,Currency,Usage,GrossAmount,DiscountAmount,NetAmount,Tags\n\
+                    2026-08,ECS,ecs,Instance hour,i-abc,cn-hangzhou,CNY,10,100.00,20.00,80.00,env:prod\n";
+        let charges = charges(text, BillingPeriod::new(2026, 8));
+
+        assert_eq!(charges.len(), 2, "one usage row and one discount");
+        let usage = &charges[0];
+        assert_eq!(usage.charge_category, ChargeCategory::Usage);
+        // The usage row carries the gross; the deduction lands beside it.
+        assert_eq!(usage.billed_cost, Some(100.00));
+        assert_eq!(usage.list_cost, Some(100.00));
+        assert_eq!(usage.service_name.as_deref(), Some("ECS"));
+        assert_eq!(usage.service_category.as_deref(), Some("ecs"));
+        assert_eq!(usage.charge_description.as_deref(), Some("Instance hour"));
+        assert_eq!(usage.resource_id.as_deref(), Some("i-abc"));
+        assert_eq!(usage.region_id.as_deref(), Some("cn-hangzhou"));
+        assert_eq!(usage.billing_currency, "CNY");
+        assert_eq!(usage.pricing_quantity, Some(10.0));
+        assert_eq!(usage.tags.as_deref(), Some(r#"{"env":"prod"}"#));
+        // A monthly export spans the whole period.
+        assert_eq!(
+            usage.charge_period_start.to_rfc3339(),
+            "2026-08-01T00:00:00+00:00"
+        );
+        assert_eq!(
+            usage.charge_period_end.to_rfc3339(),
+            "2026-09-01T00:00:00+00:00"
+        );
+
+        let credit = &charges[1];
+        assert_eq!(credit.charge_category, ChargeCategory::Credit);
+        assert_eq!(credit.charge_description.as_deref(), Some("DiscountAmount"));
+        assert_eq!(credit.billed_cost, Some(-20.00));
+    }
+
+    #[test]
+    fn a_daily_row_is_dated_to_its_own_day() {
+        let text = "BillingCycle,BillingDate,ProductName,GrossAmount,DiscountAmount,NetAmount\n\
+                    2026-08,2026-08-09,ECS,100.00,0.00,100.00\n";
+        let usage = &charges(text, BillingPeriod::new(2026, 8))[0];
+
+        assert_eq!(
+            usage.charge_period_start.to_rfc3339(),
+            "2026-08-09T00:00:00+00:00"
+        );
+        assert_eq!(
+            usage.charge_period_end.to_rfc3339(),
+            "2026-08-10T00:00:00+00:00"
+        );
+    }
+
+    #[test]
+    fn rows_outside_the_period_and_zero_rows_are_skipped() {
+        let text = "BillingCycle,ProductName,GrossAmount,DiscountAmount,NetAmount\n\
+                    2026-07,ECS,50.00,0.00,50.00\n\
+                    2026-08,ECS,100.00,0.00,100.00\n\
+                    2026-08,OSS,0.00,0.00,0.00\n";
+        let charges = charges(text, BillingPeriod::new(2026, 8));
+
+        assert_eq!(charges.len(), 1);
+        assert_eq!(charges[0].service_name.as_deref(), Some("ECS"));
+    }
+
+    #[test]
+    fn an_export_without_a_net_amount_is_refused() {
+        let text = "BillingCycle,ProductName,GrossAmount\n2026-08,ECS,100.00\n";
+        let error = normalize(
+            &LAYOUT,
+            &recorded_batch(text, BillingPeriod::new(2026, 8)),
+            PART,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("net amount"), "{}", error);
+    }
+
+    /// A column mapped to the wrong field must not total as zero.
+    #[test]
+    fn a_cell_that_is_not_an_amount_fails_the_import() {
+        let text = "BillingCycle,ProductName,GrossAmount,DiscountAmount,NetAmount\n\
+                    2026-08,ECS,lots,0.00,80.00\n";
+        assert!(normalize(
+            &LAYOUT,
+            &recorded_batch(text, BillingPeriod::new(2026, 8)),
+            PART
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn the_periods_an_export_covers_come_back_oldest_first() {
+        let text = "BillingCycle,ProductName,GrossAmount,DiscountAmount,NetAmount\n\
+                    2026-09,ECS,1.00,0.00,1.00\n\
+                    2026-08,ECS,1.00,0.00,1.00\n";
+        assert_eq!(
+            periods(&LAYOUT, text).unwrap(),
+            vec![BillingPeriod::new(2026, 8), BillingPeriod::new(2026, 9)]
+        );
+    }
+}

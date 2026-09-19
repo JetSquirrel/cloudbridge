@@ -85,3 +85,54 @@ pub fn relative_time(at: DateTime<Utc>) -> String {
 pub fn change_pct(pct: f64) -> String {
     format!("{pct:+.1}%")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn small_amounts_keep_two_decimals() {
+        assert_eq!(amount(51.5, "USD"), "$51.50");
+        assert_eq!(amount(0.99, "USD"), "$0.99");
+        assert_eq!(amount(42.75, "CNY"), "¥42.75");
+    }
+
+    #[test]
+    fn large_amounts_group_thousands_and_round_to_whole_units() {
+        assert_eq!(amount(51080.4, "USD"), "$51,080");
+        assert_eq!(amount(1_234_567.89, "USD"), "$1,234,568");
+        assert_eq!(amount(100.0, "USD"), "$100");
+    }
+
+    #[test]
+    fn a_negative_amount_keeps_its_sign_ahead_of_the_symbol() {
+        assert_eq!(amount(-12.5, "USD"), "-$12.50");
+        assert_eq!(amount(-51080.0, "USD"), "-$51,080");
+    }
+
+    #[test]
+    fn sub_cent_amounts_are_dust_not_invented_roundings() {
+        assert_eq!(amount(0.007, "USD"), "<$0.01");
+        assert_eq!(amount(-0.007, "USD"), "-<$0.01");
+        // Half a cent is round-off, not an amount at all.
+        assert_eq!(amount(0.004, "USD"), "$0");
+        assert_eq!(amount(0.0, "USD"), "$0");
+    }
+
+    #[test]
+    fn yen_has_no_minor_unit() {
+        assert_eq!(amount(500.6, "JPY"), "¥501");
+        assert_eq!(amount(49.0, "JPY"), "¥49");
+    }
+
+    #[test]
+    fn a_currency_with_no_known_symbol_is_named_instead() {
+        assert_eq!(amount(12.5, "BTC"), "BTC 12.50");
+    }
+
+    #[test]
+    fn a_change_percentage_carries_its_sign() {
+        assert_eq!(change_pct(12.5), "+12.5%");
+        assert_eq!(change_pct(-3.26), "-3.3%");
+    }
+}

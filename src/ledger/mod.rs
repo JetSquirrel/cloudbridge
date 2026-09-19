@@ -27,14 +27,13 @@ use chrono::{DateTime, Utc};
 use duckdb::{params, Connection};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::config::get_ledger_database_path;
 use schema::TIMESTAMP_FORMAT;
 
-lazy_static::lazy_static! {
-    static ref LEDGER_CONNECTION: Arc<Mutex<Option<Connection>>> = Arc::new(Mutex::new(None));
-}
+static LEDGER_CONNECTION: LazyLock<Arc<Mutex<Option<Connection>>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(None)));
 
 pub use crate::model::{BalanceSnapshot, Channel, Charge, ChargeCategory, CostBasis, PeriodKey};
 
@@ -45,7 +44,9 @@ pub fn init_ledger(reporting_currency: &str) -> Result<()> {
     schema::apply(&conn)?;
     schema::apply_reporting_currency(&conn, reporting_currency)?;
 
-    let mut ledger = LEDGER_CONNECTION.lock().unwrap();
+    let mut ledger = LEDGER_CONNECTION
+        .lock()
+        .map_err(|e| anyhow!("Failed to lock ledger connection: {}", e))?;
     *ledger = Some(conn);
 
     tracing::info!("Ledger initialized: {:?}", path);
@@ -196,29 +197,10 @@ fn derive_top_ups(conn: &Connection, key: &PeriodKey) -> Result<Vec<Charge>> {
 
 /// First instant of a `YYYY-MM` period and of the one after it.
 fn period_bounds(billing_period: &str) -> Result<(DateTime<Utc>, DateTime<Utc>)> {
-    let (year, month) = billing_period
-        .split_once('-')
-        .ok_or_else(|| anyhow!("Not a YYYY-MM billing period: {:?}", billing_period))?;
-    let year: i32 = year.parse()?;
-    let month: u32 = month.parse()?;
-
-    let start = chrono::NaiveDate::from_ymd_opt(year, month, 1)
-        .ok_or_else(|| anyhow!("Not a real billing period: {:?}", billing_period))?;
-    let next = if month == 12 {
-        chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
-    } else {
-        chrono::NaiveDate::from_ymd_opt(year, month + 1, 1)
-    }
-    .expect("the month after a real one exists");
-
+    let period = crate::analytics::period_of(billing_period)?;
     Ok((
-        start
-            .and_hms_opt(0, 0, 0)
-            .expect("midnight exists")
-            .and_utc(),
-        next.and_hms_opt(0, 0, 0)
-            .expect("midnight exists")
-            .and_utc(),
+        crate::analytics::midnight(period.start()),
+        crate::analytics::midnight(period.end_exclusive()),
     ))
 }
 

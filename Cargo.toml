@@ -88,8 +88,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Configuration
 directories = "6"
 
-# Lazy initialization
-lazy_static = "1"
 zip = { version = "4.2.0", default-features = false, features = ["deflate"] }
 
 # Browser only. The web demo has no filesystem, no keyring and no threads,
@@ -97,8 +95,6 @@ zip = { version = "4.2.0", default-features = false, features = ["deflate"] }
 [target.'cfg(target_family = "wasm")'.dependencies]
 wasm-bindgen = "0.2"
 console_error_panic_hook = "0.1"
-console_log = "1.0"
-log = "0.4"
 tracing-wasm = "0.2"
 
 # `chrono::Utc::now` reaches the wall clock through js-sys on wasm; without

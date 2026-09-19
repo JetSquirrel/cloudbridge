@@ -291,8 +291,6 @@ struct AliyunErrorResponse {
 #[serde(rename_all = "PascalCase")]
 #[allow(dead_code)]
 struct BillOverviewResponse {
-    request_id: Option<String>,
-    success: Option<bool>,
     code: Option<String>,
     message: Option<String>,
     data: Option<BillOverviewData>,
@@ -302,9 +300,7 @@ struct BillOverviewResponse {
 #[serde(rename_all = "PascalCase")]
 #[allow(dead_code)]
 struct BillOverviewData {
-    billing_cycle: Option<String>,
     account_id: Option<String>,
-    account_name: Option<String>,
     items: Option<BillOverviewItems>,
 }
 

@@ -1596,10 +1596,7 @@ struct AccountsHealth {
 /// them back — the card resurfaces only findings that are new.
 fn load_health() -> anyhow::Result<AccountsHealth> {
     let period = BillingPeriod::containing(Utc::now());
-    let dismissed = db::dismissed_quality_issue_keys().unwrap_or_else(|e| {
-        tracing::warn!("Could not read the dismissed data-quality issues: {}", e);
-        HashSet::new()
-    });
+    let dismissed = data::dismissed_quality_keys();
     // One period key per account, as the attribution page's drill-down
     // builds them; the checks run per distinct billing period so accounts
     // sharing a period are not double-counted.

@@ -614,8 +614,6 @@ fn parse_day(date: &str) -> Result<DateTime<Utc>> {
 struct StsCallerIdentity {
     account: String,
     arn: String,
-    #[allow(dead_code)]
-    user_id: String,
 }
 
 /// Parse STS GetCallerIdentity XML response
@@ -639,7 +637,6 @@ fn parse_sts_response(xml: &str) -> Result<StsCallerIdentity> {
     Ok(StsCallerIdentity {
         account: extract("Account").unwrap_or_default(),
         arn: extract("Arn").unwrap_or_default(),
-        user_id: extract("UserId").unwrap_or_default(),
     })
 }
 

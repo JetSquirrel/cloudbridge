@@ -145,6 +145,7 @@ cloudbridge/
 │   │                      # comparisons, decomposition, data quality
 │   ├── demo_data.rs       # The demo bill, as rows; each target writes them
 │   ├── config.rs          # Application configuration
+│   ├── crypto.rs          # AES-256-GCM; reads credentials stored pre-keyring
 │   ├── db.rs              # Desktop: application database (accounts, rules, events)
 │   ├── store.rs           # Handle to the backend the UI talks to
 │   ├── ingest.rs          # Fetch / import / renormalize pipeline
@@ -159,15 +160,20 @@ cloudbridge/
 │   │   ├── s3.rs          # Standalone S3 client used by the export channel
 │   │   ├── aliyun.rs      # Alibaba Cloud
 │   │   ├── deepseek.rs    # DeepSeek balance API
+│   │   ├── deduction.rs   # Gross/deductions/net bill-line decomposition,
+│   │   │                  # shared by the API and the bill-export channels
 │   │   ├── billfile/      # Bill export import: one parser per provider
 │   │   ├── raw.rs         # Raw payload batches, persisted to Parquet
 │   │   └── testdata/      # Recorded responses the normalizers are tested against
 │   ├── ledger/            # DuckDB ledger: fct_charge, views, fx rates, schema
 │   ├── ui/                # Pages: overview, accounts, account detail,
-│   │                      # attribution, alerts, rules, settings, charting
+│   │                      # attribution, alerts, rules, settings, the SQL
+│   │                      # console (query.rs), charting
 │   └── web/               # wasm backends: in-memory ledger, no keyring
 ├── scripts/
 │   ├── build-web.sh       # wasm build + wasm-bindgen + icon catalog
+│   ├── package-macos.sh   # Sign, notarize and staple the macOS dmg
+│   ├── render-blog.py     # Render docs/blog Markdown posts to HTML
 │   └── locked-version.py  # The version Cargo.lock resolved, for a package
 ├── web/
 │   ├── site/              # Static shell for the browser demo

@@ -1,17 +1,22 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use keyring::Entry;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex, MutexGuard};
 
 const SERVICE_NAME: &str = "CloudBridge";
 
-lazy_static::lazy_static! {
-    /// Credentials already read from (or written to) the keychain this
-    /// session. On macOS every keychain read can raise a system password
-    /// prompt — the item's access control names the binary that stored it,
-    /// and a rebuild is a new binary — so a run that fetches several
-    /// billing periods must not go back to the keychain for each one.
-    static ref CACHE: Mutex<HashMap<String, (String, String)>> = Mutex::new(HashMap::new());
+/// Credentials already read from (or written to) the keychain this
+/// session. On macOS every keychain read can raise a system password
+/// prompt — the item's access control names the binary that stored it,
+/// and a rebuild is a new binary — so a run that fetches several
+/// billing periods must not go back to the keychain for each one.
+static CACHE: LazyLock<Mutex<HashMap<String, (String, String)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn cache() -> Result<MutexGuard<'static, HashMap<String, (String, String)>>> {
+    CACHE
+        .lock()
+        .map_err(|e| anyhow!("Failed to lock the credential cache: {}", e))
 }
 
 /// The pair as one item. Two entries meant two prompts per read; a single
@@ -46,7 +51,7 @@ pub fn store_account_secrets(
         let _ = sk.delete_password();
     }
 
-    CACHE.lock().unwrap().insert(
+    cache()?.insert(
         account_id.to_string(),
         (access_key_id.to_string(), secret_access_key.to_string()),
     );
@@ -55,7 +60,7 @@ pub fn store_account_secrets(
 }
 
 pub fn get_account_secrets(account_id: &str) -> Result<Option<(String, String)>> {
-    if let Some(pair) = CACHE.lock().unwrap().get(account_id) {
+    if let Some(pair) = cache()?.get(account_id) {
         return Ok(Some(pair.clone()));
     }
 
@@ -67,10 +72,7 @@ pub fn get_account_secrets(account_id: &str) -> Result<Option<(String, String)>>
     };
 
     if let Some((ref ak, ref sk)) = pair {
-        CACHE
-            .lock()
-            .unwrap()
-            .insert(account_id.to_string(), (ak.clone(), sk.clone()));
+        cache()?.insert(account_id.to_string(), (ak.clone(), sk.clone()));
     }
 
     Ok(pair)
@@ -113,7 +115,7 @@ pub fn delete_account_secrets(account_id: &str) -> Result<()> {
         let _ = sk.delete_password();
     }
 
-    CACHE.lock().unwrap().remove(account_id);
+    cache()?.remove(account_id);
 
     Ok(())
 }
