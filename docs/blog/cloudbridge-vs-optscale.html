@@ -3,20 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="A bill you downloaded from a console now imports into the same ledger the APIs feed, the Overview stops mistaking a covered cost for a cheap one, and the interface is rebuilt at desktop density.">
+    <meta name="description" content="One is a FinOps server for an organization, the other a desktop ledger for one person's bills. Which one fits depends less on features than on who is asking.">
     <meta name="theme-color" content="#0E1420">
-    <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/blog/cloudbridge-0-3-0.html">
+    <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/blog/cloudbridge-vs-optscale.html">
     <meta property="og:type" content="article">
-    <meta property="og:title" content="0.3.0: bring your own bill">
-    <meta property="og:description" content="A bill you downloaded from a console now imports into the same ledger the APIs feed, the Overview stops mistaking a covered cost for a cheap one, and the interface is rebuilt at desktop density.">
-    <meta property="og:url" content="https://cloudbridge.jetsquirrel.cloud/blog/cloudbridge-0-3-0.html">
+    <meta property="og:title" content="CloudBridge vs OptScale">
+    <meta property="og:description" content="One is a FinOps server for an organization, the other a desktop ledger for one person&#x27;s bills. Which one fits depends less on features than on who is asking.">
+    <meta property="og:url" content="https://cloudbridge.jetsquirrel.cloud/blog/cloudbridge-vs-optscale.html">
     <meta property="og:image" content="https://cloudbridge.jetsquirrel.cloud/cloudbridge.png">
     <meta property="og:image:width" content="2560">
     <meta property="og:image:height" content="1584">
     <meta name="twitter:card" content="summary_large_image">
     <link rel="icon" type="image/png" href="../icon.png">
     <link rel="apple-touch-icon" href="../icon.png">
-    <title>0.3.0: bring your own bill - CloudBridge Blog</title>
+    <title>CloudBridge vs OptScale - CloudBridge Blog</title>
 
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -377,41 +377,120 @@
         </div>
     </nav>
 
-    <!-- GENERATED FROM cloudbridge-0-3-0.md - edit the Markdown, then re-run scripts/render-blog.py -->
+    <!-- GENERATED FROM cloudbridge-vs-optscale.md - edit the Markdown, then re-run scripts/render-blog.py -->
     <main id="main">
         <article class="post">
-            <span class="eyebrow">Release · 2026-09-11</span>
-            <h1>0.3.0: bring your own bill</h1>
-            <p class="lede">A bill you downloaded from a console now imports into the same ledger the APIs feed, the Overview stops mistaking a covered cost for a cheap one, and the interface is rebuilt at desktop density.</p>
+            <span class="eyebrow">Comparison · 2026-09-24</span>
+            <h1>CloudBridge vs OptScale</h1>
+            <p class="lede">One is a FinOps server for an organization, the other a desktop ledger for one person's bills. Which one fits depends less on features than on who is asking.</p>
 
-            <p>0.2.0 gave CloudBridge one fact table and one currency. It left one thing out: a billing API is not always the best reading of a bill, and sometimes it is not a reading at all. Alibaba Cloud's <code>QueryBillOverview</code> reports Model Studio (百炼) as one figure a month. DeepSeek's API reports a balance and nothing about what the money went on. Volcengine, OpenAI and Anthropic have an admin API you may not have a key for.</p>
-<p>But every one of those consoles has a Download button. 0.3.0 makes what comes out of it a first-class way into the ledger.</p>
-<h2>A second channel, not a second schema</h2>
-<p>An imported export becomes the same <code>fct_charge</code> rows a fetch produces. Downstream — the dashboard, the alerts, the Sankey — an imported month is indistinguishable from a fetched one. What differs is recorded rather than hidden: <code>ingest_batch.channel</code> says whether a period arrived by fetch or by import, and an imported month is never overwritten by an automatic fetch, <strong>including under Force Refresh</strong>. The export is the finer reading; "force" means "don't trust the freshness window", not "throw away what I imported". To update an imported month, import a corrected export of it.</p>
-<p>An import <strong>replaces</strong> every month the file covers. It has to: the export is the provider's own bill, so adding it to an API reading of the same month would count the month twice.</p>
-<p>Five sources import today: Alibaba Cloud and Volcengine bill detail (账单明细), OpenAI and Anthropic cost or usage exports, and DeepSeek.</p>
-<h2>Token counts are not money</h2>
-<p>A usage export carries token counts and no amounts. Those rows are stored with <code>billed_cost</code> NULL and <code>cost_basis = absent</code> — pricing them at list would put a number in <code>billed_cost</code> that nobody was ever charged.</p>
-<p>DeepSeek's console makes the same point in a sharper way. Its download is a zip of two CSVs: <code>cost-*.csv</code>, whose money column is named <code>cost</code>, and <code>amount-*.csv</code>, whose column named <code>amount</code> is a <em>token count</em>. Read the second as money and a day of 10,787 cached input tokens books as ¥10,787. So CloudBridge opens the zip, reads the cost half, and refuses the other half by name. You import the zip exactly as it downloaded.</p>
-<p>Column names, meanwhile, are matched through alias lists covering the Chinese console, the English console, and each provider's API field names — none of these exports is a documented file format. A column that matches nothing is an error that names the columns your file actually has. A non-UTF-8 file is refused with the instruction that fixes it, rather than decoded on a guess that would mangle every product name in the bill.</p>
-<h2>What a credit hides</h2>
-<p>A total net of credits is the right headline: it is what you paid. It is the wrong basis for a trend. An account whose usage is fully covered by credits nets to about $0, and a month-over-month percentage computed on that is noise — one real account produced −318.9%.</p>
-<p>So the Overview now splits the two. The headline stays net, with the gross usage and the credits that took it down shown next to it. Everything trended or ranked — the chart, the change percent, "Where it went", the biggest movers — runs on gross usage. What you consumed and what you were billed are different questions, and the page now answers both instead of averaging them.</p>
-<p>The header also carries a range control: month to date, the rolling last 30 days, or the last 12 calendar months. Every number on the page is computed for the window you picked.</p>
-<h2>Desktop density</h2>
-<p>The interface moves to <a href="https://crates.io/crates/gpui-kit">GPUI Kit</a> 0.6 — one dependency in place of three, with the tree-sitter grammars switched off, because a cost dashboard has no business compiling a syntax-highlighting stack.</p>
-<p>With that came a decision the framework leaves open: this is a dense data tool, not a web page. A 13px base font and a 6px card radius are applied at the application level over whatever a theme file ships. The sidebar's sync card became a status bar along the bottom of the window, the way a desktop app reports state. Sizes derive from the rem scale, so the whole interface still zooms with the base font.</p>
-<p>And amounts stopped rounding sub-dollar spend to <code>$0</code>: whole units from 100 up, two decimals from a cent up, and <code>&lt;$0.01</code> below a cent — a small number is now legible as a small number rather than as nothing.</p>
-<h2>Also in 0.3.0</h2>
+            <p>Both projects are open source and both read cloud bills. They are built for different people. <a href="https://github.com/hystax/optscale">OptScale</a>, from Hystax, is a self-hosted FinOps platform an organization runs on a server so that engineering and finance can share one view of cloud spend and act on it. CloudBridge is a desktop app one person runs on their own machine, reading their own bills into a local file.</p>
+<p>Facts about OptScale below are taken from its README, repository and documentation as of September 2026, and linked at the end. If something here has gone stale, the sources win.</p>
+<h2>The short answer</h2>
+<p>If several people need access, if your spend is on Azure, Google Cloud or Kubernetes, or if what you want is a list of instances to resize and commitments to buy, use OptScale. CloudBridge does none of those things.</p>
+<p>If you are one developer or a small team with one person watching the bill, your spend is spread across AWS, Alibaba Cloud, Volcengine and model APIs such as OpenAI, Anthropic or DeepSeek, and you would rather not run a server to find out what you spent, CloudBridge is the smaller tool for that.</p>
+<h2>What OptScale is</h2>
+<p>OptScale describes itself as an open-source FinOps and cloud cost optimization platform for AWS, Microsoft Azure, Google Cloud, Alibaba Cloud and Kubernetes clusters. It ingests billing and usage data and, on top of cost dashboards, detects unused and idle resources, recommends rightsizing, analyzes Reserved Instance, Savings Plan and Spot usage, and can stop non-production VMs outside working hours on a power schedule. Governance is organization-shaped: pools of resources with quotas and budgets, anomaly detection policies, tagging policies, shared environments, and four base roles (Member, Engineer, Manager, Organization manager). It also covers Databricks and S3 storage analysis.</p>
+<p>It is a server made of many services. Its repository has around twenty top-level service directories, among them <code>rest_api</code>, <code>auth</code>, <code>ngui</code> for the web interface, <code>risp</code> for commitments, <code>bumiworker</code> for recommendations, and Slack and Jira integrations. Production installs go onto Kubernetes, set up by the project's Ansible playbooks on Ubuntu 24.04, with a stated minimum of 8 CPU cores, 16 GB RAM and 150 GB SSD. A Docker Compose mode exists for evaluation only, on the same 8 cores and 16 GB. It is licensed Apache 2.0.</p>
+<h2>What CloudBridge is</h2>
+<p>CloudBridge is a native desktop app written in Rust with <a href="https://gpui.rs/">GPUI</a>, released for macOS on Apple Silicon and Windows x64. There is also a <a href="https://cloudbridge.jetsquirrel.cloud/demo/">browser demo</a> running on sample data. It pulls costs from the AWS Cost Explorer API, Alibaba Cloud's billing API and DeepSeek's balance API, and imports bill files downloaded from Alibaba Cloud, Volcengine, OpenAI, Anthropic and DeepSeek. Everything lands in one local DuckDB ledger, using column names from <a href="https://focus.finops.org/">FOCUS</a>. Credentials go in the OS keyring. There is no server, no account, no sync and no telemetry.</p>
+<p>On top of the ledger: an Overview with month-to-date, 30-day and 12-month views, attribution by service, model and tag with an explicit unallocated share, alert rules for unusual daily spend, low prepaid balances and unallocated cost, and one reporting currency built from a dated exchange-rate table. The main branch adds monthly budget rules, confidence bands around the month-end forecast, a read-only SQL console over the ledger, and reading AWS FOCUS exports straight from S3. None of these is in a tagged release yet; 0.3.2 is the latest. The license is MIT.</p>
+<h2>Side by side</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th></th>
+<th>OptScale</th>
+<th>CloudBridge</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>What you run</td>
+<td>A server: Kubernetes in production, Docker Compose to evaluate</td>
+<td>A desktop app on macOS or Windows</td>
+</tr>
+<tr>
+<td>Stated footprint</td>
+<td>8+ cores, 16 GB RAM, 150+ GB SSD</td>
+<td>Your laptop</td>
+</tr>
+<tr>
+<td>Users</td>
+<td>Organizations, with roles and pools</td>
+<td>One person per install</td>
+</tr>
+<tr>
+<td>Where data lives</td>
+<td>Your OptScale server</td>
+<td>A DuckDB file in your app-data directory</td>
+</tr>
+<tr>
+<td>Clouds</td>
+<td>AWS, Azure, GCP, Alibaba Cloud, Kubernetes</td>
+<td>AWS, Alibaba Cloud, Volcengine</td>
+</tr>
+<tr>
+<td>Model API bills</td>
+<td>Not listed in the open-source README</td>
+<td>OpenAI, Anthropic, DeepSeek, Alibaba Model Studio (百炼), Volcengine Ark (方舟)</td>
+</tr>
+<tr>
+<td>How data comes in</td>
+<td>Connected accounts</td>
+<td>Billing APIs, or bill files you download</td>
+</tr>
+<tr>
+<td>Optimization advice</td>
+<td>Idle resources, rightsizing, RI/SP/Spot, power schedules</td>
+<td>None</td>
+</tr>
+<tr>
+<td>Anomalies and alerts</td>
+<td>Anomaly detection, quota and budget policies</td>
+<td>Daily-spend, balance and unallocated-cost rules; budget rules on main</td>
+</tr>
+<tr>
+<td>Cost allocation</td>
+<td>Pools, owners, tagging policies, Kubernetes namespaces and labels</td>
+<td>Service, model and tag, with the unallocated share shown</td>
+</tr>
+<tr>
+<td>Integrations</td>
+<td>Slack, Jira, Databricks</td>
+<td>None</td>
+</tr>
+<tr>
+<td>License</td>
+<td>Apache 2.0</td>
+<td>MIT</td>
+</tr>
+<tr>
+<td>Cost of the software</td>
+<td>Free to self-host; you pay for the server</td>
+<td>Free; provider API fees are separate</td>
+</tr>
+</tbody>
+</table></div>
+<h2>Where OptScale is the better choice</h2>
+<p><strong>More than one person needs the numbers.</strong> OptScale has users, roles and an organization tree, so finance and engineering can see the same figures with access set by role. CloudBridge is one ledger on one machine. Its README says outright that shared deployments and team collaboration are out of scope.</p>
+<p><strong>Your spend is on Azure, Google Cloud or Kubernetes.</strong> CloudBridge supports neither Azure nor Google Cloud, and has no idea what a namespace costs. OptScale covers all three, and it can split a cluster's cost by namespace, workload and label.</p>
+<p><strong>You want to be told what to change.</strong> CloudBridge tells you where the money went. It does not tell you an instance is oversized, a volume is unattached, or a Savings Plan would pay for itself. That is the core of OptScale's value, and CloudBridge has no counterpart to it.</p>
+<p><strong>You need governance.</strong> Quotas per pool, tagging policies, power schedules, and alerts sent to Slack or Jira are organization tools. CloudBridge's rules run when the app is open and after a refresh. Nothing runs while it is closed.</p>
+<p>A note on ML: Hystax has presented OptScale as an MLOps platform too, with experiment tracking, leaderboards and model versioning. In June 2025 the <code>arcee</code> and <code>bulldozer</code> services, the ML profiling agent and the bulk experiment runner, were removed from the repository, and the current README does not list experiment tracking. If that is why you are looking at OptScale, check what the version you deploy actually includes.</p>
+<h2>Where CloudBridge fits</h2>
+<p><strong>One person, one set of bills.</strong> Download, open, and either add an API key or import an export. There is no cluster to install and nothing to upgrade except the app. For one developer, the server that OptScale's minimum requirements describe is more machine than the question needs.</p>
+<p><strong>Model APIs next to cloud.</strong> For many small projects the biggest bill is no longer compute. It is tokens. CloudBridge reads OpenAI and Anthropic cost exports, DeepSeek's daily spend, Model Studio models inside an Alibaba Cloud bill and Ark endpoints inside a Volcengine bill, into the same ledger as the AWS account. A token-only usage export stays usage: it is not priced into a made-up bill.</p>
+<p><strong>Chinese clouds, from their own exports.</strong> Alibaba Cloud's 账单明细 and Volcengine's bill files import as they come out of the console, with Chinese and English column names both recognized. OptScale supports Alibaba Cloud. Volcengine is not on its list.</p>
+<p><strong>Data that stays put.</strong> The ledger and the raw provider responses stay in your app-data directory, and credentials stay in the OS keyring. Nothing goes to a third party, including us. Local is not the same as encrypted, though. CloudBridge does not encrypt the ledger, so disk encryption is still your job.</p>
+<h2>Can you use both?</h2>
+<p>Yes, and they do not interfere. Each reads the provider's billing data on its own, and neither writes to a cloud account. A team could run OptScale for shared AWS, Azure and Kubernetes spend, while one engineer keeps CloudBridge for the model API bills and Chinese-cloud accounts OptScale does not read. Two things to watch: AWS Cost Explorer charges per API request, so two tools polling it pay twice, and the two ledgers will not match line for line, because they map and convert charges differently.</p>
+<h2>Links</h2>
 <ul>
-<li><strong>Demo data</strong>, in Settings: three accounts and twelve months of realistically-shaped fake ledger, loaded and cleared with a button. Everything demo is keyed under a <code>demo-</code> prefix, holds no credentials, and is skipped by refresh, so no demo row ever reaches a provider API.</li>
-<li><strong>One keychain item per account, not two.</strong> On macOS every keychain read can raise a password prompt — the item's access control names the binary that stored it, so a rebuild is a new binary. A refresh fetching several periods was paying that cost per period per key. The pair is now a single item, read once a session; a pair still in the old two-entry form migrates on first read.</li>
-<li><strong>The refresh interval is 24 hours, and configurable</strong> (6, 12, 24 or 48). It was a fixed 6. A provider's bill does not move faster than a day in any way worth paying for.</li>
-<li><strong>"Resolved this month"</strong> on the Alerts page keys on when an alert was resolved rather than when it was raised.</li>
-<li>Settings writes and the currency switch run off the UI thread, and a failed save is shown in its own color so it cannot be mistaken for a saved one.</li>
+<li>CloudBridge: <a href="https://cloudbridge.jetsquirrel.cloud/demo/">browser demo</a> · <a href="https://cloudbridge.jetsquirrel.cloud/docs.html">documentation</a> · <a href="https://github.com/JetSquirrel/cloudbridge">source</a></li>
+<li>OptScale: <a href="https://github.com/hystax/optscale">repository and README</a> · <a href="https://hystax.com/documentation/optscale/">documentation</a> · <a href="https://hystax.com/documentation/optscale/roles-and-permissions.html">roles and permissions</a> · <a href="https://hystax.com/documentation/optscale/anomaly-detection.html">anomaly detection</a> · <a href="https://hystax.com/documentation/optscale/quotas-and-budgets.html">quotas and budgets</a> · <a href="https://my.optscale.com/live-demo">live demo</a></li>
+<li>The commit that removed OptScale's ML services: <a href="https://github.com/hystax/optscale/commit/a20a22259582bda9181956618f05f2f2072a871d">OSN-943</a></li>
 </ul>
-<h2>What's next</h2>
-<p>The <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/roadmap.md">roadmap</a> has the rest of P1: a bill file <em>export</em> channel (S3 / OSS + Parquet) for the bills that arrive on a schedule instead of through a browser, and tag-based allocation with an explicit unallocated node. The billing APIs for Volcengine, OpenAI and Anthropic are still owed — those sources sit in the registry with the credential each will want already named.</p>
 
             <div class="post-nav">
                 <a href="/blog.html" data-i18n="post.back">← All posts</a>

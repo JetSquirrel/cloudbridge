@@ -6,6 +6,14 @@
     <meta name="description" content="CloudBridge documentation - installation, cloud account configuration, usage, data storage, and security.">
     <meta name="theme-color" content="#0E1420">
     <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/docs.html">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Docs - CloudBridge">
+    <meta property="og:description" content="Install CloudBridge, connect a cloud or AI billing account or import a bill export, and read your first bill. Everything runs locally.">
+    <meta property="og:url" content="https://cloudbridge.jetsquirrel.cloud/docs.html">
+    <meta property="og:image" content="https://cloudbridge.jetsquirrel.cloud/cloudbridge.png">
+    <meta property="og:image:width" content="2560">
+    <meta property="og:image:height" content="1584">
+    <meta name="twitter:card" content="summary_large_image">
     <link rel="icon" type="image/png" href="icon.png">
     <link rel="apple-touch-icon" href="icon.png">
     <title>Docs - CloudBridge</title>
@@ -42,7 +50,8 @@
             --hairline-dark: #263349;
             --fg-strong: #101828;
             --fg-body: #47536B;
-            --fg-faint: #7A8699;
+            --fg-faint: #667085;
+            --fg-faint-on-dark: #7A8699; /* --fg-faint is too dark on --ink/--panel */
             --signal: #2F6FED;
             --local: #2FA97C;
             --radius: 6px;
@@ -321,7 +330,7 @@
         /* Footer (shared, compact) */
         footer {
             background: var(--ink);
-            color: var(--fg-faint);
+            color: var(--fg-faint-on-dark);
             padding: 2rem 0;
             border-top: 1px solid var(--hairline-dark);
         }
@@ -333,16 +342,23 @@
             flex-wrap: wrap;
             font-family: var(--font-mono);
             font-size: 0.75rem;
-            color: var(--fg-faint);
+            color: var(--fg-faint-on-dark);
         }
 
         footer a {
-            color: var(--fg-faint);
+            color: #8FA0BC;
             text-decoration: none;
         }
 
         footer a:hover {
             color: #fff;
+        }
+
+        .footer-nav {
+            display: flex;
+            gap: 1.25rem;
+            flex-wrap: wrap;
+            list-style: none;
         }
 
         @media (max-width: 900px) {
@@ -437,19 +453,36 @@
             <div class="docs-layout">
                 <aside class="docs-side" aria-label="Documentation sections">
                     <ul>
+                        <li><a href="#quickstart" data-i18n="docs.side.quickstart">Quickstart</a></li>
                         <li><a href="#installation" data-i18n="docs.side.install">Installation</a></li>
                         <li><a href="#configuration" data-i18n="docs.side.config">Configuration</a></li>
                         <li><a href="#import" data-i18n="docs.side.import">Bill file import</a></li>
                         <li><a href="#usage" data-i18n="docs.side.usage">Usage</a></li>
+                        <li><a href="#shortcuts" data-i18n="docs.side.shortcuts">Keyboard shortcuts</a></li>
                         <li><a href="#alerts" data-i18n="docs.side.alerts">Alerts &amp; rules</a></li>
                         <li><a href="#storage" data-i18n="docs.side.storage">Data Storage</a></li>
                         <li><a href="#security" data-i18n="docs.side.security">Security</a></li>
+                        <li><a href="#troubleshooting" data-i18n="docs.side.troubleshooting">Troubleshooting</a></li>
+                        <li><a href="/policies.html" data-i18n="docs.side.policies">Permissions</a></li>
                         <li><a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/roadmap.md" target="_blank" rel="noopener noreferrer" data-i18n="docs.side.roadmap">Roadmap</a></li>
                         <li><a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer" data-i18n="docs.side.contributing">Contributing</a></li>
                     </ul>
                 </aside>
 
                 <div class="docs-content">
+                    <section id="quickstart">
+                        <h2 data-i18n="docs.quick.title">Quickstart</h2>
+                        <ol data-i18n-html="docs.quick.steps">
+                            <li><strong>Install.</strong> Download the build for your platform from <a href="#installation">Installation</a>.</li>
+                            <li><strong>Look around first, if you like.</strong> <a href="/demo/">The browser demo</a> runs the same pages on a sample bill, or open <strong>Settings → Demo data</strong> in the app and click <strong>Load demo data</strong>. Demo accounts carry no credentials and are skipped by refreshes; <strong>Clear demo data</strong> on the same page removes them.</li>
+                            <li><strong>Add an account.</strong> Open <strong>Accounts</strong>, click <strong>Add account</strong>, pick the source and enter a name. AWS, Alibaba Cloud and DeepSeek need an API credential; <a href="#configuration">Configuration</a> shows where to create one. Click <strong>Save</strong>.</li>
+                            <li><strong>Get the bill in.</strong> For an API source (AWS, Alibaba Cloud, DeepSeek), click <strong>Validate</strong> on the account's row to check the credential, then <strong>Refresh</strong> on the Overview to fetch. For a file source (Volcengine, OpenAI, Anthropic, or Alibaba Cloud and DeepSeek when you want finer detail), download the export from the provider's console and click <strong>Import</strong> on the account's row; see <a href="#import">Bill file import</a>.</li>
+                            <li><strong>Read it.</strong> The <strong>Overview</strong> shows the window you pick: <strong>MTD</strong>, <strong>30d</strong> or <strong>12m</strong>. Choose USD or CNY under <strong>Settings → Reporting</strong>.</li>
+                        </ol>
+                        <div class="note" data-i18n-html="docs.quick.unreleased"><strong>Unreleased:</strong> in the development tree, saving an API account (AWS, Alibaba Cloud, or DeepSeek with a key) validates it and fetches the current month automatically, so step 4 needs no clicks for those sources. An empty Overview offers <strong>Add account…</strong> and <strong>Load demo data</strong> buttons; while demo data is loaded, a <em>Showing demo data · Clear demo data</em> row sits on the Overview and demo rows on the Accounts page carry a <strong>Demo</strong> pill. Overview <strong>Refresh</strong> skips import-only accounts rather than reporting them as failed. In the current release, use the Validate and Refresh steps above. See the <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">changelog</a> for release status.</div>
+                        <p data-i18n-html="docs.quick.trouble">Something not showing up? See <a href="#troubleshooting">Troubleshooting</a>.</p>
+                    </section>
+
                     <section id="installation">
                         <h2 data-i18n="docs.install.title">Installation</h2>
                         <p data-i18n-html="docs.install.p1">Download the latest build from the <a href="https://github.com/JetSquirrel/cloudbridge/releases" target="_blank" rel="noopener noreferrer">Releases</a> page:</p>
@@ -463,7 +496,7 @@
                                 <tr><td>macOS (Apple Silicon)</td><td><code>cloudbridge-macos-arm64.dmg</code></td></tr>
                             </tbody>
                         </table>
-                        <div class="note" data-i18n-html="docs.install.windows"><strong>Windows:</strong> Run the executable. SmartScreen may warn about an unsigned or unrecognized download. Verify that the file came from the official Releases page before deciding whether to continue.</div>
+                        <div class="note" data-i18n-html="docs.install.windows"><strong>Windows:</strong> the <code>.exe</code> is not code-signed, so SmartScreen will likely stop it with &ldquo;Windows protected your PC&rdquo;. Check that the file came from the official Releases page, then click <strong>More info</strong> and <strong>Run anyway</strong>. Windows remembers the choice for that file; a new release asks again.</div>
                         <div class="note" data-i18n-html="docs.install.macos"><strong>macOS:</strong> Open the <code>.dmg</code>, drag <strong>CloudBridge</strong> to <strong>Applications</strong>, then launch it from there. Current official releases are Developer ID signed and notarized. If macOS blocks a current release, <a href="https://github.com/JetSquirrel/cloudbridge/issues" target="_blank" rel="noopener noreferrer">report the exact warning</a> and your macOS version. Do not remove quarantine protection as a routine installation step.</div>
                         <p data-i18n-html="docs.install.p2">Linux and Intel Mac binaries are not published, and source builds on those platforms are not guaranteed to work. Source builds require Rust 1.95 or newer; current stable is recommended for development. CI checks the declared minimum Rust version in a separate, non-blocking job. macOS needs Xcode Command Line Tools and CMake; Windows needs C++ build tools and the Windows SDK's <code>fxc.exe</code> on <code>PATH</code>. See <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CONTRIBUTING.md#development-setup" target="_blank" rel="noopener noreferrer">development setup</a> before building:</p>
                         <pre><code>git clone https://github.com/JetSquirrel/cloudbridge.git
@@ -491,10 +524,10 @@ cargo run --release</code></pre>
 
                         <h3>AWS</h3>
                         <ol data-i18n-html="docs.config.aws.steps">
-                            <li>Create an IAM user with Cost Explorer access.</li>
-                            <li>Review the policy below: it grants only the Cost Explorer action used by this client, <code>ce:GetCostAndUsage</code>. STS account validation requires no additional permission grant. Scope permissions to your needs; see <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/policies.md" target="_blank" rel="noopener noreferrer">permission templates</a>.</li>
-                            <li>Generate an Access Key ID and Secret Access Key.</li>
-                            <li>Add the account in CloudBridge.</li>
+                            <li>Open the <a href="https://console.aws.amazon.com/iam/" target="_blank" rel="noopener noreferrer">IAM console</a>, go to <strong>Users</strong> and <strong>Create user</strong>. It needs no console access.</li>
+                            <li>On the new user, choose <strong>Add permissions → Create inline policy</strong>, switch to the JSON editor and paste the policy below (also available as <a href="aws-cost-explorer-policy.json">aws-cost-explorer-policy.json</a>). It grants only <code>ce:GetCostAndUsage</code>, the Cost Explorer action this client uses; STS account validation needs no extra grant. See <a href="/policies.html">provider permissions</a> for the reasoning and for scoping.</li>
+                            <li>Open the user's <strong>Security credentials</strong> tab and click <strong>Create access key</strong>. Copy the Access Key ID and Secret Access Key; AWS shows the secret only once.</li>
+                            <li>Add the account in CloudBridge with that key pair. Temporary credentials that need a session token are not supported.</li>
                         </ol>
                         <pre><code>{
     "Version": "2012-10-17",
@@ -549,7 +582,7 @@ cargo run --release</code></pre>
                         <h3 data-i18n="docs.import.how.title">Importing</h3>
                         <ol data-i18n-html="docs.import.how.steps">
                             <li>Download the export from the provider's console.</li>
-                            <li>Go to <strong>Accounts</strong> and click <strong>Import bill</strong> on the account's row.</li>
+                            <li>Go to <strong>Accounts</strong> and click <strong>Import</strong> on the account's row.</li>
                             <li>Pick the file. CloudBridge reports how many charges it wrote and which months it replaced.</li>
                         </ol>
                         <div class="note" data-i18n-html="docs.import.replace"><strong>An import replaces every month the file covers for the selected account. Refresh never overwrites an imported month, including Force Refresh.</strong> Importing replaces rather than adds to existing rows, preventing duplicate charges. Export the full bill: a product-filtered file replaces that month's data with only that product. To update an imported month, re-import a complete, corrected export.</div>
@@ -558,10 +591,7 @@ cargo run --release</code></pre>
                         <h3 data-i18n="docs.import.usage.title">Usage exports carry no money</h3>
                         <p data-i18n-html="docs.import.usage.p1">A <strong>usage</strong> export with token counts but no monetary amounts is recorded with no billed cost and a cost basis of <em>absent</em>. CloudBridge does not turn token counts into estimated spend at list prices. A <strong>cost</strong> export retains a quantity only where exactly one token column is populated: input and output tokens have different prices and cannot be combined into one priced quantity.</p>
                         <h3 data-i18n="docs.import.trouble.title">If the import refuses the file</h3>
-                        <ul data-i18n-html="docs.import.trouble.list">
-                            <li><strong>"not UTF-8 text"</strong> — Alibaba Cloud and Volcengine consoles can produce GBK exports. Re-export as UTF-8 or save the file as CSV UTF-8 before importing.</li>
-                            <li><strong>Unrecognized columns</strong> — parsers match known aliases for Chinese and English exports and provider field names. If a format has changed, report the error and column headers in an issue. Redact sensitive values; do not attach an unredacted bill.</li>
-                        </ul>
+                        <p data-i18n-html="docs.import.trouble.p1">See <a href="#import-errors">Import errors</a> under Troubleshooting.</p>
                     </section>
 
                     <section id="usage">
@@ -570,7 +600,7 @@ cargo run --release</code></pre>
                         <ol data-i18n-html="docs.usage.accounts.steps">
                             <li>Go to <strong>Accounts</strong> in the sidebar.</li>
                             <li>Pick the source and enter a name, plus credentials if it has a billing API. Volcengine, OpenAI and Anthropic ask for none.</li>
-                            <li>Click <strong>Save</strong>.</li>
+                            <li>Click <strong>Save</strong>. For an API source, click <strong>Validate</strong> on its row to check the credential, then <strong>Refresh</strong> on the Overview; for a file source, click <strong>Import</strong> on its row.</li>
                         </ol>
                         <h3 data-i18n="docs.usage.overview.title">Reading the Overview</h3>
                         <p data-i18n-html="docs.usage.overview.p1">The header carries a range control — <strong>MTD</strong>, <strong>30d</strong> or <strong>12m</strong> — and every number on the page is computed for the window you pick.</p>
@@ -585,12 +615,56 @@ cargo run --release</code></pre>
                         <p data-i18n-html="docs.usage.account.p2">A balance-only source such as DeepSeek has no API-reported usage — see <a href="#import">Bill file import</a> for how its service rows arrive; until you import one, the page stays empty.</p>
                         <h3 data-i18n="docs.usage.attribution.title">Attribution</h3>
                         <p data-i18n="docs.usage.attribution.p1">The Attribution page draws the month as a Sankey: source, then service or model, then business line, with an explicit Unallocated node. Flows are gross usage — a net flow can be negative, which means nothing in a Sankey. A charge is assigned to a line by its business_line tag; without one it lands in Unallocated.</p>
+                        <div class="note" data-i18n-html="docs.usage.attribution.unreleased"><strong>Unreleased:</strong> a dimension switcher above the breakdown picks <strong>Tag</strong> (the business-line view above), <strong>Service</strong>, <strong>Region</strong> or <strong>Category</strong> (service category). The non-tag dimensions draw as a treemap — <strong>Map</strong>, where a tile's area is its cost this period and its colour the change against the previous period — or as share-bar rows under <strong>Table</strong>. Charges with no value for the dimension read as <em>Other</em>. A <strong>Top resources</strong> card lists the period's costliest resources, and the account detail page offers the same drill-down for one account. See the <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">changelog</a> for release status.</div>
+                        <h3 data-i18n="docs.usage.query.title">Query: SQL over the ledger</h3>
+                        <div class="note" data-i18n-html="docs.usage.query.unreleased"><strong>Unreleased, desktop only:</strong> the <strong>Query</strong> page is a read-only SQL console over the local DuckDB ledger. See the <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">changelog</a> for release status.</div>
+                        <ul data-i18n-html="docs.usage.query.list">
+                            <li>Write one statement in the editor and click <strong>Run</strong>, or press <strong>⌘Enter</strong> (<strong>Ctrl+Enter</strong> on Windows). The main view is <code>v_charge_normalized</code>: one row per charge, with amounts converted to the reporting currency.</li>
+                            <li>The template list on the left fills the editor with a starter query — monthly spend, spend by provider, top services, business lines, unallocated spend, a month-end forecast, region and service-category splits, top resources, discounts against list price, recent ingest batches and balance snapshots.</li>
+                            <li>Only reading statements run: anything that could write is refused before it reaches the database, and the ledger is opened read-only for the query in any case. Nothing you type here can change your data.</li>
+                            <li>Large results are cut off at a row budget (at most 100,000 rows, fewer for wide results); the status line says when a result was truncated. Add a <code>LIMIT</code> or aggregate to see all of it.</li>
+                        </ul>
+                        <h3 data-i18n="docs.usage.health.title">Data health</h3>
+                        <div class="note" data-i18n-html="docs.usage.health.unreleased"><strong>Unreleased:</strong> data-quality findings. See the <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">changelog</a> for release status.</div>
+                        <p data-i18n-html="docs.usage.health.p1">CloudBridge checks the ledger for things that make a total less trustworthy than it looks, and reports them as findings with a severity:</p>
+                        <ul data-i18n-html="docs.usage.health.list">
+                            <li>charges whose currency could not be converted, because the rate table has no rate for them;</li>
+                            <li>usage with no value for the attribution tag (<code>business_line</code>);</li>
+                            <li>usage with no region;</li>
+                            <li>adjustments that no charge explains.</li>
+                        </ul>
+                        <p data-i18n-html="docs.usage.health.p2">The Overview shows them as a <strong>Data quality</strong> strip under the header, the Accounts page as a <strong>Data health</strong> card, and the account detail page lists that account's own. Click <strong>Dismiss</strong> to hide a finding: the dismissal is saved per kind of finding and billing period, so the same finding in a later period shows again.</p>
                         <h3 data-i18n="docs.usage.currency.title">Choosing a reporting currency</h3>
                         <p data-i18n-html="docs.usage.currency.p1">Open <strong>Settings → Reporting</strong> to choose USD or CNY; USD is the default. Original charges retain their billing currency. A dated, built-in exchange-rate table converts amounts for display using a rate no later than the charge date. <strong>Rates are not live market data.</strong> Missing rates are reported rather than treated as 1:1, and changing the reporting currency does not rewrite the original charges.</p>
                         <h3 data-i18n="docs.usage.refresh.title">Refreshing</h3>
                         <p data-i18n-html="docs.usage.refresh.p1">The default freshness window is 24 hours; <strong>Settings → Refreshing</strong> offers 6, 12, 24 or 48 hours. <strong>Refresh</strong> fetches stale API-backed periods; <strong>Force Refresh</strong> bypasses the window and can incur additional provider charges. Neither overwrites imported months; re-import a corrected export to update them. Provider reporting delays still apply. See <a href="#import">Bill file import</a>.</p>
                         <h3 data-i18n="docs.usage.demo.title">Demo data</h3>
                         <p data-i18n-html="docs.usage.demo.p1"><strong>Settings → Demo data</strong> loads three sample accounts and twelve months of billing history. Demo accounts use a <code>demo-</code> prefix, have no credentials and are skipped by provider refreshes. Use the same page to clear them when you are ready to connect your own data.</p>
+                    </section>
+
+                    <section id="shortcuts">
+                        <h2 data-i18n="docs.shortcuts.title">Keyboard shortcuts</h2>
+                        <div class="note" data-i18n-html="docs.shortcuts.unreleased"><strong>Unreleased:</strong> these shortcuts are in the development tree. See the <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">changelog</a> for release status.</div>
+                        <p data-i18n-html="docs.shortcuts.p1">Use <strong>⌘</strong> on macOS and <strong>Ctrl</strong> on Windows. The page shortcuts work from anywhere in the app, including while a text field has focus.</p>
+                        <table class="docs-table">
+                            <thead>
+                                <tr><th data-i18n="docs.shortcuts.keys">Keys</th><th data-i18n="docs.shortcuts.action">Action</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr><td><code>⌘1</code> / <code>Ctrl+1</code></td><td>Overview</td></tr>
+                                <tr><td><code>⌘2</code> / <code>Ctrl+2</code></td><td>Alerts</td></tr>
+                                <tr><td><code>⌘3</code> / <code>Ctrl+3</code></td><td>Attribution</td></tr>
+                                <tr><td><code>⌘4</code> / <code>Ctrl+4</code></td><td>Query</td></tr>
+                                <tr><td><code>⌘5</code> / <code>Ctrl+5</code></td><td>Accounts</td></tr>
+                                <tr><td><code>⌘6</code> / <code>Ctrl+6</code></td><td>Rules</td></tr>
+                                <tr><td><code>⌘7</code> / <code>Ctrl+7</code></td><td>Settings</td></tr>
+                                <tr><td><code>⌘8</code> / <code>Ctrl+8</code></td><td>Account detail, showing the account it last showed</td></tr>
+                                <tr><td><code>⌘R</code> / <code>Ctrl+R</code></td><td>Reload the current page</td></tr>
+                                <tr><td><code>⌘Enter</code> / <code>Ctrl+Enter</code></td><td>Run the query (Query page)</td></tr>
+                                <tr><td><code>Esc</code></td><td>Close the open dialog</td></tr>
+                            </tbody>
+                        </table>
+                        <p data-i18n="docs.shortcuts.p2">Reloading re-reads the page from the local ledger; it does not fetch from providers. In the browser demo, the browser may keep some of these key combinations for itself.</p>
                     </section>
 
                     <section id="alerts">
@@ -606,6 +680,16 @@ cargo run --release</code></pre>
                                 <tr><td>Untagged spend ratio</td><td>The month's unallocated usage share exceeds the threshold and is higher than the previous month's share</td><td>Above 15% and growing</td></tr>
                             </tbody>
                         </table>
+                        <p data-i18n-html="docs.alerts.new">Create further rules with <strong>New rule</strong> on the Rules page: pick a kind, adjust its settings and click <strong>Create rule</strong>. A new rule is enabled on creation.</p>
+                        <h3 data-i18n="docs.alerts.budgets.title">Budgets</h3>
+                        <div class="note" data-i18n-html="docs.alerts.budgets.unreleased"><strong>Unreleased:</strong> monthly budgets and the Account budget rule. See the <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">changelog</a> for release status.</div>
+                        <p data-i18n-html="docs.alerts.budgets.p1">The <strong>Monthly budgets</strong> card on the Rules page sets what an account may cost in a month. Pick the account, enter a <strong>Monthly budget</strong> and an <strong>Alert at (% of budget)</strong> percentage, and click <strong>Save budget</strong>; <strong>Remove</strong> deletes it. Below the editor, each budgeted account shows how much of its budget this month has used, measured against the ledger in the reporting currency.</p>
+                        <p data-i18n-html="docs.alerts.budgets.p2">A budget on its own only draws that line. To be alerted, create an <strong>Account budget</strong> rule for the account and choose:</p>
+                        <ul data-i18n-html="docs.alerts.budgets.list">
+                            <li><strong>Based on</strong> — <em>Cost to date</em> for the month so far, or <em>Month-end forecast</em> for the run-rate projection.</li>
+                            <li><strong>Threshold type</strong> — <em>% of budget</em>, or a fixed <em>Amount</em> in the reporting currency.</li>
+                        </ul>
+                        <p data-i18n-html="docs.alerts.budgets.p3">Budget alerts appear on the Alerts page under their own filter. An account's budget amount also serves as its floor in the Balance floor rule. Model cost growth anomaly rules can likewise be scoped to a single account.</p>
                         <p data-i18n-html="docs.alerts.p2">Alerts include the measurements behind the condition: spend and baseline, balance and floor, or unallocated share. Projections are estimates based on recent data, not guaranteed month-end costs. You can <strong>snooze</strong> or <strong>dismiss</strong> an alert; open alerts are marked <strong>resolved</strong> when the next evaluation finds their resolution condition met.</p>
                     </section>
 
@@ -642,6 +726,30 @@ cargo run --release</code></pre>
                             <li>Billing databases and raw files are not encrypted by the app. Protect the machine and backups with OS disk encryption and appropriate access controls.</li>
                             <li>Before sharing logs, screenshots or sample exports, redact credentials, account identifiers, resource names, tags and other private billing details.</li>
                         </ul>
+                    </section>
+
+                    <section id="troubleshooting">
+                        <h2 data-i18n="docs.trouble.title">Troubleshooting</h2>
+                        <h3 data-i18n="docs.trouble.keychain.title">macOS asks for Keychain access</h3>
+                        <p data-i18n-html="docs.trouble.keychain.p1">Saved credentials live in the OS keyring, not in CloudBridge's own files, so macOS may ask whether CloudBridge can use its Keychain item when the app reads a credential. Click <strong>Always Allow</strong> so it does not ask on every refresh, or <strong>Allow</strong> to be asked each time. If you click <strong>Deny</strong>, the app cannot read the credential and that account's fetch fails until you allow access.</p>
+                        <h3 data-i18n="docs.trouble.aws.title">AWS reports AccessDenied</h3>
+                        <p data-i18n-html="docs.trouble.aws.p1">The key authenticated, but its user lacks <code>ce:GetCostAndUsage</code>. Attach the <a href="aws-cost-explorer-policy.json">Cost Explorer policy</a> to the IAM user that owns the key — see <a href="#configuration">AWS setup</a> and <a href="/policies.html">provider permissions</a>. An organization service control policy can also deny Cost Explorer; and in an AWS Organization, member accounts only see Cost Explorer data if the management account allows it.</p>
+                        <h3 data-i18n="docs.trouble.empty.title">The Overview is empty after adding an account</h3>
+                        <ul data-i18n-html="docs.trouble.empty.list">
+                            <li><strong>Nothing was fetched yet.</strong> Click <strong>Refresh</strong> on the Overview. A file-import source (Volcengine, OpenAI, Anthropic) has nothing to fetch: use <strong>Import</strong> on its row instead.</li>
+                            <li><strong>The provider has not reported yet.</strong> Providers publish charges with a delay; AWS Cost Explorer can lag up to about 24 hours, so a brand-new account or today's spend may not appear at once. Try again later rather than using Force Refresh, which can incur Cost Explorer request charges.</li>
+                            <li><strong>The window is too narrow.</strong> Early in the month <strong>MTD</strong> may hold little or nothing; switch to <strong>30d</strong> or <strong>12m</strong>.</li>
+                            <li><strong>It is a balance-only source.</strong> DeepSeek's API reports a balance, not spend. Import its usage download for spend detail.</li>
+                        </ul>
+                        <h3 data-i18n="docs.trouble.windows.title">Windows SmartScreen blocks the app</h3>
+                        <p data-i18n-html="docs.trouble.windows.p1">The Windows build is not code-signed, so SmartScreen shows &ldquo;Windows protected your PC&rdquo;. After checking the file came from the official <a href="https://github.com/JetSquirrel/cloudbridge/releases" target="_blank" rel="noopener noreferrer">Releases</a> page, click <strong>More info</strong>, then <strong>Run anyway</strong>.</p>
+                        <h3 id="import-errors" data-i18n="docs.trouble.import.title">Import errors</h3>
+                        <ul data-i18n-html="docs.import.trouble.list">
+                            <li><strong>"not UTF-8 text"</strong> — Alibaba Cloud and Volcengine consoles can produce GBK exports. Re-export as UTF-8 or save the file as CSV UTF-8 before importing.</li>
+                            <li><strong>Unrecognized columns</strong> — parsers match known aliases for Chinese and English exports and provider field names. If a format has changed, report the error and column headers in an issue. Redact sensitive values; do not attach an unredacted bill.</li>
+                            <li><strong>A month shrank after importing</strong> — an import replaces every month the file covers for that account, so a product-filtered export leaves only that product. Re-import the full, unfiltered bill.</li>
+                            <li><strong>Token counts but no spend</strong> — a usage export carries no money; import the cost export instead. For DeepSeek, import the ZIP as downloaded rather than its <code>amount-*.csv</code>.</li>
+                        </ul>
                         <p data-i18n-html="docs.security.p1">Questions the docs don't answer? <a href="https://github.com/JetSquirrel/cloudbridge/issues" target="_blank" rel="noopener noreferrer">Open an issue</a>.</p>
                     </section>
                 </div>
@@ -652,7 +760,15 @@ cargo run --release</code></pre>
     <footer>
         <div class="container">
             <span data-i18n="footer.copy">&copy; 2024-2026 CloudBridge. Released under MIT License.</span>
-            <span>AWS · Alibaba Cloud · Volcengine · OpenAI · Anthropic · DeepSeek</span>
+            <ul class="footer-nav" aria-label="Site links">
+                <li><a href="/docs.html" data-i18n="footer.docs">Docs</a></li>
+                <li><a href="/demo/" data-i18n="footer.demo">Demo</a></li>
+                <li><a href="/blog.html" data-i18n="footer.blog">Blog</a></li>
+                <li><a href="/policies.html" data-i18n="footer.policies">Permissions</a></li>
+                <li><a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+                <li><a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer" data-i18n="footer.changelog">Changelog</a></li>
+                <li><a href="https://github.com/JetSquirrel/cloudbridge/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" data-i18n="footer.license">License</a></li>
+            </ul>
         </div>
     </footer>
 

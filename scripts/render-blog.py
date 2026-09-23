@@ -20,6 +20,7 @@ GitHub Pages keeps serving static files. The .md source is not linked
 anywhere; the .html output is what the blog index points at.
 """
 
+import html
 import re
 import sys
 from pathlib import Path
@@ -36,6 +37,14 @@ TEMPLATE = """<!DOCTYPE html>
     <meta name="description" content="{description}">
     <meta name="theme-color" content="#0E1420">
     <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/blog/{slug}.html">
+    <meta property="og:type" content="article">
+    <meta property="og:title" content="{title_attr}">
+    <meta property="og:description" content="{description_attr}">
+    <meta property="og:url" content="https://cloudbridge.jetsquirrel.cloud/blog/{slug}.html">
+    <meta property="og:image" content="https://cloudbridge.jetsquirrel.cloud/cloudbridge.png">
+    <meta property="og:image:width" content="2560">
+    <meta property="og:image:height" content="1584">
+    <meta name="twitter:card" content="summary_large_image">
     <link rel="icon" type="image/png" href="../icon.png">
     <link rel="apple-touch-icon" href="../icon.png">
     <title>{title} - CloudBridge Blog</title>
@@ -72,7 +81,8 @@ TEMPLATE = """<!DOCTYPE html>
             --hairline-dark: #263349;
             --fg-strong: #101828;
             --fg-body: #47536B;
-            --fg-faint: #7A8699;
+            --fg-faint: #667085;
+            --fg-faint-on-dark: #7A8699; /* --fg-faint is too dark on --ink/--panel */
             --signal: #2F6FED;
             --local: #2FA97C;
             --radius: 6px;
@@ -263,6 +273,49 @@ TEMPLATE = """<!DOCTYPE html>
             line-height: 1.7;
         }}
 
+        .post .table-wrap {{
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            margin-bottom: 1.25rem;
+        }}
+
+        .post table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9375rem;
+        }}
+
+        .post th {{
+            font-family: var(--font-mono);
+            font-size: 0.6875rem;
+            font-weight: 500;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--fg-faint);
+            text-align: left;
+            padding: 0.6rem 1rem 0.6rem 0;
+            border-bottom: 1px solid var(--hairline);
+            white-space: nowrap;
+        }}
+
+        .post td {{
+            padding: 0.6rem 1rem 0.6rem 0;
+            border-bottom: 1px solid var(--hairline);
+            vertical-align: top;
+            line-height: 1.5;
+        }}
+
+        .post td:first-child {{
+            color: var(--fg-strong);
+            font-weight: 500;
+        }}
+
+        @media (max-width: 768px) {{
+            .post table {{
+                min-width: 36rem;
+            }}
+        }}
+
         .post-nav {{
             margin-top: 4rem;
             padding-top: 2rem;
@@ -295,7 +348,7 @@ TEMPLATE = """<!DOCTYPE html>
             flex-wrap: wrap;
             font-family: var(--font-mono);
             font-size: 0.75rem;
-            color: var(--fg-faint);
+            color: var(--fg-faint-on-dark);
         }}
 
         footer a {{
@@ -305,6 +358,13 @@ TEMPLATE = """<!DOCTYPE html>
 
         footer a:hover {{
             color: #fff;
+        }}
+
+        .footer-nav {{
+            display: flex;
+            gap: 1.25rem;
+            flex-wrap: wrap;
+            list-style: none;
         }}
 
         @media (max-width: 768px) {{
@@ -340,6 +400,7 @@ TEMPLATE = """<!DOCTYPE html>
         <div class="container">
             <a href="/" class="logo">CloudBridge</a>
             <ul class="nav-links">
+                <li><a href="/demo/" data-i18n="nav.demo">Demo</a></li>
                 <li><a href="/docs.html" data-i18n="nav.docs">Docs</a></li>
                 <li><a href="/blog.html" aria-current="page" data-i18n="nav.blog">Blog</a></li>
                 <li><a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer">GitHub</a></li>
@@ -365,7 +426,15 @@ TEMPLATE = """<!DOCTYPE html>
     <footer>
         <div class="container">
             <span data-i18n="footer.copy">&copy; 2024-2026 CloudBridge. Released under MIT License.</span>
-            <span>AWS · Alibaba Cloud · Volcengine · OpenAI · Anthropic · DeepSeek</span>
+            <ul class="footer-nav" aria-label="Site links">
+                <li><a href="/docs.html" data-i18n="footer.docs">Docs</a></li>
+                <li><a href="/demo/" data-i18n="footer.demo">Demo</a></li>
+                <li><a href="/blog.html" data-i18n="footer.blog">Blog</a></li>
+                <li><a href="/policies.html" data-i18n="footer.policies">Permissions</a></li>
+                <li><a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+                <li><a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer" data-i18n="footer.changelog">Changelog</a></li>
+                <li><a href="https://github.com/JetSquirrel/cloudbridge/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" data-i18n="footer.license">License</a></li>
+            </ul>
         </div>
     </footer>
 
@@ -420,16 +489,22 @@ def render(md_path: Path) -> Path:
         if key not in meta:
             raise ValueError(f"{md_path.name}: front matter missing '{key}'")
     content = markdown.markdown(body, extensions=["extra"])
-    html = TEMPLATE.format(
+    # Wide tables scroll inside their own box instead of widening the page.
+    content = content.replace("<table>", '<div class="table-wrap"><table>').replace(
+        "</table>", "</table></div>"
+    )
+    page = TEMPLATE.format(
         slug=slug,
         title=meta["title"],
         description=meta["description"],
+        title_attr=html.escape(meta["title"]),
+        description_attr=html.escape(meta["description"]),
         date=meta["date"],
         tag=meta["tag"],
         content=content,
     )
     out_path = md_path.with_suffix(".html")
-    out_path.write_text(html, encoding="utf-8")
+    out_path.write_text(page, encoding="utf-8")
     return out_path
 
 

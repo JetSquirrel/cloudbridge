@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Least-privilege permissions for CloudBridge: the AWS Cost Explorer policy, Alibaba Cloud RAM setup, DeepSeek API keys, and how credentials are stored.">
+    <meta name="theme-color" content="#0E1420">
+    <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/policies.html">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Provider permissions - CloudBridge">
+    <meta property="og:description" content="Least-privilege permissions for CloudBridge: the AWS Cost Explorer policy, Alibaba Cloud RAM setup, DeepSeek API keys, and how credentials are stored.">
+    <meta property="og:url" content="https://cloudbridge.jetsquirrel.cloud/policies.html">
+    <meta property="og:image" content="https://cloudbridge.jetsquirrel.cloud/cloudbridge.png">
+    <meta property="og:image:width" content="2560">
+    <meta property="og:image:height" content="1584">
+    <meta name="twitter:card" content="summary_large_image">
+    <link rel="icon" type="image/png" href="icon.png">
+    <link rel="apple-touch-icon" href="icon.png">
+    <title>Provider permissions - CloudBridge</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'IBM Plex Sans', sans-serif;
+            color: var(--fg-body);
+            background: var(--paper);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        :root {
+            --ink: #0E1420;
+            --panel: #151E30;
+            --paper: #FAFBFC;
+            --hairline: #E3E8EF;
+            --hairline-dark: #263349;
+            --fg-strong: #101828;
+            --fg-body: #47536B;
+            --fg-faint: #667085;
+            --fg-faint-on-dark: #7A8699; /* --fg-faint is too dark on --ink/--panel */
+            --signal: #2F6FED;
+            --local: #2FA97C;
+            --radius: 6px;
+            --nav-height: 4.5rem;
+            --anchor-offset: calc(var(--nav-height) + 1rem);
+            --font-display: 'Space Grotesk', sans-serif;
+            --font-mono: 'IBM Plex Mono', monospace;
+        }
+
+        h1, h2, h3 {
+            font-family: var(--font-display);
+            color: var(--fg-strong);
+            letter-spacing: -0.02em;
+            line-height: 1.15;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem;
+        }
+
+        .skip-link {
+            position: absolute;
+            left: -9999px;
+            top: 0;
+            background: var(--ink);
+            color: #fff;
+            padding: 0.75rem 1.25rem;
+            z-index: 200;
+            text-decoration: none;
+            font-family: var(--font-mono);
+            font-size: 0.875rem;
+        }
+
+        .skip-link:focus {
+            left: 0;
+        }
+
+        /* Navigation (shared) */
+        nav {
+            background: var(--paper);
+            border-bottom: 1px solid var(--hairline);
+            height: var(--nav-height);
+            display: flex;
+            align-items: center;
+            padding: 0 1rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        nav .container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 2rem;
+            width: 100%;
+        }
+
+        .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.6rem;
+            font-family: var(--font-display);
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--fg-strong);
+            text-decoration: none;
+            letter-spacing: -0.02em;
+            white-space: nowrap;
+        }
+
+        .logo::before {
+            content: '';
+            width: 0.6rem;
+            height: 0.6rem;
+            background: var(--local);
+            flex-shrink: 0;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            list-style: none;
+            overflow-x: auto;
+            white-space: nowrap;
+            min-width: 0;
+            scrollbar-width: none;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .nav-links::-webkit-scrollbar {
+            display: none;
+        }
+
+        .nav-links a {
+            font-family: var(--font-mono);
+            color: var(--fg-body);
+            text-decoration: none;
+            font-size: 0.875rem;
+            transition: color 0.15s;
+        }
+
+        .nav-links a:hover,
+        .nav-links a[aria-current="page"] {
+            color: var(--signal);
+        }
+
+        /* Page head */
+        .page-head {
+            padding: 4rem 0 2.5rem;
+            border-bottom: 1px solid var(--hairline);
+        }
+
+        .page-head .eyebrow {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            font-weight: 500;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--local);
+            display: block;
+            margin-bottom: 1rem;
+        }
+
+        .page-head h1 {
+            font-size: 2.75rem;
+            font-weight: 700;
+        }
+
+        .page-head p {
+            margin-top: 1rem;
+            font-size: 1.125rem;
+            max-width: 40rem;
+        }
+
+        /* Docs layout */
+        .docs-layout {
+            display: grid;
+            grid-template-columns: 220px 1fr;
+            gap: 4rem;
+            padding: 3rem 0 6rem;
+        }
+
+        .docs-side {
+            position: sticky;
+            top: var(--anchor-offset);
+            align-self: start;
+        }
+
+        .docs-side ul {
+            list-style: none;
+        }
+
+        .docs-side li {
+            border-left: 1px solid var(--hairline);
+        }
+
+        .docs-side a {
+            display: block;
+            padding: 0.45rem 0 0.45rem 1rem;
+            margin-left: -1px;
+            font-family: var(--font-mono);
+            font-size: 0.8125rem;
+            color: var(--fg-body);
+            text-decoration: none;
+            border-left: 1px solid transparent;
+            transition: color 0.15s, border-color 0.15s;
+        }
+
+        .docs-side a:hover {
+            color: var(--signal);
+            border-left-color: var(--signal);
+        }
+
+        /* Content */
+        .docs-content {
+            max-width: 46rem;
+        }
+
+        .docs-content section {
+            margin-bottom: 4rem;
+            scroll-margin-top: var(--anchor-offset);
+        }
+
+        .docs-content h2 {
+            font-size: 1.625rem;
+            font-weight: 700;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid var(--hairline);
+            margin-bottom: 1.5rem;
+        }
+
+        .docs-content h3 {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin: 2rem 0 0.75rem;
+        }
+
+        .docs-content p {
+            margin-bottom: 1rem;
+        }
+
+        .docs-content ol,
+        .docs-content ul {
+            margin: 0 0 1rem 1.25rem;
+        }
+
+        .docs-content li {
+            margin-bottom: 0.35rem;
+        }
+
+        .docs-content a {
+            color: var(--signal);
+        }
+
+        .docs-content code {
+            font-family: var(--font-mono);
+            font-size: 0.8125rem;
+            background: #fff;
+            border: 1px solid var(--hairline);
+            padding: 0.05rem 0.4rem;
+            border-radius: 4px;
+        }
+
+        .docs-content pre {
+            background: var(--ink);
+            border-radius: var(--radius);
+            padding: 1.25rem 1.5rem;
+            overflow-x: auto;
+            margin-bottom: 1.25rem;
+        }
+
+        .docs-content pre code {
+            background: none;
+            border: none;
+            padding: 0;
+            color: #C4CEDE;
+            font-size: 0.8125rem;
+            line-height: 1.7;
+        }
+
+        .docs-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 1.25rem;
+            font-size: 0.9375rem;
+        }
+
+        .docs-table th {
+            font-family: var(--font-mono);
+            font-size: 0.6875rem;
+            font-weight: 500;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--fg-faint);
+            text-align: left;
+            padding: 0.6rem 1rem 0.6rem 0;
+            border-bottom: 1px solid var(--hairline);
+        }
+
+        .docs-table td {
+            padding: 0.6rem 1rem 0.6rem 0;
+            border-bottom: 1px solid var(--hairline);
+        }
+
+        .note {
+            border-left: 2px solid var(--signal);
+            padding: 0.75rem 1rem;
+            background: #fff;
+            margin-bottom: 1.25rem;
+            font-size: 0.9375rem;
+        }
+
+        /* Footer (shared, compact) */
+        footer {
+            background: var(--ink);
+            color: var(--fg-faint-on-dark);
+            padding: 2rem 0;
+            border-top: 1px solid var(--hairline-dark);
+        }
+
+        footer .container {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            flex-wrap: wrap;
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--fg-faint-on-dark);
+        }
+
+        footer a {
+            color: #8FA0BC;
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            color: #fff;
+        }
+
+        .footer-nav {
+            display: flex;
+            gap: 1.25rem;
+            flex-wrap: wrap;
+            list-style: none;
+        }
+
+        @media (max-width: 900px) {
+            .docs-layout {
+                grid-template-columns: 1fr;
+                gap: 2rem;
+            }
+
+            .docs-side {
+                position: static;
+            }
+
+            .docs-side ul {
+                display: flex;
+                gap: 1.25rem;
+                overflow-x: auto;
+                white-space: nowrap;
+                scrollbar-width: none;
+            }
+
+            .docs-side ul::-webkit-scrollbar {
+                display: none;
+            }
+
+            .docs-side li {
+                border-left: none;
+                border-bottom: 1px solid var(--hairline);
+            }
+
+            .docs-side a {
+                padding: 0 0 0.5rem;
+                margin-left: 0;
+                border-left: none;
+            }
+
+            .docs-side a:hover {
+                border-left-color: transparent;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .page-head {
+                padding: 2.5rem 0 2rem;
+            }
+
+            .page-head h1 {
+                font-size: 2rem;
+            }
+
+            .nav-links {
+                gap: 1.25rem;
+            }
+        }
+
+        a:focus-visible {
+            outline: 2px solid var(--signal);
+            outline-offset: 2px;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            html {
+                scroll-behavior: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <a class="skip-link" href="#main" data-i18n="a11y.skip">Skip to content</a>
+
+    <nav aria-label="Main navigation">
+        <div class="container">
+            <a href="/" class="logo">CloudBridge</a>
+            <ul class="nav-links">
+                <li><a href="/demo/" data-i18n="nav.demo">Demo</a></li>
+                <li><a href="/docs.html" data-i18n="nav.docs">Docs</a></li>
+                <li><a href="/blog.html" data-i18n="nav.blog">Blog</a></li>
+                <li><a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- Hand-maintained HTML copy of docs/policies.md; change both together. -->
+    <main id="main">
+        <header class="page-head">
+            <div class="container">
+                <span class="eyebrow" data-i18n="policies.eyebrow">Documentation</span>
+                <h1 data-i18n="policies.title">Provider permissions</h1>
+                <p data-i18n="policies.sub">Least-privilege credentials for each billing channel, and how CloudBridge handles them.</p>
+            </div>
+        </header>
+
+        <div class="container">
+            <div class="docs-layout">
+                <aside class="docs-side" aria-label="Permission sections">
+                    <ul>
+                        <li><a href="#principles" data-i18n="policies.side.principles">Principles</a></li>
+                        <li><a href="#aws-cost-explorer" data-i18n="policies.side.aws">AWS Cost Explorer</a></li>
+                        <li><a href="#aws-s3" data-i18n="policies.side.s3">AWS exports from S3</a></li>
+                        <li><a href="#aliyun" data-i18n="policies.side.aliyun">Alibaba Cloud</a></li>
+                        <li><a href="#deepseek" data-i18n="policies.side.deepseek">DeepSeek</a></li>
+                        <li><a href="#file-sources" data-i18n="policies.side.files">File-only sources</a></li>
+                        <li><a href="/docs.html" data-i18n="policies.side.docs">Back to docs</a></li>
+                    </ul>
+                </aside>
+
+                <div class="docs-content">
+                    <section id="principles">
+                        <h2 data-i18n="policies.principles.title">Principles</h2>
+                        <p data-i18n-html="policies.principles.p1">Use dedicated credentials with the least privilege needed for the channel you enable. Read-only application behavior does not make an unrestricted key read-only: the provider's attached policies determine its permissions. Do not use root-account credentials or grant administrator access just to read a bill.</p>
+                        <p data-i18n-html="policies.principles.p2">CloudBridge stores credentials in the OS keyring and uses them to authenticate provider requests. It has no CloudBridge sync service or telemetry. Billing databases and retained raw files are not encrypted by the app; protect them with appropriate device, filesystem and backup controls. Never post real keys, credential files or unredacted billing exports in public issues, logs, screenshots or pull requests. Revoke and replace any key that has been exposed.</p>
+                    </section>
+
+                    <section id="aws-cost-explorer">
+                        <h2 data-i18n="policies.aws.title">AWS Cost Explorer</h2>
+                        <h3 data-i18n="policies.aws.min.title">Minimal Cost Explorer policy</h3>
+                        <p data-i18n-html="policies.aws.min.file">File: <a href="aws-cost-explorer-policy.json"><code>aws-cost-explorer-policy.json</code></a></p>
+                        <p data-i18n-html="policies.aws.min.p1">This policy grants only <code>ce:GetCostAndUsage</code>, the Cost Explorer action CloudBridge uses for billing retrieval. Credential validation when no export URI is set uses STS <code>GetCallerIdentity</code>, which <a href="https://docs.aws.amazon.com/STS/latest/APIReference/API_GetCallerIdentity.html" target="_blank" rel="noopener noreferrer">requires no permission grant</a>. This template retains <code>Resource: "*"</code> for Cost Explorer reads; it does not grant access to every AWS service. Review resource scoping against AWS's current authorization model and your billing configuration. Organization policies and account-level billing settings can still restrict access. Cost Explorer requests can incur fees.</p>
+                        <pre><code>{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ce:GetCostAndUsage"
+            ],
+            "Resource": "*"
+        }
+    ]
+}</code></pre>
+                        <h3 data-i18n="policies.aws.apply.title">Applying the policy</h3>
+                        <ol data-i18n-html="policies.aws.apply.steps">
+                            <li>In the <a href="https://console.aws.amazon.com/iam/" target="_blank" rel="noopener noreferrer">IAM console</a>, create a customer-managed policy from the template, or add it to the user as an inline policy.</li>
+                            <li>Attach it to a dedicated IAM user, without unrelated broad permissions.</li>
+                            <li>Create an access key for that user (<strong>Security credentials → Create access key</strong>) and enter it in CloudBridge locally.</li>
+                            <li>Review and rotate the key according to your organization's policy.</li>
+                        </ol>
+                        <p data-i18n="policies.aws.apply.p1">The current client accepts an access-key ID and secret-access-key pair; it does not support temporary credentials that require a session token.</p>
+                        <p data-i18n-html="policies.aws.apply.denied">If CloudBridge reports <strong>AccessDenied</strong>, the key authenticated but its user lacks <code>ce:GetCostAndUsage</code>: attach the policy above to the user that owns the key.</p>
+                    </section>
+
+                    <section id="aws-s3">
+                        <h2 data-i18n="policies.s3.title">AWS Data Exports from S3</h2>
+                        <div class="note" data-i18n-html="policies.s3.unreleased"><strong>Unreleased:</strong> the S3 export channel is listed under Unreleased in the <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">changelog</a> and is not yet in a tagged release. The Cost Explorer policy above does <strong>not</strong> grant access to an export bucket.</div>
+                        <p data-i18n-html="policies.s3.p1">For this channel, scope <code>s3:ListBucket</code> to the export bucket and permitted prefix, and <code>s3:GetObject</code> to the objects under that prefix. If objects use a customer-managed KMS key, decryption may also require <code>kms:Decrypt</code> and a compatible key policy. Bucket policies and any organization-level restrictions must allow the reads as well. CloudBridge reads an existing export; it does not need permissions to create exports or write objects. Export delivery permissions are a separate AWS setup.</p>
+                        <p data-i18n="policies.s3.p2">S3 collection avoids Cost Explorer request charges, but S3 storage and request fees still apply. Encryption, retrieval or transfer charges may also apply depending on your AWS configuration.</p>
+                    </section>
+
+                    <section id="aliyun">
+                        <h2 data-i18n="policies.aliyun.title">Alibaba Cloud</h2>
+                        <p data-i18n-html="policies.aliyun.p1">For the billing API channel, <code>AliyunBSSReadOnlyAccess</code> is the built-in read-only billing policy. It is broader than an endpoint-specific custom policy; review its scope against your requirements.</p>
+                        <ol data-i18n-html="policies.aliyun.steps">
+                            <li>In the <a href="https://ram.console.aliyun.com/" target="_blank" rel="noopener noreferrer">RAM console</a>, create a dedicated RAM user.</li>
+                            <li>Attach <code>AliyunBSSReadOnlyAccess</code>, or an appropriately scoped custom policy for the billing operations you use.</li>
+                            <li>Create an AccessKey and enter it in CloudBridge locally.</li>
+                        </ol>
+                        <p data-i18n="policies.aliyun.p2">Do not use the primary account's AccessKey. A local bill-file import does not require an API credential, including for Alibaba Cloud.</p>
+                    </section>
+
+                    <section id="deepseek">
+                        <h2 data-i18n="policies.deepseek.title">DeepSeek</h2>
+                        <p data-i18n-html="policies.deepseek.p1">CloudBridge's API integration uses a platform key from <a href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer">platform.deepseek.com</a> to query <code>GET /user/balance</code>. This is a read operation, but <strong>the key itself is not necessarily read-only</strong>: it may also authorize model requests and incur spend if used elsewhere. Treat it as a spending credential, use any provider-supported restrictions, and do not share it.</p>
+                        <p data-i18n-html="policies.deepseek.p2">The balance API does not provide spend detail. Import the console's cost export for that information; import alone requires no API key. DeepSeek's zip can be imported directly: CloudBridge selects the cost CSV, not the token-count CSV whose <code>amount</code> column represents usage rather than money.</p>
+                    </section>
+
+                    <section id="file-sources">
+                        <h2 data-i18n="policies.files.title">Volcengine, OpenAI and Anthropic</h2>
+                        <p data-i18n="policies.files.p1">These sources currently use local bill exports only. CloudBridge does not ask for or store credentials for them, and file import makes no provider request. Do not create an admin or organization key for these integrations until an API channel actually requires it. Permissions for future API support will be documented with that implementation.</p>
+                        <p data-i18n-html="policies.files.p2">See the <a href="/docs.html#import">import guide</a> for supported exports. Imports replace the entire month for the selected account and source, not just matching rows; use a complete, unfiltered export. Force Refresh preserves imported months. Usage-only exports are not spend, and text exports must be UTF-8 (re-export or save as CSV UTF-8 if the original download uses another encoding).</p>
+                    </section>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <div class="container">
+            <span data-i18n="footer.copy">&copy; 2024-2026 CloudBridge. Released under MIT License.</span>
+            <ul class="footer-nav" aria-label="Site links">
+                <li><a href="/docs.html" data-i18n="footer.docs">Docs</a></li>
+                <li><a href="/demo/" data-i18n="footer.demo">Demo</a></li>
+                <li><a href="/blog.html" data-i18n="footer.blog">Blog</a></li>
+                <li><a href="/policies.html" data-i18n="footer.policies">Permissions</a></li>
+                <li><a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+                <li><a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer" data-i18n="footer.changelog">Changelog</a></li>
+                <li><a href="https://github.com/JetSquirrel/cloudbridge/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" data-i18n="footer.license">License</a></li>
+            </ul>
+        </div>
+    </footer>
+
+    <!-- Same i18n scaffolding as index.html; see that file for how to add a locale. -->
+    <script>
+        (function () {
+            var LOCALES = {
+                en: {} // default: strings live in the markup
+            };
+
+            function applyLocale(locale) {
+                var dict = LOCALES[locale];
+                if (!dict) return;
+                document.querySelectorAll('[data-i18n]').forEach(function (el) {
+                    var key = el.getAttribute('data-i18n');
+                    if (typeof dict[key] === 'string') el.textContent = dict[key];
+                });
+                document.querySelectorAll('[data-i18n-html]').forEach(function (el) {
+                    var key = el.getAttribute('data-i18n-html');
+                    if (typeof dict[key] === 'string') el.innerHTML = dict[key];
+                });
+                document.documentElement.lang = locale;
+            }
+
+            var saved = null;
+            try { saved = localStorage.getItem('cloudbridge-locale'); } catch (e) {}
+            var browser = (navigator.language || 'en').slice(0, 2);
+            applyLocale(saved && LOCALES[saved] ? saved : (LOCALES[browser] ? browser : 'en'));
+        })();
+    </script>
+</body>
+</html>

@@ -1,3 +1,5 @@
+<!-- Also published as docs/policies.html (https://cloudbridge.jetsquirrel.cloud/policies.html); change both together. -->
+
 # Provider permissions and credential handling
 
 Use dedicated credentials with the least privilege needed for the channel
@@ -47,18 +49,24 @@ access. Cost Explorer requests can incur fees.
 
 ### Applying the policy
 
-1. In AWS IAM, create a customer-managed policy from the template.
+1. In the AWS IAM console, create a customer-managed policy from the
+   template, or add it to the user as an inline policy.
 2. Attach it to a dedicated IAM user, without unrelated broad permissions.
-3. Create an access key for that user and enter it in CloudBridge locally.
+3. Create an access key for that user (**Security credentials → Create
+   access key**) and enter it in CloudBridge locally.
 4. Review and rotate the key according to your organization's policy.
 
 The current client accepts an access-key ID and secret-access-key pair;
 it does not support temporary credentials that require a session token.
 
+If CloudBridge reports **AccessDenied**, the key authenticated but its
+user lacks `ce:GetCostAndUsage`: attach the policy above to the user that
+owns the key.
+
 ### AWS Data Exports from S3 — working tree / unreleased
 
 The S3 export channel is listed under **Unreleased** in the
-[changelog](../CHANGELOG.md); it is not part of 0.3.1. The Cost Explorer
+[changelog](../CHANGELOG.md); it is not yet in a tagged release. The Cost Explorer
 policy above does **not** grant access to an export bucket.
 
 For this channel, scope `s3:ListBucket` to the export bucket and permitted

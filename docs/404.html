@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex">
     <meta name="theme-color" content="#0E1420">
-    <link rel="icon" type="image/png" href="icon.png">
-    <link rel="apple-touch-icon" href="icon.png">
+    <link rel="icon" type="image/png" href="/icon.png">
+    <link rel="apple-touch-icon" href="/icon.png">
     <title>Page Not Found - CloudBridge</title>
 
     <!-- Fonts -->
@@ -35,7 +35,8 @@
             --ink: #0E1420;
             --hairline: #E3E8EF;
             --fg-strong: #101828;
-            --fg-faint: #7A8699;
+            --fg-faint: #667085;
+            --fg-faint-on-dark: #7A8699; /* --fg-faint is too dark on --ink */
             --signal: #2F6FED;
             --signal-dark: #1F5BD8;
             --local: #2FA97C;
@@ -46,8 +47,68 @@
             height: 4.5rem;
             display: flex;
             align-items: center;
-            justify-content: center;
+            justify-content: space-between;
+            gap: 2rem;
+            padding: 0 2rem;
             border-bottom: 1px solid var(--hairline);
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            list-style: none;
+            overflow-x: auto;
+            white-space: nowrap;
+            min-width: 0;
+            scrollbar-width: none;
+        }
+
+        .nav-links::-webkit-scrollbar {
+            display: none;
+        }
+
+        .nav-links a {
+            font-family: 'IBM Plex Mono', monospace;
+            color: #47536B;
+            text-decoration: none;
+            font-size: 0.875rem;
+        }
+
+        .nav-links a:hover {
+            color: var(--signal);
+        }
+
+        footer {
+            background: var(--ink);
+            padding: 2rem;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--fg-faint-on-dark);
+        }
+
+        footer .inner {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .footer-nav {
+            display: flex;
+            gap: 1.25rem;
+            flex-wrap: wrap;
+            list-style: none;
+        }
+
+        footer a {
+            color: #8FA0BC;
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            color: #fff;
         }
 
         .logo {
@@ -154,12 +215,26 @@
             .code {
                 font-size: 3.5rem;
             }
+
+            nav {
+                padding: 0 1rem;
+            }
+
+            .nav-links {
+                gap: 1.25rem;
+            }
         }
     </style>
 </head>
 <body>
     <nav aria-label="Main navigation">
         <a href="/" class="logo">CloudBridge</a>
+        <ul class="nav-links">
+            <li><a href="/demo/" data-i18n="nav.demo">Demo</a></li>
+            <li><a href="/docs.html" data-i18n="nav.docs">Docs</a></li>
+            <li><a href="/blog.html" data-i18n="nav.blog">Blog</a></li>
+            <li><a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+        </ul>
     </nav>
     <main>
         <div>
@@ -175,6 +250,21 @@
             </div>
         </div>
     </main>
+
+    <footer>
+        <div class="inner">
+            <span data-i18n="footer.copy">&copy; 2024-2026 CloudBridge. Released under MIT License.</span>
+            <ul class="footer-nav" aria-label="Site links">
+                <li><a href="/docs.html" data-i18n="footer.docs">Docs</a></li>
+                <li><a href="/demo/" data-i18n="footer.demo">Demo</a></li>
+                <li><a href="/blog.html" data-i18n="footer.blog">Blog</a></li>
+                <li><a href="/policies.html" data-i18n="footer.policies">Permissions</a></li>
+                <li><a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+                <li><a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer" data-i18n="footer.changelog">Changelog</a></li>
+                <li><a href="https://github.com/JetSquirrel/cloudbridge/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" data-i18n="footer.license">License</a></li>
+            </ul>
+        </div>
+    </footer>
 
     <!-- Same i18n scaffolding as index.html; see that file for how to add a locale. -->
     <script>

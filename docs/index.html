@@ -11,13 +11,13 @@
     <meta property="og:description" content="Analyze supported cloud and AI bills in a local ledger. Connect provider APIs or import exports, with no CloudBridge sync service or telemetry.">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://cloudbridge.jetsquirrel.cloud/">
-    <meta property="og:image" content="https://raw.githubusercontent.com/JetSquirrel/cloudbridge/main/images/cloudbridge.png">
+    <meta property="og:image" content="https://cloudbridge.jetsquirrel.cloud/cloudbridge.png">
     <meta property="og:image:width" content="2560">
-    <meta property="og:image:height" content="1664">
+    <meta property="og:image:height" content="1584">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="CloudBridge - Multi-Cloud Cost Management">
     <meta name="twitter:description" content="Analyze supported cloud and AI bills in a local ledger. Connect provider APIs or import exports, with no CloudBridge sync service or telemetry.">
-    <meta name="twitter:image" content="https://raw.githubusercontent.com/JetSquirrel/cloudbridge/main/images/cloudbridge.png">
+    <meta name="twitter:image" content="https://cloudbridge.jetsquirrel.cloud/cloudbridge.png">
     <link rel="icon" type="image/png" href="icon.png">
     <link rel="apple-touch-icon" href="icon.png">
     <title>CloudBridge - Multi-Cloud Cost Management</title>
@@ -75,7 +75,8 @@
             --hairline-dark: #263349;
             --fg-strong: #101828;
             --fg-body: #47536B;
-            --fg-faint: #7A8699;
+            --fg-faint: #667085;
+            --fg-faint-on-dark: #7A8699; /* --fg-faint is too dark on --ink/--panel */
             --fg-on-ink: #C4CEDE;
             --fg-on-ink-faint: #8FA0BC;
             --signal: #2F6FED;
@@ -323,7 +324,7 @@
         .hero-badges span {
             font-family: var(--font-mono);
             font-size: 0.75rem;
-            color: var(--fg-faint);
+            color: var(--fg-faint-on-dark);
             border: 1px solid var(--hairline-dark);
             border-radius: var(--radius);
             padding: 0.3rem 0.7rem;
@@ -366,7 +367,7 @@
             font-family: var(--font-mono);
         }
 
-        .converge .lbl { fill: var(--fg-faint); }
+        .converge .lbl { fill: var(--fg-faint-on-dark); }
         .converge .amt.aws { fill: var(--aws); }
         .converge .amt.aliyun { fill: var(--aliyun); }
         .converge .amt.deepseek { fill: var(--deepseek); }
@@ -391,7 +392,7 @@
         .converge figcaption {
             font-family: var(--font-mono);
             font-size: 0.6875rem;
-            color: var(--fg-faint);
+            color: var(--fg-faint-on-dark);
             padding-top: 0.75rem;
             border-top: 1px solid var(--hairline-dark);
             margin-top: 0.75rem;
@@ -505,7 +506,7 @@
         .app-chrome .app-title {
             font-family: var(--font-mono);
             font-size: 0.75rem;
-            color: var(--fg-faint);
+            color: var(--fg-faint-on-dark);
             margin-left: 0.75rem;
         }
 
@@ -603,7 +604,7 @@
         }
 
         .download .eyebrow {
-            color: var(--fg-faint);
+            color: var(--fg-faint-on-dark);
         }
 
         .download-sub {
@@ -640,7 +641,7 @@
         .manifest-row .m-arch {
             font-family: var(--font-mono);
             font-size: 0.8125rem;
-            color: var(--fg-faint);
+            color: var(--fg-faint-on-dark);
         }
 
         .manifest-row .m-file {
@@ -812,7 +813,7 @@
             padding-top: 1.5rem;
             font-family: var(--font-mono);
             font-size: 0.75rem;
-            color: var(--fg-faint);
+            color: var(--fg-faint-on-dark);
             display: flex;
             justify-content: space-between;
             gap: 1rem;
@@ -938,7 +939,7 @@
     <!-- Navigation -->
     <nav aria-label="Main navigation">
         <div class="container">
-            <a href="#main" class="logo">CloudBridge</a>
+            <a href="/" class="logo">CloudBridge</a>
             <ul class="nav-links">
                 <li><a href="/demo/" data-i18n="nav.demo">Demo</a></li>
                 <li><a href="/docs.html" data-i18n="nav.docs">Docs</a></li>
@@ -1162,7 +1163,7 @@
                     </div>
                 </div>
                 <div class="download-notes">
-                    <p data-i18n-html="download.notes.windows"><strong>Windows:</strong> SmartScreen may warn about an unsigned or unrecognized download. Verify the file came from the official Releases page before deciding whether to continue; see the <a href="/docs.html#installation">install guide</a>.</p>
+                    <p data-i18n-html="download.notes.windows"><strong>Windows:</strong> the <code>.exe</code> is not code-signed, so SmartScreen will likely show &ldquo;Windows protected your PC&rdquo;. Check that the file came from the official Releases page, then choose <strong>More info → Run anyway</strong>. See the <a href="/docs.html#installation">install guide</a>.</p>
                     <p data-i18n-html="download.notes.macos"><strong>macOS:</strong> Open the disk image and drag CloudBridge to Applications. Current official macOS releases are Developer ID signed and notarized. If macOS blocks a current release, report the exact warning instead of removing quarantine protection as a routine step. See the <a href="/docs.html#installation">install guide</a>.</p>
                     <p data-i18n-html="download.notes.releases">Linux and Intel Mac builds are not published; source builds on those platforms are not guaranteed to work — see <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">the contributing guide</a> for prerequisites. Or browse <a href="https://github.com/JetSquirrel/cloudbridge/releases" target="_blank" rel="noopener noreferrer">all releases on GitHub</a>.</p>
                 </div>
@@ -1203,7 +1204,7 @@
                     </details>
                     <details class="faq-item">
                         <summary data-i18n="faq.iam.q">What IAM permissions does CloudBridge need?</summary>
-                        <div class="faq-answer" data-i18n-html="faq.iam.a">Use least-privilege credentials for provider reads. The AWS Cost Explorer policy grants only <code>ce:GetCostAndUsage</code>; STS account validation requires no additional permission grant. S3 exports require separate bucket permissions. Alibaba Cloud uses <code>AliyunBSSReadOnlyAccess</code>. An API key's permissions depend on its provider and configuration; using it for balance queries does not make it read-only. See <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/policies.md" target="_blank" rel="noopener noreferrer">permission templates</a>.</div>
+                        <div class="faq-answer" data-i18n-html="faq.iam.a">Use least-privilege credentials for provider reads. The AWS Cost Explorer policy grants only <code>ce:GetCostAndUsage</code>; STS account validation requires no additional permission grant. S3 exports require separate bucket permissions. Alibaba Cloud uses <code>AliyunBSSReadOnlyAccess</code>. An API key's permissions depend on its provider and configuration; using it for balance queries does not make it read-only. See <a href="/policies.html">permission templates</a>.</div>
                     </details>
                     <details class="faq-item">
                         <summary data-i18n="faq.linux.q">Does CloudBridge work on Linux?</summary>
@@ -1236,9 +1237,10 @@
                         <li><a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer" data-i18n="footer.resources.repo">GitHub Repository</a></li>
                         <li><a href="https://github.com/JetSquirrel/cloudbridge/releases" target="_blank" rel="noopener noreferrer" data-i18n="footer.resources.download">Download</a></li>
                         <li><a href="/docs.html" data-i18n="footer.resources.docs">Documentation</a></li>
+                        <li><a href="/demo/" data-i18n="footer.resources.demo">Browser demo</a></li>
                         <li><a href="/blog.html" data-i18n="footer.resources.blog">Blog</a></li>
                         <li><a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/roadmap.md" target="_blank" rel="noopener noreferrer" data-i18n="footer.resources.roadmap">Roadmap</a></li>
-                        <li><a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/policies.md" target="_blank" rel="noopener noreferrer" data-i18n="footer.resources.policies">IAM Policy Templates</a></li>
+                        <li><a href="/policies.html" data-i18n="footer.resources.policies">IAM Policy Templates</a></li>
                         <li><a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer" data-i18n="footer.resources.contributing">Contributing</a></li>
                     </ul>
                 </div>

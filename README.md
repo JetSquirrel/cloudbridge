@@ -12,7 +12,7 @@ or import provider exports, compare costs across sources, and trace spending to
 services, models, and business lines. No CloudBridge account or hosted backend
 required.
 
-[Download](#installation) · [Quick start](#quick-start) · [Documentation](https://cloudbridge.jetsquirrel.cloud/docs.html) · [Contributing](CONTRIBUTING.md)
+[Download](#installation) · [Live demo](https://cloudbridge.jetsquirrel.cloud/demo/) · [Quick start](#quick-start) · [Documentation](https://cloudbridge.jetsquirrel.cloud/docs.html) · [Contributing](CONTRIBUTING.md)
 
 ![CloudBridge desktop dashboard with spending totals, trends, and a service breakdown](images/cloudbridge.png)
 
@@ -68,9 +68,9 @@ Current official macOS releases are Developer ID signed and notarized. If macOS
 blocks a current release, report the exact warning; do not remove quarantine
 protection as a routine installation step.
 
-**Windows:** Run the executable. SmartScreen may warn about an unsigned or
-unrecognized download. Verify that it came from the official release page
-before deciding whether to continue.
+**Windows:** The executable is not code-signed, so SmartScreen will likely
+show "Windows protected your PC". Check that it came from the official
+release page, then choose **More info → Run anyway**.
 
 Linux and Intel Mac binaries are not published. Source builds on those platforms
 are not guaranteed to work; see [development setup](CONTRIBUTING.md#development-setup)
@@ -80,7 +80,9 @@ for prerequisites and validation guidance.
 
 ### Explore without credentials
 
-Launch the app and open **Settings → Demo data** to load sample accounts and
+Try the [live demo](https://cloudbridge.jetsquirrel.cloud/demo/) in your
+browser: the same pages running on a sample bill, with nothing to install.
+In the desktop app, open **Settings → Demo data** to load sample accounts and
 billing history. Demo accounts have no credentials and are skipped by provider
 refreshes. Clear the demo data from the same page when you are ready.
 
@@ -90,8 +92,9 @@ refreshes. Clear the demo data from the same page when you are ready.
 2. For API access, configure credentials using the
    [account setup guide](https://cloudbridge.jetsquirrel.cloud/docs.html#configuration)
    and [permission templates](docs/policies.md). Use least-privilege credentials.
-3. Save the account. Use **Refresh** for API data, or **Import bill** on the
-   account row for a downloaded export.
+3. Save the account. For API data, click **Validate** on the account row,
+   then **Refresh** on the Overview; for a downloaded export, click
+   **Import** on the account row.
 4. Open **Overview** and select **MTD**, **30d**, or **12m**. Choose your reporting
    currency under **Settings → Reporting**.
 
@@ -108,12 +111,21 @@ refreshes. Clear the demo data from the same page when you are ready.
   `amount-*.csv` contains token counts, not money.
 
 The [import guide](https://cloudbridge.jetsquirrel.cloud/docs.html#import)
-lists export locations, supported details, and troubleshooting steps.
+lists export locations and supported details; see
+[troubleshooting](https://cloudbridge.jetsquirrel.cloud/docs.html#troubleshooting)
+if an import or a fetch does not do what you expect.
 
 Refresh uses a **24-hour freshness window** by default, configurable to
 6, 12, 24, or 48 hours in **Settings → Refreshing**. **Force Refresh** bypasses
 that window for API-backed periods and can incur additional provider charges.
 CloudBridge itself is free; provider API fees are separate.
+
+### Keyboard shortcuts
+
+On the development tree, **⌘1…⌘8** (**Ctrl+1…8** on Windows) switch pages in
+sidebar order, **⌘R** reloads the current page, **⌘Enter** runs a query on the
+Query page, and **Esc** closes a dialog. The full list is in the
+[docs](https://cloudbridge.jetsquirrel.cloud/docs.html#shortcuts).
 
 ## How it works
 
