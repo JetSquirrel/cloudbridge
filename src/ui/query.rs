@@ -22,9 +22,16 @@ actions!(query, [RunQuery]);
 /// handled by the `PressEnter` subscription in `new`.
 const QUERY_KEY_CONTEXT: &str = "Query";
 
+/// The run shortcut as the platform writes it; the binding is
+/// `secondary-enter`, which is ⌘ on macOS and Ctrl elsewhere.
+#[cfg(target_os = "macos")]
+const RUN_SHORTCUT: &str = "⌘Enter";
+#[cfg(not(target_os = "macos"))]
+const RUN_SHORTCUT: &str = "Ctrl+Enter";
+
 /// What the editor is prefilled with: how to run, what to query, and that
 /// the ledger is read-only from here.
-const WELCOME_SQL: &str = "-- ⌘Enter runs the query. Everything here is read-only.
+const WELCOME_SQL: &str = "-- Run with ⌘Enter (Ctrl+Enter off macOS). Everything here is read-only.
 -- The main view is v_charge_normalized: one row per charge,
 -- amounts in the reporting currency.
 
@@ -238,7 +245,7 @@ impl QueryView {
         static BIND_KEYS: std::sync::Once = std::sync::Once::new();
         BIND_KEYS.call_once(|| {
             cx.bind_keys([KeyBinding::new(
-                "cmd-enter",
+                "secondary-enter",
                 RunQuery,
                 Some(QUERY_KEY_CONTEXT),
             )]);
@@ -538,12 +545,12 @@ impl Render for QueryView {
                         div()
                             .text_xs()
                             .text_color(theme::text_muted(cx))
-                            .child("⌘Enter"),
+                            .child(RUN_SHORTCUT),
                     )
                     .child(
                         Button::new("run-query")
                             .label("Run")
-                            .custom(theme::accent_variant(cx))
+                            .primary()
                             .loading(self.running)
                             .disabled(self.running)
                             .on_click(cx.listener(|this, _, _, cx| {

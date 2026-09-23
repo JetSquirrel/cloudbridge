@@ -20,7 +20,7 @@ fn kind_icon(kind: AlertKind) -> Icon {
 }
 
 /// An unselected filter chip: a bordered card-colored pill. The selected
-/// chip uses the shared `theme::accent_variant`.
+/// chip is a primary Button.
 fn inactive_chip_variant(cx: &App) -> ButtonCustomVariant {
     ButtonCustomVariant::new(cx)
         .color(theme::card_bg(cx))
@@ -230,11 +230,8 @@ impl AlertsView {
         Button::new(SharedString::from(format!("alert-filter-{label}")))
             .label(filter.label.clone())
             .child(div().text_xs().opacity(0.7).child(filter.count.to_string()))
-            .custom(if active {
-                theme::accent_variant(cx)
-            } else {
-                inactive_chip_variant(cx)
-            })
+            .when(active, |chip| chip.primary())
+            .when(!active, |chip| chip.custom(inactive_chip_variant(cx)))
             // Only the unselected chip is outlined; the selected one is
             // solid accent.
             .when(!active, |chip| chip.card_outline(cx))
@@ -286,7 +283,7 @@ impl AlertsView {
         } else if primary {
             Button::new(id)
                 .label(action.to_string())
-                .custom(theme::accent_variant(cx))
+                .primary()
                 .disabled(self.loading)
                 .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
                 .into_any_element()

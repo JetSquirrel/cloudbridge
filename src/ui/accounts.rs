@@ -26,6 +26,34 @@ actions!(accounts, [CloseAccountDialog]);
 /// Key context for the add-account dialog, so Escape closes it.
 const ACCOUNT_DIALOG_CONTEXT: &str = "AccountDialog";
 
+/// The docs site's provider permissions page; each source's setup hint
+/// links to its section.
+const POLICIES_URL: &str = "https://cloudbridge.jetsquirrel.cloud/policies.html";
+
+/// What a source's API credential is and what it must be allowed to do,
+/// with the anchor of its section on the permissions page. `None` for the
+/// sources read from a bill file, whose form explains that instead.
+fn setup_hint(source_id: &str) -> Option<(&'static str, &'static str)> {
+    match source_id {
+        "AWS" => Some((
+            "An IAM user's access key with a policy allowing ce:GetCostAndUsage. \
+             Cost Explorer charges $0.01 per request.",
+            "aws-cost-explorer",
+        )),
+        "Aliyun" => Some((
+            "A RAM user's AccessKey with AliyunBSSReadOnlyAccess. Don't use the \
+             primary account's key.",
+            "alibaba-cloud",
+        )),
+        "DeepSeek" => Some((
+            "A platform key reads the balance only; import the cost export for \
+             spend detail. The key can also spend, so keep it private.",
+            "deepseek",
+        )),
+        _ => None,
+    }
+}
+
 /// Column widths (rem) shared by the accounts table header and its rows,
 /// so the two cannot drift apart.
 const COLUMN_REMS: [f32; 7] = [10.0, 10.0, 8.0, 5.0, 6.0, 8.0, 12.0];
@@ -52,6 +80,12 @@ pub struct AccountsView {
     deleting_ids: HashSet<String>,
     /// Whether to show add dialog
     show_add_dialog: bool,
+    /// Another page asked for the add dialog (Overview's empty state); it
+    /// opens on the next render, which has the window focus needs.
+    open_add_dialog_requested: bool,
+    /// The add dialog's own form error, kept apart from the page banner so
+    /// neither leaks into the other.
+    dialog_error: Option<String>,
     /// The account awaiting delete confirmation, if any.
     pending_delete: Option<String>,
     /// Error message
@@ -120,6 +154,8 @@ impl AccountsView {
             importing_ids: HashSet::new(),
             deleting_ids: HashSet::new(),
             show_add_dialog: false,
+            open_add_dialog_requested: false,
+            dialog_error: None,
             pending_delete: None,
             fill_status: None,
             error: None,
@@ -266,10 +302,18 @@ impl AccountsView {
         .detach();
     }
 
+    /// Open the add dialog on the next render — for the app shell, which
+    /// switches here from another page and has no window to hand over.
+    pub fn request_add_dialog(&mut self, cx: &mut Context<Self>) {
+        self.open_add_dialog_requested = true;
+        cx.notify();
+    }
+
     fn show_add_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show_add_dialog = true;
         self.selected_source = registry::default_source();
         self.fill_status = None;
+        self.dialog_error = None;
         self.error = None;
         self.success = None;
         self.info = None;
@@ -402,7 +446,7 @@ impl AccountsView {
 
         // Validation
         if name.is_empty() {
-            self.error = Some("Please enter account name".to_string());
+            self.dialog_error = Some("Enter a name for the account.".to_string());
             cx.notify();
             return;
         }
@@ -410,15 +454,20 @@ impl AccountsView {
         // credentials at all, so an empty key is not an error there — it is
         // the normal case for one that has no billing API in this build.
         if ak.is_empty() && !self.selected_source.credentials_optional() {
-            self.error = Some(format!(
-                "Please enter the {}",
+            self.dialog_error = Some(format!(
+                "Enter the {}.",
                 self.selected_source.access_key_label
             ));
             cx.notify();
             return;
         }
         if sk.is_empty() && !ak.is_empty() && self.selected_source.needs_secret_key() {
-            self.error = Some("Please enter Secret Access Key".to_string());
+            self.dialog_error = Some(format!(
+                "Enter the {}.",
+                self.selected_source
+                    .secret_key_label
+                    .unwrap_or("secret key")
+            ));
             cx.notify();
             return;
         }
@@ -442,8 +491,8 @@ impl AccountsView {
                 if uri.is_empty() {
                     None
                 } else if !uri.starts_with("s3://") {
-                    self.error = Some(
-                        "The export URI starts with s3://, e.g. s3://bucket/prefix/export-name"
+                    self.dialog_error = Some(
+                        "The export URI starts with s3://, e.g. s3://bucket/prefix/export-name."
                             .to_string(),
                     );
                     cx.notify();
@@ -454,9 +503,22 @@ impl AccountsView {
             },
         };
 
+        // What happens once the account is stored: an account with API
+        // credentials fetches its bill right away, so the first thing the
+        // user sees is spend rather than an empty row; one read from a
+        // file points at the row's Import button.
+        let fetch_after_save = self.selected_source.fetches_from_api() && !ak.is_empty();
+        let import_hint = self
+            .selected_source
+            .bill_file
+            .filter(|_| !fetch_after_save)
+            .map(|format| format.display_name);
+        let saved = account.clone();
+
         // The save writes the secret to the OS keyring, which blocks, so
         // it runs off the UI thread with the Save button disabled.
         self.saving = true;
+        self.dialog_error = None;
         cx.notify();
 
         cx.spawn(async move |this, cx| {
@@ -469,19 +531,80 @@ impl AccountsView {
                     this.saving = false;
                     match outcome {
                         Ok(_) => {
-                            this.success = Some("Account added successfully".to_string());
                             this.error = None;
-                            this.info = None;
                             this.show_add_dialog = false;
-                            this.schedule_banner_fade(cx);
+                            if fetch_after_save {
+                                this.fetch_first_bill(saved, cx);
+                            } else {
+                                this.info = None;
+                                this.success = Some(match import_hint {
+                                    Some(format) => format!(
+                                        "Added {}. Use Import on its row to read the {}.",
+                                        saved.name, format
+                                    ),
+                                    None => format!("Added {}.", saved.name),
+                                });
+                                this.schedule_banner_fade(cx);
+                            }
                             this.load_accounts(cx);
                             this.load_data(cx);
                         }
                         Err(e) => {
-                            this.error = Some(format!("Save failed: {}", e));
-                            this.info = None;
+                            this.dialog_error = Some(format!("Couldn't save the account: {}", e));
                         }
                     }
+                    cx.notify();
+                })
+                .ok();
+            });
+        })
+        .detach();
+    }
+
+    /// Fetch a just-added account's bill: the current period and the one
+    /// before it, as Overview's Refresh would. A failure here is usually a
+    /// credential or permission problem, so it is reported on the page —
+    /// the account stays saved and can be fixed or refreshed later.
+    fn fetch_first_bill(&mut self, account: CloudAccount, cx: &mut Context<Self>) {
+        self.success = None;
+        self.info = Some(format!("Added {}. Fetching its bill…", account.name));
+        self.cancel_banner_fade();
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let name = account.name.clone();
+            let outcome = smol::unblock(move || data::refresh_account(&account, false))
+                .await
+                .map_err(|e| e.to_string());
+
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.info = None;
+                    match outcome {
+                        Ok(outcome) => {
+                            let charges: usize =
+                                outcome.ingested.iter().map(|(_, o)| o.charges).sum();
+                            this.error = None;
+                            this.success = Some(if outcome.ingested.is_empty() {
+                                format!("Added {}. No bill to fetch yet.", name)
+                            } else {
+                                format!("Added {} and fetched {} charge(s).", name, charges)
+                            });
+                            this.schedule_banner_fade(cx);
+                        }
+                        Err(e) => {
+                            this.success = None;
+                            this.error = Some(format!(
+                                "Added {}, but its bill couldn't be fetched: {}",
+                                name, e
+                            ));
+                        }
+                    }
+                    // The ledger moved: the row now shows a fetch time and
+                    // the status bar a sync. Reloading through the shell
+                    // refreshes both, and whichever page the user has moved
+                    // on to meanwhile.
+                    crate::app::request_reload(cx);
                     cx.notify();
                 })
                 .ok();
@@ -787,9 +910,10 @@ impl AccountsView {
                 Button::new(SharedString::from(format!("source-{}", source.id)))
                     .label(source.short_name)
                     .small()
-                    .when(is_selected, |button| {
-                        button.custom(theme::accent_variant(cx))
+                    .when(!source.fetches_from_api(), |button| {
+                        button.tooltip("Read from a bill file you import")
                     })
+                    .when(is_selected, |button| button.primary())
                     .when(!is_selected, |button| {
                         button.custom(theme::outline_variant(cx)).card_outline(cx)
                     })
@@ -797,6 +921,35 @@ impl AccountsView {
                         this.set_source(source, window, cx);
                     }))
             }))
+    }
+
+    /// Where the selected source's credential comes from and what it must
+    /// be allowed to do, with the setup guide one click away. Sources read
+    /// from a file say so in the form below instead.
+    fn render_setup_hint(&self, cx: &Context<Self>) -> impl IntoElement {
+        let hint = setup_hint(self.selected_source.id);
+        div().when_some(hint, |el, (text, anchor)| {
+            el.pt_1()
+                .h_flex()
+                .flex_wrap()
+                .items_center()
+                .gap_x_2()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_muted(cx))
+                        .child(text),
+                )
+                .child(
+                    Button::new("setup-guide")
+                        .label("Setup guide")
+                        .link()
+                        .small()
+                        .on_click(move |_, _, cx| {
+                            cx.open_url(&format!("{POLICIES_URL}#{anchor}"));
+                        }),
+                )
+        })
     }
 
     fn render_header(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -823,7 +976,7 @@ impl AccountsView {
             .child(
                 Button::new("add")
                     .label("Add account")
-                    .custom(theme::accent_variant(cx))
+                    .primary()
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.show_add_dialog(window, cx);
                     })),
@@ -871,7 +1024,7 @@ impl AccountsView {
                     .justify_center()
                     .child(theme::caption(
                         cx,
-                        "No cloud accounts yet — click Add account above to connect a source.",
+                        "No accounts yet. Add one to connect a billing source.",
                     )),
             ),
             Some(loaded) => card.children(
@@ -955,6 +1108,11 @@ impl AccountsView {
                             })
                             .child(row.name.clone()),
                     )
+                    // Demo rows sit in the same table and totals as real
+                    // ones; the pill keeps them from being mistaken.
+                    .when(row.id.starts_with(crate::demo_data::DEMO_PREFIX), |el| {
+                        el.child(div().pt_0p5().flex().child(theme::pill_outline(cx, "Demo")))
+                    })
                     // Absent for an account stored before the hint was
                     // recorded; it appears the next time the account's
                     // credentials are actually used.
@@ -1354,7 +1512,8 @@ impl AccountsView {
                                     .v_flex()
                                     .gap_1()
                                     .child(div().text_sm().child("Cloud Provider"))
-                                    .child(self.render_source_selector(cx)),
+                                    .child(self.render_source_selector(cx))
+                                    .child(self.render_setup_hint(cx)),
                             )
                             .child(
                                 div()
@@ -1472,7 +1631,7 @@ impl AccountsView {
                             }),
                     )
                     // Error message
-                    .when_some(self.error.clone(), |el, error| {
+                    .when_some(self.dialog_error.clone(), |el, error| {
                         el.child(
                             div()
                                 .flex_shrink_0()
@@ -1496,7 +1655,7 @@ impl AccountsView {
                             .child(
                                 Button::new("save")
                                     .label("Save")
-                                    .custom(theme::accent_variant(cx))
+                                    .primary()
                                     .disabled(self.saving)
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.save_account(cx);
@@ -1748,7 +1907,10 @@ fn render_state(state: data::AccountState, cx: &App) -> Div {
 }
 
 impl Render for AccountsView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if std::mem::take(&mut self.open_add_dialog_requested) {
+            self.show_add_dialog(window, cx);
+        }
         div()
             .size_full()
             .relative()

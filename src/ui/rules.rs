@@ -711,7 +711,7 @@ impl RulesView {
                     Button::new(SharedString::from(format!("budget-account-{id}")))
                         .label(name.clone())
                         .small()
-                        .when(selected, |button| button.custom(theme::accent_variant(cx)))
+                        .when(selected, |button| button.primary())
                         .when(!selected, |button| {
                             button.custom(theme::outline_variant(cx)).card_outline(cx)
                         })
@@ -787,10 +787,21 @@ impl RulesView {
                          month-to-date cost or the month-end projection against it.",
             ))
             .when(self.accounts.is_empty(), |el| {
-                el.child(theme::caption(
-                    cx,
-                    "Add an account on the Accounts page first.",
-                ))
+                el.child(
+                    div()
+                        .h_flex()
+                        .items_center()
+                        .gap_3()
+                        .child(theme::caption(cx, "A budget belongs to an account."))
+                        .child(
+                            Button::new("budget-add-account")
+                                .label("Add account…")
+                                .small()
+                                .custom(theme::outline_variant(cx))
+                                .card_outline(cx)
+                                .on_click(|_, _, cx| crate::app::open_add_account(cx)),
+                        ),
+                )
             })
             .when(!self.accounts.is_empty(), |el| {
                 el.child(account_selector).child(editor)
@@ -827,9 +838,7 @@ impl RulesView {
                 Button::new(SharedString::from(format!("rule-kind-{kind}")))
                     .label(spec.name)
                     .small()
-                    .when(kind == self.selected_kind, |button| {
-                        button.custom(theme::accent_variant(cx))
-                    })
+                    .when(kind == self.selected_kind, |button| button.primary())
                     .when(kind != self.selected_kind, |button| {
                         button.custom(theme::outline_variant(cx)).card_outline(cx)
                     })
@@ -844,37 +853,37 @@ impl RulesView {
             return div().size_0().into_any_element();
         }
 
-        let parameters = match self.selected_kind {
-            alerts::RULE_COST_ANOMALY => div()
-                .h_flex()
-                .gap_4()
-                .child(
+        let parameters =
+            match self.selected_kind {
+                alerts::RULE_COST_ANOMALY => div()
+                    .h_flex()
+                    .gap_4()
+                    .child(
+                        div()
+                            .flex_1()
+                            .v_flex()
+                            .gap_1()
+                            .child(div().text_sm().child("Multiplier (× 7-day baseline)"))
+                            .child(Input::new(&self.multiplier_input)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .v_flex()
+                            .gap_1()
+                            .child(div().text_sm().child("Consecutive days"))
+                            .child(Input::new(&self.consecutive_input)),
+                    ),
+                alerts::RULE_BALANCE_FLOOR => div().h_flex().child(
                     div()
                         .flex_1()
                         .v_flex()
                         .gap_1()
-                        .child(div().text_sm().child("Multiplier (× 7-day baseline)"))
-                        .child(Input::new(&self.multiplier_input)),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .v_flex()
-                        .gap_1()
-                        .child(div().text_sm().child("Consecutive days"))
-                        .child(Input::new(&self.consecutive_input)),
+                        .child(div().text_sm().child("Floor (account's currency)"))
+                        .child(Input::new(&self.floor_input)),
                 ),
-            alerts::RULE_BALANCE_FLOOR => div().h_flex().child(
-                div()
-                    .flex_1()
-                    .v_flex()
-                    .gap_1()
-                    .child(div().text_sm().child("Floor (account's currency)"))
-                    .child(Input::new(&self.floor_input)),
-            ),
-            alerts::RULE_BUDGET => {
-                let account_picker =
-                    div()
+                alerts::RULE_BUDGET => {
+                    let account_picker = div()
                         .v_flex()
                         .gap_1()
                         .child(div().text_sm().child("Account"))
@@ -888,9 +897,7 @@ impl RulesView {
                                 Button::new(SharedString::from(format!("rule-account-{id}")))
                                     .label(name.clone())
                                     .small()
-                                    .when(selected, |button| {
-                                        button.custom(theme::accent_variant(cx))
-                                    })
+                                    .when(selected, |button| button.primary())
                                     .when(!selected, |button| {
                                         button.custom(theme::outline_variant(cx)).card_outline(cx)
                                     })
@@ -901,96 +908,92 @@ impl RulesView {
                             }),
                         ));
 
-                let based_picker = div()
-                    .flex_1()
-                    .v_flex()
-                    .gap_1()
-                    .child(div().text_sm().child("Based on"))
-                    .child(div().h_flex().gap_2().children(BASED_OPTIONS.iter().map(
-                        |(value, label)| {
-                            let value = *value;
-                            let selected = self.rule_based == value;
-                            Button::new(SharedString::from(format!("rule-based-{value}")))
-                                .label(*label)
-                                .small()
-                                .when(selected, |button| button.custom(theme::accent_variant(cx)))
-                                .when(!selected, |button| {
-                                    button.custom(theme::outline_variant(cx)).card_outline(cx)
-                                })
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.rule_based = value;
-                                    cx.notify();
-                                }))
-                        },
-                    )));
-
-                let threshold_type_picker = div()
-                    .flex_1()
-                    .v_flex()
-                    .gap_1()
-                    .child(div().text_sm().child("Threshold type"))
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_2()
-                            .children(THRESHOLD_TYPE_OPTIONS.iter().map(|(value, label)| {
+                    let based_picker = div()
+                        .flex_1()
+                        .v_flex()
+                        .gap_1()
+                        .child(div().text_sm().child("Based on"))
+                        .child(div().h_flex().gap_2().children(BASED_OPTIONS.iter().map(
+                            |(value, label)| {
                                 let value = *value;
-                                let selected = self.rule_threshold_type == value;
-                                Button::new(SharedString::from(format!(
-                                    "rule-threshold-type-{value}"
-                                )))
-                                .label(*label)
-                                .small()
-                                .when(selected, |button| button.custom(theme::accent_variant(cx)))
-                                .when(!selected, |button| {
-                                    button.custom(theme::outline_variant(cx)).card_outline(cx)
-                                })
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
+                                let selected = self.rule_based == value;
+                                Button::new(SharedString::from(format!("rule-based-{value}")))
+                                    .label(*label)
+                                    .small()
+                                    .when(selected, |button| button.primary())
+                                    .when(!selected, |button| {
+                                        button.custom(theme::outline_variant(cx)).card_outline(cx)
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.rule_based = value;
+                                        cx.notify();
+                                    }))
+                            },
+                        )));
+
+                    let threshold_type_picker =
+                        div()
+                            .flex_1()
+                            .v_flex()
+                            .gap_1()
+                            .child(div().text_sm().child("Threshold type"))
+                            .child(div().h_flex().gap_2().children(
+                                THRESHOLD_TYPE_OPTIONS.iter().map(|(value, label)| {
+                                    let value = *value;
+                                    let selected = self.rule_threshold_type == value;
+                                    Button::new(SharedString::from(format!(
+                                        "rule-threshold-type-{value}"
+                                    )))
+                                    .label(*label)
+                                    .small()
+                                    .when(selected, |button| button.primary())
+                                    .when(!selected, |button| {
+                                        button.custom(theme::outline_variant(cx)).card_outline(cx)
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
                                         this.rule_threshold_type = value;
                                         cx.notify();
-                                    },
-                                ))
-                            })),
-                    );
+                                    }))
+                                }),
+                            ));
 
-                div()
-                    .v_flex()
-                    .gap_4()
-                    .child(account_picker)
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_4()
-                            .child(based_picker)
-                            .child(threshold_type_picker),
-                    )
-                    .child(
-                        div().h_flex().child(
+                    div()
+                        .v_flex()
+                        .gap_4()
+                        .child(account_picker)
+                        .child(
                             div()
-                                .flex_1()
-                                .v_flex()
-                                .gap_1()
-                                .child(div().text_sm().child(
-                                    if self.rule_threshold_type == "absolute" {
-                                        "Amount (reporting currency)"
-                                    } else {
-                                        "Percent of budget (%)"
-                                    },
-                                ))
-                                .child(Input::new(&self.threshold_input)),
-                        ),
-                    )
-            }
-            _ => div().h_flex().child(
-                div()
-                    .flex_1()
-                    .v_flex()
-                    .gap_1()
-                    .child(div().text_sm().child("Threshold (%)"))
-                    .child(Input::new(&self.threshold_input)),
-            ),
-        };
+                                .h_flex()
+                                .gap_4()
+                                .child(based_picker)
+                                .child(threshold_type_picker),
+                        )
+                        .child(
+                            div().h_flex().child(
+                                div()
+                                    .flex_1()
+                                    .v_flex()
+                                    .gap_1()
+                                    .child(div().text_sm().child(
+                                        if self.rule_threshold_type == "absolute" {
+                                            "Amount (reporting currency)"
+                                        } else {
+                                            "Percent of budget (%)"
+                                        },
+                                    ))
+                                    .child(Input::new(&self.threshold_input)),
+                            ),
+                        )
+                }
+                _ => div().h_flex().child(
+                    div()
+                        .flex_1()
+                        .v_flex()
+                        .gap_1()
+                        .child(div().text_sm().child("Threshold (%)"))
+                        .child(Input::new(&self.threshold_input)),
+                ),
+            };
 
         div()
             .id("new-rule-scrim")

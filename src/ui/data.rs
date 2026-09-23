@@ -367,6 +367,31 @@ pub struct OverviewData {
     /// Month-over-month comparison; only the MTD range has a calendar
     /// month to compare, so the rolling ranges carry `None`.
     pub month_over_month: Option<MonthOverMonth>,
+    /// Configured accounts, split by whether they are demo ones: the empty
+    /// state tells "no accounts" from "nothing fetched yet", and demo rows
+    /// get a notice that they are not a real bill.
+    pub accounts: AccountCounts,
+}
+
+/// How many accounts are configured, real and demo.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct AccountCounts {
+    pub real: usize,
+    pub demo: usize,
+}
+
+impl AccountCounts {
+    fn load() -> Result<Self> {
+        let mut counts = Self::default();
+        for account in db::get_all_accounts()? {
+            if account.id.starts_with(crate::demo_data::DEMO_PREFIX) {
+                counts.demo += 1;
+            } else {
+                counts.real += 1;
+            }
+        }
+        Ok(counts)
+    }
 }
 
 /// Chart title and caption of the daily ranges — MTD and 30d both plot
@@ -382,10 +407,25 @@ const DAILY_CHART_CAPTION: &str = "Actual against the 7-day trailing mean.";
 /// real burn instead of a ≈ $0 with wild percentages.
 pub fn load_overview(range: Range) -> Result<OverviewData> {
     let now = Utc::now();
-    match range {
+    let mut data = match range {
         Range::Mtd => load_overview_mtd(now),
         _ => load_overview_window(range, now),
-    }
+    }?;
+    data.accounts = AccountCounts::load()?;
+    Ok(data)
+}
+
+/// Load or clear the demo ledger, then re-evaluate the alert rules so the
+/// demo's spike and low balance show up (or their alerts go). Returns the
+/// summary line for the UI. Blocking; wrap in `smol::unblock`.
+pub fn set_demo_data(load: bool) -> Result<String> {
+    let summary = if load {
+        crate::ledger::demo::seed_demo()
+    } else {
+        crate::ledger::demo::clear_demo()
+    }?;
+    alerts::evaluate()?;
+    Ok(summary)
 }
 
 /// The month-to-date page: calendar month to date, the change percent
@@ -538,6 +578,7 @@ fn load_overview_mtd(now: DateTime<Utc>) -> Result<OverviewData> {
         business_lines,
         movers,
         month_over_month: Some(month_over_month),
+        accounts: AccountCounts::default(),
     })
 }
 
@@ -638,6 +679,7 @@ fn load_overview_window(range: Range, now: DateTime<Utc>) -> Result<OverviewData
         business_lines: business_lines(breakdown),
         movers,
         month_over_month: None,
+        accounts: AccountCounts::default(),
     })
 }
 
@@ -2133,8 +2175,9 @@ pub struct SyncStatus {
     pub last_synced_at: Option<DateTime<Utc>>,
     /// How many accounts are configured.
     pub source_count: usize,
-    /// When the next automatic fetch is due: the last sync plus the
-    /// configured freshness window. `None` before the first sync.
+    /// When Refresh would next fetch rather than skip: the last sync plus
+    /// the configured freshness window. Nothing fetches on a timer. `None`
+    /// before the first sync.
     pub next_fetch_at: Option<DateTime<Utc>>,
 }
 

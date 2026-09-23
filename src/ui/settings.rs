@@ -285,16 +285,7 @@ impl SettingsView {
         cx.notify();
 
         cx.spawn(async move |this, cx| {
-            let result = smol::unblock(move || {
-                let summary = if load {
-                    crate::ledger::demo::seed_demo()
-                } else {
-                    crate::ledger::demo::clear_demo()
-                }?;
-                crate::alerts::evaluate()?;
-                Ok::<_, anyhow::Error>(summary)
-            })
-            .await;
+            let result = smol::unblock(move || super::data::set_demo_data(load)).await;
             this.update(cx, |this, cx| {
                 this.demo_running = false;
                 this.save_status = Some(match result {
@@ -427,9 +418,7 @@ impl Render for SettingsView {
                                 Button::new(SharedString::from(format!("currency-{currency}")))
                                     .label(*currency)
                                     .small()
-                                    .when(selected, |button| {
-                                        button.custom(theme::accent_variant(cx))
-                                    })
+                                    .when(selected, |button| button.primary())
                                     .when(!selected, |button| {
                                         button.custom(theme::outline_variant(cx)).card_outline(cx)
                                     })
@@ -463,9 +452,7 @@ impl Render for SettingsView {
                                 Button::new(SharedString::from(format!("refresh-{hours}h")))
                                     .label(format!("{hours}h"))
                                     .small()
-                                    .when(selected, |button| {
-                                        button.custom(theme::accent_variant(cx))
-                                    })
+                                    .when(selected, |button| button.primary())
                                     .when(!selected, |button| {
                                         button.custom(theme::outline_variant(cx)).card_outline(cx)
                                     })

@@ -274,15 +274,10 @@ pub fn caption(cx: &App, text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
-/// Terracotta solid accent variant: primary buttons and selected chips
-/// share it so the two cannot drift apart.
-pub fn accent_variant(cx: &App) -> ButtonCustomVariant {
-    ButtonCustomVariant::new(cx)
-        .color(accent(cx))
-        .foreground(on_accent(cx))
-        .hover(accent_hover(cx))
-        .active(accent_pressed(cx))
-}
+// Solid accent Buttons use `.primary()`, which reads the theme's primary
+// tokens. A custom variant cannot stand in for it: gpui-kit paints a custom
+// variant's resting background at a fifth of its color, so a solid accent
+// came out as a pale wash with white text on it.
 
 /// Segmented-control pill: the active range reads as a raised chip, the
 /// others as plain text on the track.

@@ -335,11 +335,7 @@ impl AwsCloudService {
 
         if status >= 400 {
             tracing::error!("Cost Explorer error response (HTTP {}): {}", status, body);
-            return Err(anyhow!(
-                "Cost Explorer request failed: HTTP {} - {}",
-                status,
-                body
-            ));
+            return Err(cost_explorer_error(status, &body));
         }
 
         Ok(body)
@@ -645,10 +641,49 @@ impl BillingSource for AwsCloudService {
     }
 }
 
+/// A Cost Explorer error response, as the user should read it. The two
+/// errors a new account meets first — a key without the permission, and an
+/// account whose Cost Explorer has no data yet — say what to do; anything
+/// else keeps the service's own body.
+fn cost_explorer_error(status: u16, body: &str) -> anyhow::Error {
+    if body.contains("AccessDeniedException") {
+        anyhow!(
+            "this access key may not call Cost Explorer. Attach a policy allowing \
+             ce:GetCostAndUsage to its IAM user — see \
+             https://cloudbridge.jetsquirrel.cloud/policies.html#aws-cost-explorer"
+        )
+    } else if body.contains("DataUnavailableException") {
+        anyhow!(
+            "Cost Explorer has no data for this account yet. It is enabled from the \
+             Billing console and takes up to 24 hours to prepare the first data."
+        )
+    } else {
+        anyhow!("Cost Explorer request failed: HTTP {} - {}", status, body)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ledger::{ChargeCategory, CostBasis};
+
+    #[test]
+    fn cost_explorer_errors_name_the_fix() {
+        let denied = cost_explorer_error(
+            400,
+            r#"{"__type":"AccessDeniedException","Message":"User is not authorized"}"#,
+        );
+        assert!(denied.to_string().contains("ce:GetCostAndUsage"));
+
+        let unavailable = cost_explorer_error(400, r#"{"__type":"DataUnavailableException"}"#);
+        assert!(unavailable.to_string().contains("24 hours"));
+
+        let other = cost_explorer_error(500, "boom");
+        assert_eq!(
+            other.to_string(),
+            "Cost Explorer request failed: HTTP 500 - boom"
+        );
+    }
 
     /// A recorded GetCostAndUsage response as this build asks for it:
     /// three metrics, grouped by service and record type.

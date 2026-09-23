@@ -975,9 +975,21 @@ impl AttributionView {
                     .child("Nothing to attribute yet"),
             )
             .child(div().text_sm().text_color(theme::text_muted(cx)).child(
-                "Ingest some bills first — the source → service → business line \
-                        flow appears once this period has charges.",
+                "The source → service → business line flow appears once this \
+                 period has charges. Fetch or import a bill from Accounts.",
             ))
+            .child(
+                div().pt_1().flex().child(
+                    Button::new("attribution-open-accounts")
+                        .label("Open Accounts")
+                        .small()
+                        .custom(theme::outline_variant(cx))
+                        .card_outline(cx)
+                        .on_click(|_, _, cx| {
+                            crate::app::navigate_to(crate::app::CurrentView::Accounts, cx)
+                        }),
+                ),
+            )
     }
 
     /// First-load placeholder shaped like the loaded page — the Sankey

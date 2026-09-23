@@ -39,6 +39,8 @@ pub struct OverviewView {
     /// at the data layer, so a refresh can only bring the strip back with
     /// a finding that is genuinely new — never with a dismissed one.
     quality_strip_dismissed: bool,
+    /// Demo data is being loaded or cleared from this page.
+    demo_running: bool,
 }
 
 impl OverviewView {
@@ -54,6 +56,7 @@ impl OverviewView {
             generation: 0,
             chart_hover: chart::ChartHover::new(),
             quality_strip_dismissed: false,
+            demo_running: false,
         }
     }
 
@@ -133,7 +136,15 @@ impl OverviewView {
             let result = smol::unblock(move || -> Result<_, String> {
                 let accounts = crate::db::get_all_accounts().map_err(|e| e.to_string())?;
                 let mut failures = Vec::new();
-                for account in &accounts {
+                // Only a source with an API channel has anything to fetch;
+                // an account read from a bill file would only report, on
+                // every Refresh, that it has no API.
+                let fetchable = accounts.iter().filter(|account| {
+                    account
+                        .descriptor()
+                        .is_some_and(|source| source.fetches_from_api())
+                });
+                for account in fetchable {
                     if let Err(e) = data::refresh_account(account, force) {
                         failures.push(format!("{}: {}", account.name, e));
                     }
@@ -238,7 +249,7 @@ impl OverviewView {
                                 "Refresh"
                             })
                             .small()
-                            .custom(theme::accent_variant(cx))
+                            .primary()
                             .disabled(refreshing)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.refresh(false, cx);
@@ -478,7 +489,58 @@ impl OverviewView {
     }
 
     /// Shown on an empty ledger instead of fake-looking zeros.
-    fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// Load or clear the demo ledger from this page, then have the shell
+    /// reload it and the status bar. The same operation as Settings' demo
+    /// buttons.
+    fn set_demo_data(&mut self, load: bool, cx: &mut Context<Self>) {
+        if self.demo_running {
+            return;
+        }
+        self.demo_running = true;
+        self.error = None;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let result = smol::unblock(move || data::set_demo_data(load)).await;
+            this.update(cx, |this, cx| {
+                this.demo_running = false;
+                match result {
+                    Ok(_) => crate::app::request_reload(cx),
+                    Err(e) => {
+                        tracing::error!("Demo data operation failed: {}", e);
+                        this.error = Some(format!("Couldn't change the demo data: {e}"));
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The empty page. With no accounts it is the first step — add one, or
+    /// look around with demo data; with accounts but no spend it says why
+    /// the page is still blank.
+    fn render_empty_state(
+        &self,
+        d: &data::OverviewData,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let no_accounts = d.accounts.real + d.accounts.demo == 0;
+        let (title, caption) = if no_accounts {
+            (
+                "No accounts yet",
+                "Add a billing account to see your spend here, or load demo data to look around first.",
+            )
+        } else {
+            (
+                "No spend yet",
+                "Refresh fetches the current bill. Providers can take up to a day to report \
+                 new charges, and a source read from a file shows spend once its bill is \
+                 imported on the Accounts page.",
+            )
+        };
+
         theme::card(cx)
             .w_full()
             .p_5()
@@ -491,12 +553,71 @@ impl OverviewView {
                     .text_base()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme::text_primary(cx))
-                    .child("No data yet"),
+                    .child(title),
             )
-            .child(theme::caption(
-                cx,
-                "Add an account from the Accounts page to see spend here.",
-            ))
+            .child(
+                div()
+                    .max_w(rems(30.0))
+                    .text_center()
+                    .child(theme::caption(cx, caption)),
+            )
+            .when(no_accounts, |el| {
+                el.child(
+                    div()
+                        .pt_2()
+                        .h_flex()
+                        .gap_2()
+                        .child(
+                            Button::new("empty-add-account")
+                                .label("Add account…")
+                                .primary()
+                                .on_click(|_, _, cx| crate::app::open_add_account(cx)),
+                        )
+                        .child(
+                            Button::new("empty-load-demo")
+                                .label("Load demo data")
+                                .custom(theme::outline_variant(cx))
+                                .card_outline(cx)
+                                .loading(self.demo_running)
+                                .disabled(self.demo_running)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.set_demo_data(true, cx);
+                                })),
+                        ),
+                )
+            })
+    }
+
+    /// A quiet line over the page while demo accounts are configured, so
+    /// the demo bill is not read as a real one, with the way to remove it.
+    fn render_demo_notice(
+        &self,
+        d: &data::OverviewData,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let text = if d.accounts.real == 0 {
+            "Showing demo data"
+        } else {
+            "Demo accounts are included in these totals"
+        };
+        div()
+            .w_full()
+            .h_flex()
+            .items_center()
+            .gap_3()
+            .child(theme::pill_outline(cx, "Demo"))
+            .child(theme::caption(cx, text))
+            .child(
+                Button::new("clear-demo")
+                    .label("Clear demo data")
+                    .small()
+                    .ghost()
+                    .loading(self.demo_running)
+                    .disabled(self.demo_running)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.set_demo_data(false, cx);
+                    })),
+            )
     }
 
     /// The data-quality warnings strip under the header: one row per
@@ -596,7 +717,7 @@ impl Render for OverviewView {
             // its error sits under the header.
             None if self.loading || self.error.is_none() => render_skeleton(cx).into_any_element(),
             None => div().into_any_element(),
-            Some(d) if is_empty(d) => self.render_empty_state(cx).into_any_element(),
+            Some(d) if is_empty(d) => self.render_empty_state(d, cx).into_any_element(),
             Some(d) => div()
                 .v_flex()
                 .gap_6()
@@ -637,6 +758,10 @@ impl Render for OverviewView {
                         .as_ref()
                         .filter(|d| !d.data_quality.is_empty() && !self.quality_strip_dismissed),
                     |el, d| el.child(self.render_data_quality_strip(cx, d)),
+                )
+                .when_some(
+                    self.data.as_ref().filter(|d| d.accounts.demo > 0),
+                    |el, d| el.child(self.render_demo_notice(d, cx)),
                 )
                 .child(body),
         )

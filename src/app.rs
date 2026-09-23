@@ -49,6 +49,9 @@ pub struct AppState {
     /// The stores finished opening (desktop init, see desktop.rs); the
     /// shell starts loading pages when this flips.
     stores_opened: bool,
+    /// A page asked for the Accounts page's add dialog; the shell switches
+    /// there and opens it.
+    add_account_requested: bool,
 }
 
 impl AppState {
@@ -59,6 +62,7 @@ impl AppState {
             navigate_to: None,
             reload_requested: false,
             stores_opened: false,
+            add_account_requested: false,
         }
     }
 
@@ -79,6 +83,13 @@ impl AppState {
     /// after a change they read has landed behind their backs.
     pub fn request_reload(&mut self, cx: &mut Context<Self>) {
         self.reload_requested = true;
+        cx.notify();
+    }
+
+    /// Ask the app shell to open the Accounts page with its add dialog up.
+    pub fn open_add_account(&mut self, cx: &mut Context<Self>) {
+        self.navigate_to = Some((CurrentView::Accounts, None));
+        self.add_account_requested = true;
         cx.notify();
     }
 
@@ -120,6 +131,13 @@ pub fn request_reload(cx: &mut App) {
 pub fn stores_opened(cx: &mut App) {
     let app_state = cx.global::<GlobalAppState>().0.clone();
     app_state.update(cx, |state, cx| state.mark_stores_opened(cx));
+}
+
+/// Ask the app shell to open the Accounts page's add dialog, from any click
+/// handler — the empty Overview's first step.
+pub fn open_add_account(cx: &mut App) {
+    let app_state = cx.global::<GlobalAppState>().0.clone();
+    app_state.update(cx, |state, cx| state.open_add_account(cx));
 }
 
 /// Ask the app shell to open the Account detail page for an account.
@@ -229,13 +247,18 @@ impl CloudBridgeApp {
         // it and clear it. The update in refresh_status_bar does not notify,
         // so this observer cannot loop.
         let observer = cx.observe(&app_state, |this, app_state, cx| {
-            let (target, reload, opened) = app_state.update(cx, |state, _| {
+            let (target, reload, opened, add_account) = app_state.update(cx, |state, _| {
                 (
                     state.navigate_to.take(),
                     std::mem::take(&mut state.reload_requested),
                     std::mem::take(&mut state.stores_opened),
+                    std::mem::take(&mut state.add_account_requested),
                 )
             });
+            if add_account {
+                this.accounts_view
+                    .update(cx, |v, cx| v.request_add_dialog(cx));
+            }
             if opened {
                 this.stores_ready = true;
             }
@@ -568,7 +591,7 @@ impl CloudBridgeApp {
                     Some(at) => format!("Synced {}", fmt::relative_time(at)),
                     None => "Never synced".to_string(),
                 };
-                // sync_detail carries "N sources · next auto-fetch …".
+                // sync_detail carries "N sources · current for …".
                 // The dot follows the same due-now cutoff as that line.
                 let dot_color = match sync.next_fetch_at {
                     Some(at) if at > Utc::now() => theme::olive(cx),
@@ -686,8 +709,10 @@ impl Render for CloudBridgeApp {
     }
 }
 
-/// The muted line under the sync title: source count plus when the next
-/// automatic fetch is due.
+/// The muted line under the sync title: source count plus whether a
+/// Refresh would fetch anything. Nothing fetches on a timer — Refresh skips
+/// a period fetched within the refresh interval, so this says how long the
+/// data counts as current, not when a fetch will happen by itself.
 fn sync_detail(sync: &SyncStatus) -> String {
     if sync.source_count == 0 {
         return "No sources configured".to_string();
@@ -700,21 +725,21 @@ fn sync_detail(sync: &SyncStatus) -> String {
     );
 
     match sync.next_fetch_at {
-        None => format!("{} · waiting for the first sync", sources),
+        None => format!("{} · not fetched yet", sources),
         Some(at) => {
             let remaining = at - Utc::now();
             if remaining.num_seconds() <= 0 {
-                format!("{} · next auto-fetch due now", sources)
+                format!("{} · due for a refresh", sources)
             } else if remaining.num_hours() >= 1 {
                 format!(
-                    "{} · next auto-fetch in {}h {}m",
+                    "{} · current for {}h {}m",
                     sources,
                     remaining.num_hours(),
                     remaining.num_minutes() % 60
                 )
             } else {
                 format!(
-                    "{} · next auto-fetch in {} min",
+                    "{} · current for {} min",
                     sources,
                     remaining.num_minutes().max(1)
                 )
