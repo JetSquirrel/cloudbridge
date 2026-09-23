@@ -83,26 +83,10 @@ pub fn run() {
         }
 
         cx.spawn(async move |cx| {
-            // Initialize databases: application state, then the billing ledger.
-            if let Err(e) = crate::db::init_database() {
-                tracing::error!("Database initialization failed: {}", e);
-            }
-            if let Err(e) = crate::ledger::init_ledger(&reporting_currency) {
-                tracing::error!("Ledger initialization failed: {}", e);
-            }
-
-            // Run the alerting rules once against the freshly opened ledger,
-            // before first paint: the sidebar badge and the Alerts page read
-            // what this writes. Best-effort — a failed evaluation never
-            // blocks the window from opening.
-            match smol::unblock(crate::alerts::evaluate).await {
-                Ok(fired) if fired > 0 => {
-                    tracing::info!("Alert evaluation raised {} alert(s)", fired)
-                }
-                Ok(_) => {}
-                Err(e) => tracing::error!("Alert evaluation failed: {}", e),
-            }
-
+            // Open the window before touching the stores, so a large ledger
+            // no longer delays the first frame. Until init below finishes
+            // the shell holds every page load back and shows loading
+            // placeholders instead (see app.rs).
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(Bounds {
@@ -123,6 +107,38 @@ pub fn run() {
                     cx.new(|cx| Root::new(view, window, cx))
                 },
             )?;
+
+            // Both stores open and migrate on disk and the first alert
+            // evaluation scans the ledger — all blocking, so they run on a
+            // worker thread now that the window is up. Best-effort: a
+            // failure here never keeps the window from being usable.
+            let evaluated = smol::unblock(move || {
+                // Application state first, then the billing ledger.
+                if let Err(e) = crate::db::init_database() {
+                    tracing::error!("Database initialization failed: {}", e);
+                }
+                if let Err(e) = crate::ledger::init_ledger(&reporting_currency) {
+                    tracing::error!("Ledger initialization failed: {}", e);
+                }
+
+                // Run the alerting rules once against the freshly opened
+                // ledger; the sidebar badge and the Alerts page read what
+                // this writes.
+                crate::alerts::evaluate()
+            })
+            .await;
+            match evaluated {
+                Ok(fired) if fired > 0 => {
+                    tracing::info!("Alert evaluation raised {} alert(s)", fired)
+                }
+                Ok(_) => {}
+                Err(e) => tracing::error!("Alert evaluation failed: {}", e),
+            }
+
+            // The pages deferred their first loads (see app.rs) and the
+            // sidebar badge reads what evaluation wrote; tell the shell the
+            // stores are open so it loads the current page and status bar.
+            cx.update(crate::app::stores_opened);
 
             Ok::<_, anyhow::Error>(())
         })

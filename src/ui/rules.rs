@@ -4,8 +4,9 @@ use chrono::{DateTime, Utc};
 use gpui_kit::component::{
     button::*,
     input::{Input, InputState},
+    skeleton::Skeleton,
     switch::*,
-    Disableable as _, Sizable as _, StyledExt,
+    Disableable as _, IconName, Sizable as _, StyledExt,
 };
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -139,7 +140,7 @@ impl RulesView {
             )]);
         });
 
-        let mut view = Self {
+        Self {
             data: None,
             budgets: Vec::new(),
             accounts: Vec::new(),
@@ -166,9 +167,17 @@ impl RulesView {
             budget_error: None,
             pending_delete: None,
             deleting: false,
-        };
-        view.load(cx);
-        view
+        }
+    }
+
+    /// Start the first load if none has run. The app shell calls this on
+    /// the page's first visit, so construction — and window opening —
+    /// stays cheap and the hidden pages do not race the visible one for
+    /// the ledger at startup.
+    pub fn ensure_loaded(&mut self, cx: &mut Context<Self>) {
+        if self.data.is_none() && !self.loading {
+            self.load(cx);
+        }
     }
 
     /// Reload the rules. Called by the app shell when this page is
@@ -1044,11 +1053,14 @@ impl RulesView {
                                     .font_weight(FontWeight::BOLD)
                                     .child("New rule"),
                             )
-                            .child(Button::new("close-new-rule").label("×").ghost().on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.hide_new_dialog(cx);
-                                }),
-                            )),
+                            .child(
+                                Button::new("close-new-rule")
+                                    .icon(IconName::Close)
+                                    .ghost()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.hide_new_dialog(cx);
+                                    })),
+                            ),
                     )
                     // The body scrolls so the footer buttons below stay
                     // reachable no matter how tall the parameters grow.
@@ -1108,6 +1120,11 @@ impl RulesView {
                                         this.submit_new_rule(cx);
                                     })),
                             ),
+                    )
+                    .with_animation(
+                        "new-rule-dialog-enter",
+                        theme::dialog_enter_animation(),
+                        |this, delta| this.opacity(delta).mt(px(10.0 * (1.0 - delta))),
                     ),
             )
             .into_any_element()
@@ -1183,7 +1200,7 @@ impl RulesView {
                             )
                             .child(
                                 Button::new("close-delete-rule")
-                                    .label("×")
+                                    .icon(IconName::Close)
                                     .ghost()
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.cancel_delete(cx);
@@ -1220,6 +1237,11 @@ impl RulesView {
                                         this.confirm_delete(cx);
                                     })),
                             ),
+                    )
+                    .with_animation(
+                        "delete-rule-dialog-enter",
+                        theme::dialog_enter_animation(),
+                        |this, delta| this.opacity(delta).mt(px(10.0 * (1.0 - delta))),
                     ),
             )
             .into_any_element()
@@ -1253,7 +1275,22 @@ impl Render for RulesView {
             );
 
         let body: AnyElement = if self.loading && self.data.is_none() {
-            theme::caption(cx, "Loading rules…").into_any_element()
+            // Skeleton shaped like the loaded list: three rule cards at
+            // their final padding, so the first load does not jump.
+            div()
+                .v_flex()
+                .gap_4()
+                .children((0..3).map(|_| {
+                    theme::card(cx)
+                        .w_full()
+                        .p_5()
+                        .v_flex()
+                        .gap_3()
+                        .child(Skeleton::new().w_56().h_5())
+                        .child(Skeleton::new().w_full().h_3())
+                        .child(Skeleton::new().w_64().h_3())
+                }))
+                .into_any_element()
         } else if let Some(data) = &self.data {
             let rules: &[RuleView] = data.rules.as_slice();
             div()

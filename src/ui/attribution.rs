@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use chrono::Utc;
-use gpui_kit::component::{button::*, Sizable as _, StyledExt};
+use gpui_kit::component::{button::*, skeleton::Skeleton, Sizable as _, StyledExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
@@ -293,19 +293,27 @@ pub struct AttributionView {
 }
 
 impl AttributionView {
-    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut view = Self {
+    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
+        Self {
             data: None,
             drilldown: None,
             dim: DrillDim::Tag,
             breakdown_mode: BreakdownMode::Map,
             treemap_hover: chart::TreemapHover::new(),
             error: None,
-            loading: true,
+            loading: false,
             load_generation: 0,
-        };
-        view.load(cx);
-        view
+        }
+    }
+
+    /// Start the first load if none has run. The app shell calls this on
+    /// the page's first visit, so construction — and window opening —
+    /// stays cheap and the hidden pages do not race the visible one for
+    /// the ledger at startup.
+    pub fn ensure_loaded(&mut self, cx: &mut Context<Self>) {
+        if self.data.is_none() && !self.loading {
+            self.load(cx);
+        }
     }
 
     /// Reload the page's data. Called by the app shell when this page is
@@ -972,15 +980,31 @@ impl AttributionView {
             ))
     }
 
+    /// First-load placeholder shaped like the loaded page — the Sankey
+    /// card at its fixed canvas height and a breakdown card below it — so
+    /// the landing content does not jump the layout.
     fn render_loading(&self, cx: &Context<Self>) -> impl IntoElement {
         div()
-            .w_full()
-            .p_8()
-            .flex()
-            .justify_center()
-            .text_sm()
-            .text_color(theme::text_muted(cx))
-            .child("Loading attribution…")
+            .v_flex()
+            .gap_6()
+            .child(
+                theme::card(cx)
+                    .w_full()
+                    .p_5()
+                    .v_flex()
+                    .gap_4()
+                    .child(Skeleton::new().w_40().h_4())
+                    .child(Skeleton::new().w_full().h(px(SANKEY_HEIGHT))),
+            )
+            .child(
+                theme::card(cx)
+                    .w_full()
+                    .p_5()
+                    .v_flex()
+                    .gap_3()
+                    .child(Skeleton::new().w_32().h_4())
+                    .children((0..5).map(|_| Skeleton::new().w_full().h_4())),
+            )
     }
 
     /// Compact banner shown above stale content when a background reload

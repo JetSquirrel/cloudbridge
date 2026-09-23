@@ -8,10 +8,14 @@
 // Consumed by the page agents as each redesigned page lands.
 #![allow(dead_code)]
 
+use std::time::Duration;
+
+use gpui_kit::component::animation::cubic_bezier;
 use gpui_kit::component::button::{Button, ButtonCustomVariant};
 use gpui_kit::component::{ActiveTheme, StyledExt, Theme, ThemeRegistry};
 use gpui_kit::{
-    div, rems, App, Div, FontWeight, Hsla, IntoElement, ParentElement, SharedString, Styled,
+    div, rems, Animation, App, Div, FontWeight, Hsla, IntoElement, ParentElement, SharedString,
+    Styled,
 };
 
 /// Name of the light theme in `themes/cloudbridge.json`.
@@ -96,6 +100,32 @@ pub fn accent(cx: &App) -> Hsla {
 /// Accent on hover.
 pub fn accent_hover(cx: &App) -> Hsla {
     cx.theme().primary_hover
+}
+
+/// A color with its lightness pulled down by `by`, clamped.
+fn deepened(color: Hsla, by: f32) -> Hsla {
+    Hsla {
+        l: (color.l - by).clamp(0.0, 1.0),
+        ..color
+    }
+}
+
+/// Accent while pressed: one step deeper than hover, so a held click reads
+/// as pressure rather than a second hover.
+pub fn accent_pressed(cx: &App) -> Hsla {
+    deepened(accent_hover(cx), 0.05)
+}
+
+/// Neutral surface while pressed (outline buttons, range pills, filter
+/// chips): one step deeper than the sidebar hover wash.
+pub fn surface_pressed(cx: &App) -> Hsla {
+    deepened(sidebar_bg(cx), 0.04)
+}
+
+/// The entrance every dialog shares: a 150ms ease-out fade with a slight
+/// rise, so no dialog can drift from the others.
+pub fn dialog_enter_animation() -> Animation {
+    Animation::new(Duration::from_millis(150)).with_easing(cubic_bezier(0.0, 0.0, 0.2, 1.0))
 }
 
 /// Text on the accent color.
@@ -194,7 +224,7 @@ pub fn outline_variant(cx: &App) -> ButtonCustomVariant {
         .color(card_bg(cx))
         .foreground(text_primary(cx))
         .hover(sidebar_bg(cx))
-        .active(sidebar_bg(cx))
+        .active(surface_pressed(cx))
 }
 
 /// The card border on a button that carries a custom variant.
@@ -251,7 +281,7 @@ pub fn accent_variant(cx: &App) -> ButtonCustomVariant {
         .color(accent(cx))
         .foreground(on_accent(cx))
         .hover(accent_hover(cx))
-        .active(accent_hover(cx))
+        .active(accent_pressed(cx))
 }
 
 /// Segmented-control pill: the active range reads as a raised chip, the
@@ -260,7 +290,7 @@ pub fn range_pill(cx: &App, active: bool) -> ButtonCustomVariant {
     let pill = ButtonCustomVariant::new(cx)
         .foreground(text_muted(cx))
         .hover(sidebar_bg(cx))
-        .active(sidebar_bg(cx));
+        .active(surface_pressed(cx));
     if active {
         pill.color(card_bg(cx)).foreground(text_primary(cx))
     } else {
@@ -300,10 +330,11 @@ pub fn section_title(cx: &App, text: &'static str) -> Div {
         .child(text)
 }
 
-/// Muted table header cell.
+/// Muted table header cell. Between xs (≈9.75px at the 13px base — too
+/// small to read as a column label) and sm: 0.85rem ≈ 11px.
 pub fn header_cell(cx: &App, text: impl Into<SharedString>) -> Div {
     div()
-        .text_xs()
+        .text_size(rems(0.85))
         .text_color(text_muted(cx))
         .child(text.into())
 }

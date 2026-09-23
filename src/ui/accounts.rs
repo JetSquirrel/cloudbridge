@@ -52,12 +52,17 @@ pub struct AccountsView {
     deleting_ids: HashSet<String>,
     /// Whether to show add dialog
     show_add_dialog: bool,
+    /// The account awaiting delete confirmation, if any.
+    pending_delete: Option<String>,
     /// Error message
     error: Option<String>,
     /// Success message
     success: Option<String>,
     /// Neutral in-progress message, shown while an action runs
     info: Option<String>,
+    /// Bumped whenever a banner is (re)assigned; an auto-fade timer only
+    /// clears the banners while its own generation is still current.
+    message_generation: u64,
     /// Focus anchor the add dialog tracks, so Escape reaches it
     dialog_focus: FocusHandle,
     /// Input field states
@@ -105,7 +110,7 @@ impl AccountsView {
             )]);
         });
 
-        let mut view = Self {
+        Self {
             accounts: Vec::new(),
             accounts_data: None,
             health: None,
@@ -115,10 +120,12 @@ impl AccountsView {
             importing_ids: HashSet::new(),
             deleting_ids: HashSet::new(),
             show_add_dialog: false,
+            pending_delete: None,
             fill_status: None,
             error: None,
             success: None,
             info: None,
+            message_generation: 0,
             dialog_focus: cx.focus_handle(),
             name_input,
             ak_input,
@@ -126,11 +133,18 @@ impl AccountsView {
             region_input,
             export_uri_input,
             selected_source: default_source,
-        };
+        }
+    }
 
-        view.load_accounts(cx);
-        view.load_data(cx);
-        view
+    /// Start the first load of the table and the configured-accounts list
+    /// if none has run. The app shell calls this on the page's first
+    /// visit, so construction — and window opening — stays cheap and the
+    /// hidden pages do not race the visible one for the ledger at startup.
+    pub fn ensure_loaded(&mut self, cx: &mut Context<Self>) {
+        if self.accounts_data.is_none() && !self.loading_data {
+            self.load_accounts(cx);
+            self.load_data(cx);
+        }
     }
 
     /// Load the configured-accounts list off the UI thread, like load_data
@@ -214,6 +228,7 @@ impl AccountsView {
         self.error = None;
         self.success = None;
         self.info = Some("Replaying normalization from the raw store...".to_string());
+        self.cancel_banner_fade();
         cx.notify();
 
         cx.spawn(async move |this, cx| {
@@ -234,6 +249,7 @@ impl AccountsView {
                             this.success = Some(message);
                             this.error = None;
                             this.info = None;
+                            this.schedule_banner_fade(cx);
                             this.load_data(cx);
                         }
                         Err(e) => {
@@ -344,6 +360,35 @@ impl AccountsView {
         cx.notify();
     }
 
+    /// Invalidate any pending auto-fade, so an earlier success's timer
+    /// cannot clear an in-progress banner. In-progress banners call this
+    /// instead of scheduling a fade: they stay up until the action reports.
+    fn cancel_banner_fade(&mut self) {
+        self.message_generation += 1;
+    }
+
+    /// Fade the success/info banners five seconds after they were set; a
+    /// banner reassigned in the meantime (newer generation) is left alone.
+    /// Error banners persist until the next action answers them.
+    fn schedule_banner_fade(&mut self, cx: &mut Context<Self>) {
+        self.cancel_banner_fade();
+        let generation = self.message_generation;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(5))
+                .await;
+            this.update(cx, |this, cx| {
+                if this.message_generation == generation {
+                    this.success = None;
+                    this.info = None;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn save_account(&mut self, cx: &mut Context<Self>) {
         if self.saving {
             return;
@@ -428,6 +473,7 @@ impl AccountsView {
                             this.error = None;
                             this.info = None;
                             this.show_add_dialog = false;
+                            this.schedule_banner_fade(cx);
                             this.load_accounts(cx);
                             this.load_data(cx);
                         }
@@ -466,6 +512,7 @@ impl AccountsView {
                         Ok(_) => {
                             this.success = Some("Account deleted".to_string());
                             this.info = None;
+                            this.schedule_banner_fade(cx);
                             this.load_accounts(cx);
                             this.load_data(cx);
                         }
@@ -480,6 +527,31 @@ impl AccountsView {
             });
         })
         .detach();
+    }
+
+    /// Ask before deleting: the confirmation dialog names the account and
+    /// what goes with it, so a stray click cannot remove credentials.
+    fn ask_delete_account(
+        &mut self,
+        account_id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_delete = Some(account_id);
+        self.dialog_focus.focus(window, cx);
+        cx.notify();
+    }
+
+    fn cancel_delete(&mut self, cx: &mut Context<Self>) {
+        self.pending_delete = None;
+        cx.notify();
+    }
+
+    fn confirm_delete(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.pending_delete.take() else {
+            return;
+        };
+        self.delete_account(&id, cx);
     }
 
     fn validate_account(&mut self, account: &CloudAccount, cx: &mut Context<Self>) {
@@ -519,6 +591,7 @@ impl AccountsView {
         self.info = Some(format!("Validating account {}...", account_name));
         self.error = None;
         self.success = None;
+        self.cancel_banner_fade();
         cx.notify();
 
         // Use standard thread to handle sync HTTP requests
@@ -564,6 +637,7 @@ impl AccountsView {
                                     account_name
                                 ));
                                 this.error = None;
+                                this.schedule_banner_fade(cx);
                             }
                             Ok(false) => {
                                 this.error =
@@ -634,6 +708,7 @@ impl AccountsView {
             format.display_name,
             format.extension_hint()
         ));
+        self.cancel_banner_fade();
         cx.notify();
 
         let account = account.clone();
@@ -867,8 +942,17 @@ impl AccountsView {
                     .v_flex()
                     .child(
                         div()
+                            .id(SharedString::from(format!("account-name-{}", row.id)))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme::accent(cx))
+                            // The drill-down affordance reads on hover: the
+                            // name deepens and underlines like a link.
+                            .hover(|style| {
+                                style
+                                    .text_color(theme::accent_hover(cx))
+                                    .text_decoration_1()
+                                    .text_decoration_color(theme::accent_hover(cx))
+                            })
                             .child(row.name.clone()),
                     )
                     // Absent for an account stored before the hint was
@@ -973,8 +1057,8 @@ impl AccountsView {
                             .ghost()
                             .small()
                             .disabled(self.deleting_ids.contains(&row.id))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.delete_account(&delete_id, cx);
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.ask_delete_account(delete_id.clone(), window, cx);
                             })),
                     ),
             )
@@ -1181,13 +1265,14 @@ impl AccountsView {
         .into_any_element()
     }
 
-    fn render_add_dialog(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_add_dialog(&self, cx: &Context<Self>) -> AnyElement {
         if !self.show_add_dialog {
-            return div().size_0();
+            return div().size_0().into_any_element();
         }
 
         // Dialog overlay
         div()
+            .id("add-account-scrim")
             .absolute()
             .top_0()
             .left_0()
@@ -1197,10 +1282,19 @@ impl AccountsView {
             .items_center()
             .justify_center()
             .bg(theme::scrim(cx))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.hide_add_dialog(cx);
+                }),
+            )
             .child(
                 // Dialog content
                 div()
                     .id("add-account-dialog")
+                    // occlude: clicks on the panel must not reach the
+                    // dismiss-on-click scrim behind it.
+                    .occlude()
                     .key_context(ACCOUNT_DIALOG_CONTEXT)
                     .track_focus(&self.dialog_focus)
                     .on_action(cx.listener(|this, _: &CloseAccountDialog, _, cx| {
@@ -1239,14 +1333,11 @@ impl AccountsView {
                                     .font_weight(FontWeight::BOLD)
                                     .child("Add Cloud Account"),
                             )
-                            .child(
-                                Button::new("close")
-                                    .label("×")
-                                    .ghost()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.hide_add_dialog(cx);
-                                    })),
-                            ),
+                            .child(Button::new("close").icon(IconName::Close).ghost().on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    this.hide_add_dialog(cx);
+                                }),
+                            )),
                     )
                     // The body scrolls so Save and Cancel below stay
                     // reachable however short the window is.
@@ -1411,8 +1502,136 @@ impl AccountsView {
                                         this.save_account(cx);
                                     })),
                             ),
+                    )
+                    .with_animation(
+                        "add-account-dialog-enter",
+                        theme::dialog_enter_animation(),
+                        |this, delta| this.opacity(delta).mt(px(10.0 * (1.0 - delta))),
                     ),
             )
+            .into_any_element()
+    }
+
+    /// The delete confirmation: names the account, says the keyring
+    /// credentials go with it, and that there is no undo. Modeled on the
+    /// rules page's delete dialog, scrim included.
+    fn render_delete_confirm(&self, cx: &Context<Self>) -> AnyElement {
+        let Some(id) = &self.pending_delete else {
+            return div().size_0().into_any_element();
+        };
+
+        let name = self
+            .accounts
+            .iter()
+            .find(|account| &account.id == id)
+            .map(|account| account.name.clone())
+            .unwrap_or_else(|| "this account".to_string());
+        let deleting = self.deleting_ids.contains(id);
+
+        div()
+            .id("delete-account-scrim")
+            .absolute()
+            .top_0()
+            .left_0()
+            .w_full()
+            .h_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(theme::scrim(cx))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.cancel_delete(cx);
+                }),
+            )
+            .child(
+                div()
+                    .id("delete-account-dialog")
+                    // occlude: clicks on the panel must not reach the
+                    // dismiss-on-click scrim behind it.
+                    .occlude()
+                    .key_context(ACCOUNT_DIALOG_CONTEXT)
+                    .track_focus(&self.dialog_focus)
+                    .on_action(cx.listener(|this, _: &CloseAccountDialog, _, cx| {
+                        this.cancel_delete(cx);
+                        cx.stop_propagation();
+                    }))
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                        if event.keystroke.key == "escape" {
+                            this.cancel_delete(cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .w_112()
+                    .p_6()
+                    .rounded_xl()
+                    .bg(theme::card_bg(cx))
+                    .border_1()
+                    .border_color(theme::card_border(cx))
+                    .text_color(theme::text_primary(cx))
+                    .shadow_lg()
+                    .v_flex()
+                    .gap_4()
+                    .child(
+                        div()
+                            .h_flex()
+                            .justify_between()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(FontWeight::BOLD)
+                                    .child("Delete account"),
+                            )
+                            .child(
+                                Button::new("close-delete-account")
+                                    .icon(IconName::Close)
+                                    .ghost()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.cancel_delete(cx);
+                                    })),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme::text_muted(cx))
+                            .child(format!(
+                                "Delete \"{name}\"? The account and its credentials in the OS \
+                                 keyring are removed. This cannot be undone."
+                            )),
+                    )
+                    .child(
+                        div()
+                            .h_flex()
+                            .gap_2()
+                            .justify_end()
+                            .child(
+                                Button::new("cancel-delete-account")
+                                    .label("Cancel")
+                                    .ghost()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.cancel_delete(cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("confirm-delete-account")
+                                    .label("Delete")
+                                    .danger()
+                                    .disabled(deleting)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.confirm_delete(cx);
+                                    })),
+                            ),
+                    )
+                    .with_animation(
+                        "delete-account-dialog-enter",
+                        theme::dialog_enter_animation(),
+                        |this, delta| this.opacity(delta).mt(px(10.0 * (1.0 - delta))),
+                    ),
+            )
+            .into_any_element()
     }
 
     fn render_messages(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -1470,6 +1689,7 @@ fn report(view: &WeakEntity<AccountsView>, cx: &mut AsyncApp, outcome: Result<St
                     view.success = Some(message);
                     view.error = None;
                     view.info = None;
+                    view.schedule_banner_fade(cx);
                     // The ledger moved, and the row shows a sync time.
                     view.load_accounts(cx);
                     view.load_data(cx);
@@ -1550,6 +1770,7 @@ impl Render for AccountsView {
                     .child(self.render_bottom_cards(cx)),
             )
             .child(self.render_add_dialog(cx))
+            .child(self.render_delete_confirm(cx))
     }
 }
 

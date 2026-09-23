@@ -1,5 +1,7 @@
 //! Main application module
 
+use std::collections::HashSet;
+
 use chrono::Utc;
 use gpui_kit::component::*;
 use gpui_kit::prelude::FluentBuilder;
@@ -12,6 +14,21 @@ use crate::ui::{
     settings::SettingsView,
 };
 use crate::ui::{fmt, theme};
+
+actions!(
+    cloudbridge,
+    [
+        SwitchToOverview,
+        SwitchToAlerts,
+        SwitchToAttribution,
+        SwitchToQuery,
+        SwitchToAccounts,
+        SwitchToRules,
+        SwitchToSettings,
+        SwitchToAccountDetail,
+        ReloadCurrentView,
+    ]
+);
 
 /// State shared across pages.
 ///
@@ -29,6 +46,9 @@ pub struct AppState {
     /// A page changed data the current view shows (demo data load/clear);
     /// the shell reloads the current page and status bar when set.
     reload_requested: bool,
+    /// The stores finished opening (desktop init, see desktop.rs); the
+    /// shell starts loading pages when this flips.
+    stores_opened: bool,
 }
 
 impl AppState {
@@ -38,6 +58,7 @@ impl AppState {
             sync: None,
             navigate_to: None,
             reload_requested: false,
+            stores_opened: false,
         }
     }
 
@@ -58,6 +79,12 @@ impl AppState {
     /// after a change they read has landed behind their backs.
     pub fn request_reload(&mut self, cx: &mut Context<Self>) {
         self.reload_requested = true;
+        cx.notify();
+    }
+
+    /// Tell the app shell the stores are open, so it can start loading.
+    pub fn mark_stores_opened(&mut self, cx: &mut Context<Self>) {
+        self.stores_opened = true;
         cx.notify();
     }
 }
@@ -84,6 +111,15 @@ pub fn navigate_to(view: CurrentView, cx: &mut App) {
 pub fn request_reload(cx: &mut App) {
     let app_state = cx.global::<GlobalAppState>().0.clone();
     app_state.update(cx, |state, cx| state.request_reload(cx));
+}
+
+/// Tell the app shell the desktop's stores finished opening; it then loads
+/// the page on screen and the status bar. Until this lands no page loads,
+/// since every read would fail with "not initialized".
+#[cfg(not(target_family = "wasm"))]
+pub fn stores_opened(cx: &mut App) {
+    let app_state = cx.global::<GlobalAppState>().0.clone();
+    app_state.update(cx, |state, cx| state.mark_stores_opened(cx));
 }
 
 /// Ask the app shell to open the Account detail page for an account.
@@ -114,11 +150,23 @@ pub struct CloudBridgeApp {
     rules_view: Entity<RulesView>,
     /// Settings view
     settings_view: Entity<SettingsView>,
-    /// Keeps the AppState observer alive.
+    /// Pages whose deferred first load has been kicked off; a first visit
+    /// loads, later visits reload.
+    activated_views: HashSet<CurrentView>,
+    /// Focus target for the shell's root element. Keystrokes dispatch from
+    /// the focused element up; with nothing focused inside the shell they
+    /// would stop at the window root and never reach the shortcut
+    /// listeners in `render`.
+    focus_handle: FocusHandle,
+    /// The stores are open and pages may load. The browser seeds its
+    /// ledger before the window opens, so it starts `true` there; the
+    /// desktop opens the window first and flips it when init finishes.
+    stores_ready: bool,
+    /// Keeps the AppState observer and the focus-lost fallback alive.
     _subscriptions: Vec<Subscription>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum CurrentView {
     #[default]
     Overview,
@@ -148,16 +196,49 @@ impl CloudBridgeApp {
         let rules_view = cx.new(|cx| RulesView::new(window, cx));
         let settings_view = cx.new(|cx| SettingsView::new(window, cx));
 
+        // Shell-wide shortcuts: ⌘1…⌘8 switch pages in sidebar order
+        // (⌘8 opens the Account drill-down with the account it last
+        // showed), ⌘R reloads the page on screen. `secondary` is ⌘ on macOS
+        // and Ctrl elsewhere — `cmd` would be the Windows key there, whose
+        // digit and R chords the OS keeps for itself. No key context, so
+        // they fire regardless of which page or input has focus; the action
+        // listeners sit on the shell's root element in `render`.
+        cx.bind_keys([
+            KeyBinding::new("secondary-1", SwitchToOverview, None),
+            KeyBinding::new("secondary-2", SwitchToAlerts, None),
+            KeyBinding::new("secondary-3", SwitchToAttribution, None),
+            KeyBinding::new("secondary-4", SwitchToQuery, None),
+            KeyBinding::new("secondary-5", SwitchToAccounts, None),
+            KeyBinding::new("secondary-6", SwitchToRules, None),
+            KeyBinding::new("secondary-7", SwitchToSettings, None),
+            KeyBinding::new("secondary-8", SwitchToAccountDetail, None),
+            KeyBinding::new("secondary-r", ReloadCurrentView, None),
+        ]);
+
+        // Start with focus on the shell, and take it back whenever the
+        // focused element leaves the tree — a page's dialog closing leaves
+        // focus on a handle nothing renders, which would strand the
+        // shortcuts at the window root.
+        let focus_handle = cx.focus_handle();
+        focus_handle.focus(window, cx);
+        let focus_lost = cx.on_focus_lost(window, |this, window, cx| {
+            this.focus_handle.focus(window, cx);
+        });
+
         // A page's navigation request lands on AppState::navigate_to; apply
         // it and clear it. The update in refresh_status_bar does not notify,
         // so this observer cannot loop.
         let observer = cx.observe(&app_state, |this, app_state, cx| {
-            let (target, reload) = app_state.update(cx, |state, _| {
+            let (target, reload, opened) = app_state.update(cx, |state, _| {
                 (
                     state.navigate_to.take(),
                     std::mem::take(&mut state.reload_requested),
+                    std::mem::take(&mut state.stores_opened),
                 )
             });
+            if opened {
+                this.stores_ready = true;
+            }
             if let Some((view, payload)) = target {
                 // The detail page's payload names the account before the
                 // switch, so the page never renders another account's data.
@@ -172,10 +253,8 @@ impl CloudBridgeApp {
                 }
                 cx.notify();
             }
-            if reload {
-                this.reload_view(this.current_view, cx);
-                this.refresh_status_bar(cx);
-                cx.notify();
+            if reload || opened {
+                this.reload_current(cx);
             }
         });
 
@@ -190,29 +269,93 @@ impl CloudBridgeApp {
             account_detail_view,
             rules_view,
             settings_view,
-            _subscriptions: vec![observer],
+            activated_views: HashSet::new(),
+            focus_handle,
+            stores_ready: cfg!(target_family = "wasm"),
+            _subscriptions: vec![observer, focus_lost],
         };
 
+        // The browser's stores are ready now, so the page on screen and
+        // the status bar load right away. On the desktop both calls no-op
+        // until `stores_opened` lands (see desktop.rs).
+        this.reload_view(this.current_view, cx);
         this.refresh_status_bar(cx);
+
         this
     }
 
     /// Reload the page data of `view`, called whenever the shell switches
     /// to it. Views are created once and kept alive, so without this a
     /// revisited page would show what it loaded at startup.
+    ///
+    /// A page's first load is deferred until its first visit, so the pages
+    /// that are not on screen at startup do not race the visible one for
+    /// the ledger. `ensure_loaded` and `reload` both no-op while a load is
+    /// in flight, so a revisit during the first load cannot double it.
     fn reload_view(&mut self, view: CurrentView, cx: &mut Context<Self>) {
+        // Before the stores open every read fails; the page stays unvisited
+        // so its first load runs once they are.
+        if !self.stores_ready {
+            return;
+        }
+        let first_visit = self.activated_views.insert(view);
         match view {
-            CurrentView::Overview => self.overview_view.update(cx, |v, cx| v.reload(cx)),
-            CurrentView::Alerts => self.alerts_view.update(cx, |v, cx| v.reload(cx)),
-            CurrentView::Attribution => self.attribution_view.update(cx, |v, cx| v.reload(cx)),
+            CurrentView::Overview => self.overview_view.update(cx, |v, cx| {
+                if first_visit {
+                    v.ensure_loaded(cx);
+                } else {
+                    v.reload(cx);
+                }
+            }),
+            CurrentView::Alerts => self.alerts_view.update(cx, |v, cx| {
+                if first_visit {
+                    v.ensure_loaded(cx);
+                } else {
+                    v.reload(cx);
+                }
+            }),
+            CurrentView::Attribution => self.attribution_view.update(cx, |v, cx| {
+                if first_visit {
+                    v.ensure_loaded(cx);
+                } else {
+                    v.reload(cx);
+                }
+            }),
             CurrentView::Query => self.query_view.update(cx, |v, cx| v.reload(cx)),
-            CurrentView::Accounts => self.accounts_view.update(cx, |v, cx| v.reload(cx)),
+            CurrentView::Accounts => self.accounts_view.update(cx, |v, cx| {
+                if first_visit {
+                    v.ensure_loaded(cx);
+                } else {
+                    v.reload(cx);
+                }
+            }),
             // show() already started a fresh load; reload() no-ops while
             // it is in flight.
             CurrentView::AccountDetail => self.account_detail_view.update(cx, |v, cx| v.reload(cx)),
-            CurrentView::Rules => self.rules_view.update(cx, |v, cx| v.reload(cx)),
+            CurrentView::Rules => self.rules_view.update(cx, |v, cx| {
+                if first_visit {
+                    v.ensure_loaded(cx);
+                } else {
+                    v.reload(cx);
+                }
+            }),
             CurrentView::Settings => {}
         }
+    }
+
+    /// Reload the page on screen and the status bar — the ⌘R handler and
+    /// the AppState `reload_requested` path share this.
+    fn reload_current(&mut self, cx: &mut Context<Self>) {
+        self.reload_view(self.current_view, cx);
+        self.refresh_status_bar(cx);
+        cx.notify();
+    }
+
+    /// Switch to `view` through AppState, the same path the sidebar's
+    /// click handlers take; the observer applies the switch.
+    fn switch_to(&mut self, view: CurrentView, cx: &mut Context<Self>) {
+        self.app_state
+            .update(cx, |state, cx| state.navigate(view, cx));
     }
 
     /// Reload the status bar's sync status and open-alert count.
@@ -221,6 +364,9 @@ impl CloudBridgeApp {
     /// `smol::unblock` and the result lands back on `AppState` — the same
     /// thread + unblock + spawn + notify pattern as `accounts.rs`.
     fn refresh_status_bar(&mut self, cx: &mut Context<Self>) {
+        if !self.stores_ready {
+            return;
+        }
         let app_state = self.app_state.clone();
 
         cx.spawn(async move |this, cx| {
@@ -380,8 +526,14 @@ impl CloudBridgeApp {
             .rounded(cx.theme().radius)
             .cursor_pointer()
             .text_color(text_color)
-            .when(is_active, |el| el.bg(theme::accent(cx)))
-            .when(!is_active, |el| el.hover(|s| s.bg(theme::card_bg(cx))))
+            .when(is_active, |el| {
+                el.bg(theme::accent(cx))
+                    .hover(|s| s.bg(theme::accent_hover(cx)))
+            })
+            .when(!is_active, |el| {
+                el.hover(|s| s.bg(theme::card_bg(cx)))
+                    .active(|s| s.bg(theme::card_border(cx)))
+            })
             .child(Icon::new(icon).size_4().text_color(text_color))
             .child(label);
 
@@ -446,11 +598,25 @@ impl CloudBridgeApp {
             )
     }
 
-    fn render_content(
-        &mut self,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_content(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Pages that read the stores have nothing to show until they open;
+        // Overview has its own skeleton for this, Settings needs no store.
+        if !self.stores_ready
+            && !matches!(
+                self.current_view,
+                CurrentView::Overview | CurrentView::Settings
+            )
+        {
+            return div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(theme::app_bg(cx))
+                .text_sm()
+                .text_color(theme::text_muted(cx))
+                .child("Opening the ledger…");
+        }
         match self.current_view {
             CurrentView::Overview => div().size_full().child(self.overview_view.clone()),
             CurrentView::Alerts => div().size_full().child(self.alerts_view.clone()),
@@ -468,6 +634,37 @@ impl Render for CloudBridgeApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
+            .track_focus(&self.focus_handle)
+            // The shell's root is an ancestor of every page in the
+            // dispatch tree, so these listeners see the shortcuts wherever
+            // focus sits inside it; the bindings are registered in `new`.
+            .on_action(cx.listener(|this, _: &SwitchToOverview, _, cx| {
+                this.switch_to(CurrentView::Overview, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SwitchToAlerts, _, cx| {
+                this.switch_to(CurrentView::Alerts, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SwitchToAttribution, _, cx| {
+                this.switch_to(CurrentView::Attribution, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SwitchToQuery, _, cx| {
+                this.switch_to(CurrentView::Query, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SwitchToAccounts, _, cx| {
+                this.switch_to(CurrentView::Accounts, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SwitchToRules, _, cx| {
+                this.switch_to(CurrentView::Rules, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SwitchToSettings, _, cx| {
+                this.switch_to(CurrentView::Settings, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SwitchToAccountDetail, _, cx| {
+                this.switch_to(CurrentView::AccountDetail, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ReloadCurrentView, _, cx| {
+                this.reload_current(cx);
+            }))
             .bg(theme::app_bg(cx))
             .text_color(theme::text_primary(cx))
             .h_flex()

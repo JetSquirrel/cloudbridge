@@ -1,6 +1,6 @@
 //! Overview View
 
-use gpui_kit::component::{button::*, scroll::ScrollableElement, *};
+use gpui_kit::component::{button::*, scroll::ScrollableElement, skeleton::Skeleton, *};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
@@ -23,6 +23,10 @@ pub struct OverviewView {
     /// When the view was created; backs the pre-load header caption so
     /// render output is deterministic given state.
     opened_at: chrono::DateTime<chrono::Utc>,
+    /// The reporting currency, read once at creation and refreshed from
+    /// every landed load; the pre-load header caption reads it here rather
+    /// than re-parsing the config file on every frame.
+    reporting_currency: String,
     /// Bumped by every load/refresh; only the latest flight may write its
     /// result, so an older load cannot clobber a newer refresh.
     generation: u64,
@@ -38,20 +42,29 @@ pub struct OverviewView {
 }
 
 impl OverviewView {
-    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut view = Self {
+    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
+        Self {
             range: Range::Mtd,
             data: None,
             loading: false,
             refreshing: false,
             error: None,
             opened_at: chrono::Utc::now(),
+            reporting_currency: data::reporting_currency(),
             generation: 0,
             chart_hover: chart::ChartHover::new(),
             quality_strip_dismissed: false,
-        };
-        view.load(cx);
-        view
+        }
+    }
+
+    /// Start the first load if none has run. The app shell calls this on
+    /// the page's first visit, so construction — and window opening —
+    /// stays cheap and the hidden pages do not race the visible one for
+    /// the ledger at startup.
+    pub fn ensure_loaded(&mut self, cx: &mut Context<Self>) {
+        if self.data.is_none() && !self.loading {
+            self.load(cx);
+        }
     }
 
     /// Reload the page data. Called by the app shell when this page is
@@ -84,6 +97,7 @@ impl OverviewView {
                 if this.generation == generation {
                     match result {
                         Ok(loaded) => {
+                            this.reporting_currency = loaded.currency.clone();
                             this.data = Some(loaded);
                             this.error = None;
                         }
@@ -137,6 +151,7 @@ impl OverviewView {
                 if this.generation == generation {
                     match result {
                         Ok((loaded, failures)) => {
+                            this.reporting_currency = loaded.currency.clone();
                             this.data = Some(loaded);
                             this.error = if failures.is_empty() {
                                 None
@@ -164,7 +179,7 @@ impl OverviewView {
             None => format!(
                 "{} · reported in {}",
                 self.range.header_caption(self.opened_at),
-                data::reporting_currency()
+                self.reporting_currency
             ),
         };
 
@@ -576,12 +591,10 @@ impl OverviewView {
 impl Render for OverviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body: AnyElement = match &self.data {
-            _ if self.loading && self.data.is_none() => div()
-                .w_full()
-                .text_sm()
-                .text_color(theme::text_muted(cx))
-                .child("Loading overview…")
-                .into_any_element(),
+            // Loading, or not started yet — the desktop holds the first
+            // load until its stores open. Only a failed load shows no body;
+            // its error sits under the header.
+            None if self.loading || self.error.is_none() => render_skeleton(cx).into_any_element(),
             None => div().into_any_element(),
             Some(d) if is_empty(d) => self.render_empty_state(cx).into_any_element(),
             Some(d) => div()
@@ -634,6 +647,63 @@ impl Render for OverviewView {
 /// window.
 fn is_empty(d: &data::OverviewData) -> bool {
     d.stats.spend == 0.0 && d.chart.actual.is_empty() && d.business_lines.is_empty()
+}
+
+/// First-load placeholder shaped like the loaded page — the four stat
+/// cards, then the chart card beside the "Where it went" card at their
+/// final paddings — so the landing content does not jump the layout.
+fn render_skeleton(cx: &App) -> impl IntoElement {
+    let stat = || {
+        theme::card(cx)
+            .flex_1()
+            .min_w_0()
+            .p_5()
+            .v_flex()
+            .gap_2()
+            .child(Skeleton::new().w_24().h_3())
+            .child(Skeleton::new().w_32().h_6())
+            .child(Skeleton::new().w_full().h_3())
+    };
+
+    div()
+        .v_flex()
+        .gap_6()
+        .child(
+            div()
+                .w_full()
+                .h_flex()
+                .items_stretch()
+                .gap_4()
+                .children((0..4).map(|_| stat())),
+        )
+        .child(
+            div()
+                .w_full()
+                .h_flex()
+                .items_stretch()
+                .gap_4()
+                .child(
+                    theme::card(cx)
+                        .flex_1()
+                        .min_w_0()
+                        .p_5()
+                        .v_flex()
+                        .gap_4()
+                        .child(Skeleton::new().w_40().h_4())
+                        // Matches the spend chart's rems(16.25) canvas.
+                        .child(Skeleton::new().w_full().h(rems(16.25))),
+                )
+                .child(
+                    theme::card(cx)
+                        .w_80()
+                        .flex_shrink_0()
+                        .p_5()
+                        .v_flex()
+                        .gap_4()
+                        .child(Skeleton::new().w_32().h_4())
+                        .children((0..4).map(|_| Skeleton::new().w_full().h_3())),
+                ),
+        )
 }
 
 /// Row of the four headline stat cards.

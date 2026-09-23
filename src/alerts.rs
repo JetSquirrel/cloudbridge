@@ -14,7 +14,7 @@
 use anyhow::Result;
 use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::analytics;
 use crate::cloud::BudgetInfo;
@@ -798,6 +798,20 @@ fn budget_breach_of(
     rule: &AlertRule,
     now: DateTime<Utc>,
 ) -> Result<Option<BudgetBreach>> {
+    let accounts = db::get_all_accounts_of(app)?;
+    budget_breach_with(app, ledger, rule, &accounts, now)
+}
+
+/// [`budget_breach_of`] against an accounts list the caller already read —
+/// staleness resolution checks every open budget event in one pass and must
+/// not re-read the accounts table for each.
+fn budget_breach_with(
+    app: &Connection,
+    ledger: &Connection,
+    rule: &AlertRule,
+    accounts: &[crate::cloud::CloudAccount],
+    now: DateTime<Utc>,
+) -> Result<Option<BudgetBreach>> {
     let Some(account_id) = config_str(rule, "account_id") else {
         return Ok(None);
     };
@@ -805,7 +819,6 @@ fn budget_breach_of(
     let Some(budget) = db::get_budget_of(app, &account_id)? else {
         return Ok(None);
     };
-    let accounts = db::get_all_accounts_of(app)?;
     let Some(account) = accounts.iter().find(|account| account.id == account_id) else {
         return Ok(None);
     };
@@ -943,6 +956,15 @@ pub(crate) fn resolve_stale_with(
     let rules = db::get_alert_rules_of(app)?;
     let open = db::get_alert_events_of(app, &[AlertStatus::Open])?;
 
+    // Reads shared by every open event of a kind, filled on first use: the
+    // period's untagged share, the anomaly window per account scope, and the
+    // accounts list the budget check matches against. Without these caches
+    // each event re-ran the full window scan behind its own check.
+    let mut untagged_share_now: Option<f64> = None;
+    let mut anomaly_windows: HashMap<Option<String>, Vec<query::ServiceDailyTotal>> =
+        HashMap::new();
+    let mut accounts: Option<Vec<crate::cloud::CloudAccount>> = None;
+
     let mut resolved = 0;
     for event in open {
         let Some(rule) = rules.iter().find(|rule| rule.id == event.rule_id) else {
@@ -965,13 +987,20 @@ pub(crate) fn resolve_stale_with(
             }
             RULE_UNTAGGED_RATIO => {
                 let threshold = config_f64(rule, "threshold", DEFAULT_UNTAGGED_THRESHOLD);
-                let current = crate::cloud::BillingPeriod::containing(now);
-                let share = untagged_share(&query::tag_breakdown_of(
-                    ledger,
-                    &current.label(),
-                    BUSINESS_LINE_TAG,
-                    None,
-                )?);
+                let share = match untagged_share_now {
+                    Some(share) => share,
+                    None => {
+                        let current = crate::cloud::BillingPeriod::containing(now);
+                        let share = untagged_share(&query::tag_breakdown_of(
+                            ledger,
+                            &current.label(),
+                            BUSINESS_LINE_TAG,
+                            None,
+                        )?);
+                        untagged_share_now = Some(share);
+                        share
+                    }
+                };
                 share <= threshold
             }
             RULE_COST_ANOMALY => {
@@ -988,13 +1017,21 @@ pub(crate) fn resolve_stale_with(
                             .and_then(|v| v.as_str())
                             .map(str::to_string)
                             .or_else(|| config_str(rule, "account_id"));
-                        let since = now - Duration::days(ANOMALY_WINDOW_DAYS);
-                        let rows = match account_id.as_deref() {
-                            Some(account) => daily_totals_for_account_of(ledger, account, since)?,
-                            None => query::daily_totals_by_service_of(ledger, since)?,
+                        let rows = match anomaly_windows.entry(account_id) {
+                            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                            std::collections::hash_map::Entry::Vacant(entry) => {
+                                let since = now - Duration::days(ANOMALY_WINDOW_DAYS);
+                                let rows = match entry.key().as_deref() {
+                                    Some(account) => {
+                                        daily_totals_for_account_of(ledger, account, since)?
+                                    }
+                                    None => query::daily_totals_by_service_of(ledger, since)?,
+                                };
+                                entry.insert(rows)
+                            }
                         };
                         let daily: BTreeMap<NaiveDate, f64> = rows
-                            .into_iter()
+                            .iter()
                             .filter(|row| row.provider == provider && row.service == service)
                             .filter_map(|row| {
                                 NaiveDate::parse_from_str(&row.day, "%Y-%m-%d")
@@ -1007,7 +1044,13 @@ pub(crate) fn resolve_stale_with(
                     _ => false,
                 }
             }
-            RULE_BUDGET => budget_breach_of(app, ledger, rule, now)?.is_none(),
+            RULE_BUDGET => {
+                if accounts.is_none() {
+                    accounts = Some(db::get_all_accounts_of(app)?);
+                }
+                let accounts = accounts.as_ref().expect("just populated");
+                budget_breach_with(app, ledger, rule, accounts, now)?.is_none()
+            }
             _ => false,
         };
 

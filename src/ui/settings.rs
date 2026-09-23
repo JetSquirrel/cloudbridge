@@ -49,6 +49,9 @@ pub struct SettingsView {
     config: AppConfig,
     /// Save status
     save_status: Option<StatusMessage>,
+    /// Bumped whenever the status is (re)assigned or cleared; an auto-fade
+    /// timer only clears the banner while its own generation is current.
+    status_generation: u64,
     /// A ledger rebuild / config write is running off the UI thread; the
     /// controls that would race it stay disabled until it lands.
     saving: bool,
@@ -106,6 +109,7 @@ impl SettingsView {
         Self {
             config,
             save_status: None,
+            status_generation: 0,
             saving: false,
             save_pending: false,
             demo_running: false,
@@ -123,6 +127,7 @@ impl SettingsView {
         // A new edit supersedes the last outcome; clear it so a stale
         // "Settings saved" doesn't drift beside unsaved changes.
         self.save_status = None;
+        self.status_generation += 1;
         theme::apply_theme_by_name(name, cx);
 
         if let Some(theme) = ThemeRegistry::global(cx).themes().get(name.as_str()) {
@@ -130,6 +135,29 @@ impl SettingsView {
             self.config.theme.name = Some(name.to_string());
             self.save_config(cx);
         }
+    }
+
+    /// Fade a success banner five seconds after it was set; a banner
+    /// reassigned in the meantime (newer generation) is left alone. Error
+    /// banners persist until the next action answers them.
+    fn schedule_status_fade(&mut self, cx: &mut Context<Self>) {
+        self.status_generation += 1;
+        let generation = self.status_generation;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(5))
+                .await;
+            this.update(cx, |this, cx| {
+                if this.status_generation == generation
+                    && matches!(this.save_status, Some(StatusMessage::Success(_)))
+                {
+                    this.save_status = None;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Change the currency every amount is shown in.
@@ -144,6 +172,7 @@ impl SettingsView {
             return;
         }
         self.save_status = None;
+        self.status_generation += 1;
         let previous = std::mem::replace(&mut self.config.reporting_currency, currency.to_string());
         self.saving = true;
         cx.notify();
@@ -179,6 +208,11 @@ impl SettingsView {
                         StatusMessage::Error(e)
                     }
                 });
+                if matches!(this.save_status, Some(StatusMessage::Success(_))) {
+                    this.schedule_status_fade(cx);
+                } else {
+                    this.status_generation += 1;
+                }
                 if this.save_pending {
                     this.save_pending = false;
                     this.save_config(cx);
@@ -198,6 +232,7 @@ impl SettingsView {
     /// request — which is why the default is a day.
     fn set_refresh_interval(&mut self, hours: u32, cx: &mut Context<Self>) {
         self.save_status = None;
+        self.status_generation += 1;
         self.config.refresh_interval_hours = hours;
         self.save_config(cx);
     }
@@ -224,6 +259,7 @@ impl SettingsView {
                 if let Err(e) = result {
                     tracing::error!("Failed to save settings: {}", e);
                     this.save_status = Some(StatusMessage::Error(format!("Save failed: {e}")));
+                    this.status_generation += 1;
                 }
                 if this.save_pending {
                     this.save_pending = false;
@@ -245,6 +281,7 @@ impl SettingsView {
         }
         self.demo_running = true;
         self.save_status = None;
+        self.status_generation += 1;
         cx.notify();
 
         cx.spawn(async move |this, cx| {
@@ -270,6 +307,11 @@ impl SettingsView {
                         StatusMessage::Error(format!("Demo data failed: {e}"))
                     }
                 });
+                if matches!(this.save_status, Some(StatusMessage::Success(_))) {
+                    this.schedule_status_fade(cx);
+                } else {
+                    this.status_generation += 1;
+                }
                 cx.notify();
             })
             .ok();

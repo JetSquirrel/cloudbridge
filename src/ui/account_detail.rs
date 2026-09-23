@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use chrono::Utc;
-use gpui_kit::component::{button::*, scroll::ScrollableElement, *};
+use gpui_kit::component::{button::*, scroll::ScrollableElement, skeleton::Skeleton, *};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
@@ -468,16 +468,7 @@ impl Render for AccountDetailView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body: AnyElement = match (&self.account_id, &self.data) {
             (None, _) => theme::caption(cx, "No account selected.").into_any_element(),
-            (Some(_), None) if self.loading => div()
-                .w_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .py_16()
-                .text_base()
-                .text_color(theme::text_muted(cx))
-                .child("Loading…")
-                .into_any_element(),
+            (Some(_), None) if self.loading => render_skeleton(cx).into_any_element(),
             (Some(_), None) => div().into_any_element(),
             (Some(_), Some(d)) => div()
                 .v_flex()
@@ -544,6 +535,54 @@ fn render_stats(d: &AccountDetailData, cx: &App) -> impl IntoElement {
                 .text_color(theme::text_muted(cx))
                 .child(d.change_caption),
         ))
+}
+
+/// First-load placeholder shaped like the loaded page — the two stat
+/// cards, the usage chart, and the service list at their final paddings —
+/// so the landing content does not jump the layout.
+fn render_skeleton(cx: &App) -> impl IntoElement {
+    let stat = || {
+        theme::card(cx)
+            .flex_1()
+            .min_w_0()
+            .p_5()
+            .v_flex()
+            .gap_2()
+            .child(Skeleton::new().w_24().h_3())
+            .child(Skeleton::new().w_32().h_6())
+            .child(Skeleton::new().w_full().h_3())
+    };
+
+    div()
+        .v_flex()
+        .gap_6()
+        .child(
+            div()
+                .w_full()
+                .h_flex()
+                .items_stretch()
+                .gap_4()
+                .children((0..2).map(|_| stat())),
+        )
+        .child(
+            theme::card(cx)
+                .w_full()
+                .p_5()
+                .v_flex()
+                .gap_4()
+                .child(Skeleton::new().w_32().h_4())
+                // Matches the usage chart's rems(16.25) canvas.
+                .child(Skeleton::new().w_full().h(rems(16.25))),
+        )
+        .child(
+            theme::card(cx)
+                .w_full()
+                .p_5()
+                .v_flex()
+                .gap_4()
+                .child(Skeleton::new().w_40().h_4())
+                .children((0..5).map(|_| Skeleton::new().w_full().h_4())),
+        )
 }
 
 /// One service row: name, amount, a share bar, and the change against the

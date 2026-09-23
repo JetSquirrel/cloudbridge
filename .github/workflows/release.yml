@@ -34,6 +34,36 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # A manual run builds the tag when it already exists, and otherwise
+      # the branch it was dispatched from — the release job then creates
+      # the tag there. The input is read through env, never pasted into the
+      # script, and may be given with or without the leading `v`.
+      - name: Check out the release tag and verify it matches Cargo.toml
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG="v${INPUT_VERSION#v}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Not a release version: $TAG" >&2
+            exit 1
+          fi
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] \
+            && git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            git fetch --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG"
+            git checkout --detach "$TAG"
+          fi
+          TAG_VERSION="${TAG#v}"
+          CARGO_VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "Tag version ($TAG_VERSION) does not match Cargo.toml version ($CARGO_VERSION)" >&2
+            exit 1
+          fi
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -163,9 +193,11 @@ jobs:
 
       - name: Determine version
         id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "version=v${INPUT_VERSION#v}" >> $GITHUB_OUTPUT
           else
             echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           fi

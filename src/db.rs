@@ -850,10 +850,29 @@ pub fn get_budget_status(account_id: &str) -> Result<Option<BudgetStatus>> {
         .find(|a| a.id == account_id)
         .ok_or_else(|| anyhow::anyhow!("Account not found"))?;
 
+    let alert_live = has_live_budget_alert(account_id)?;
+    budget_status_of(
+        &budget,
+        account,
+        BillingPeriod::containing(Utc::now()),
+        alert_live,
+    )
+    .map(Some)
+}
+
+/// The status of one budget against its account — the body of
+/// [`get_budget_status`], with the account row and the live-alert check
+/// taken as arguments so [`get_all_budget_statuses`] can read them once for
+/// the whole list.
+fn budget_status_of(
+    budget: &BudgetInfo,
+    account: &CloudAccount,
+    period: BillingPeriod,
+    alert_live: bool,
+) -> Result<BudgetStatus> {
     // What the ledger says has been charged this month, in the reporting
     // currency. Budgets are recorded in that same currency (the Rules page
     // writes them so), which is what makes the comparison meaningful.
-    let period = BillingPeriod::containing(Utc::now());
     let current_cost = query::period_total(&PeriodKey::new(
         account.source_id.as_str().to_string(),
         account.id.clone(),
@@ -871,19 +890,18 @@ pub fn get_budget_status(account_id: &str) -> Result<Option<BudgetStatus>> {
     // Mirrors the budget alert rules (crate::alerts, kind "budget"): a live
     // event means an evaluated rule fired for this account. The threshold
     // check keeps the badge honest before the first evaluation runs.
-    let alert_triggered =
-        has_live_budget_alert(account_id)? || percentage_used >= budget.alert_threshold;
+    let alert_triggered = alert_live || percentage_used >= budget.alert_threshold;
 
-    Ok(Some(BudgetStatus {
-        account_id: account_id.to_string(),
+    Ok(BudgetStatus {
+        account_id: budget.account_id.clone(),
         account_name: account.name.clone(),
         monthly_budget: budget.monthly_budget,
         current_cost,
-        currency: budget.currency,
+        currency: budget.currency.clone(),
         percentage_used,
         remaining,
         alert_triggered,
-    }))
+    })
 }
 
 /// Whether any open or snoozed budget-rule event names this account.
@@ -900,15 +918,47 @@ fn has_live_budget_alert(account_id: &str) -> Result<bool> {
     })
 }
 
+/// Accounts named by any open or snoozed budget-rule event — one read for
+/// the whole list, where [`has_live_budget_alert`] answers for one account.
+fn live_budget_alert_accounts() -> Result<HashSet<String>> {
+    with_connection(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT e.dedupe_key FROM alert_event e
+             JOIN alert_rule r ON r.id = e.rule_id
+             WHERE r.kind = 'budget' AND e.status IN ('open', 'snoozed')",
+        )?;
+        let keys = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        // The key is 'budget|<account_id>|<based>|<date>'.
+        Ok(keys
+            .into_iter()
+            .filter_map(|key| key.split('|').nth(1).map(str::to_string))
+            .collect())
+    })
+}
+
 /// Get all budget statuses
 pub fn get_all_budget_statuses() -> Result<Vec<BudgetStatus>> {
     let budgets = get_all_budgets()?;
-    let mut statuses = Vec::new();
+    // Read the accounts and the live budget alerts once for the whole list,
+    // not per budget through `get_budget_status`.
+    let accounts = get_all_accounts()?;
+    let alerted = live_budget_alert_accounts()?;
+    let period = BillingPeriod::containing(Utc::now());
 
+    let mut statuses = Vec::new();
     for budget in budgets {
-        if let Some(status) = get_budget_status(&budget.account_id)? {
-            statuses.push(status);
-        }
+        let account = accounts
+            .iter()
+            .find(|a| a.id == budget.account_id)
+            .ok_or_else(|| anyhow::anyhow!("Account not found"))?;
+        statuses.push(budget_status_of(
+            &budget,
+            account,
+            period,
+            alerted.contains(&budget.account_id),
+        )?);
     }
 
     Ok(statuses)

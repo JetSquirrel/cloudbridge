@@ -858,6 +858,24 @@ pub fn untagged_detail(
     })
 }
 
+/// Untagged usage of a period summed per provider, largest first — the
+/// aggregate form of [`untagged_detail`], for callers that need the
+/// per-provider sums and not the per-charge list.
+pub fn untagged_totals_by_provider(
+    billing_period: &str,
+    tag_key: &str,
+) -> Result<Vec<(String, f64)>> {
+    read(|all| {
+        let rows: Vec<&NormalizedRow> = all
+            .iter()
+            .filter(|row| row.billing_period == billing_period && untagged(row, tag_key))
+            .filter(|row| row.billed_cost_base.is_some_and(|amount| amount > 0.0))
+            .collect();
+
+        totals_by_bucket(&rows, |row| row.provider.clone())
+    })
+}
+
 /// Untagged usage of a period grouped by `(provider, service)`, largest first
 /// — the roll-up behind [`untagged_detail`]'s per-charge list, so three small
 /// charges of one service read as the one row the UI acts on.

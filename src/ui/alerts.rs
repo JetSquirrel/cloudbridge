@@ -1,6 +1,6 @@
 //! Alerts View — open alerts evaluated locally against the ledger after each ingest.
 
-use gpui_kit::component::{button::*, Disableable, Icon, IconName, StyledExt};
+use gpui_kit::component::{button::*, skeleton::Skeleton, Disableable, Icon, IconName, StyledExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
@@ -26,7 +26,7 @@ fn inactive_chip_variant(cx: &App) -> ButtonCustomVariant {
         .color(theme::card_bg(cx))
         .foreground(theme::text_muted(cx))
         .hover(theme::sidebar_bg(cx))
-        .active(theme::sidebar_bg(cx))
+        .active(theme::surface_pressed(cx))
 }
 
 /// The tinted circle at the left of an alert card.
@@ -117,15 +117,23 @@ pub struct AlertsView {
 }
 
 impl AlertsView {
-    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut view = Self {
+    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
+        Self {
             selected_filter: "All".to_string(),
             data: None,
             loading: false,
             error: None,
-        };
-        view.load(cx);
-        view
+        }
+    }
+
+    /// Start the first load if none has run. The app shell calls this on
+    /// the page's first visit, so construction — and window opening —
+    /// stays cheap and the hidden pages do not race the visible one for
+    /// the ledger at startup.
+    pub fn ensure_loaded(&mut self, cx: &mut Context<Self>) {
+        if self.data.is_none() && !self.loading {
+            self.load(cx);
+        }
     }
 
     fn select_filter(&mut self, label: String, cx: &mut Context<Self>) {
@@ -448,10 +456,34 @@ impl Render for AlertsView {
 
         let Some(data) = self.data.as_ref() else {
             let body: AnyElement = if self.loading {
+                // Skeleton shaped like the loaded list: alert cards at
+                // their final padding, so the first load does not jump.
                 div()
-                    .text_sm()
-                    .text_color(theme::text_muted(cx))
-                    .child("Loading alerts…")
+                    .v_flex()
+                    .gap_4()
+                    .children((0..3).map(|_| {
+                        theme::card(cx)
+                            .w_full()
+                            .p_5()
+                            .v_flex()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .h_flex()
+                                    .gap_4()
+                                    .items_center()
+                                    .child(Skeleton::new().size_12().rounded_full().flex_shrink_0())
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .v_flex()
+                                            .gap_2()
+                                            .child(Skeleton::new().w_48().h_4())
+                                            .child(Skeleton::new().w_full().h_3()),
+                                    ),
+                            )
+                            .child(Skeleton::new().w_full().h_3())
+                    }))
                     .into_any_element()
             } else if let Some(error) = self.error.clone() {
                 theme::card(cx)

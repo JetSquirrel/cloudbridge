@@ -297,6 +297,16 @@ pub fn untagged_detail(
     with_connection_ref(|conn| untagged_detail_of(conn, billing_period, tag_key, limit))
 }
 
+/// Untagged usage of a period summed per provider, largest first — the
+/// aggregate form of [`untagged_detail`], for callers that need the
+/// per-provider sums and not the per-charge list.
+pub fn untagged_totals_by_provider(
+    billing_period: &str,
+    tag_key: &str,
+) -> Result<Vec<(String, f64)>> {
+    with_connection_ref(|conn| untagged_totals_by_provider_of(conn, billing_period, tag_key))
+}
+
 /// A caller that wants "every row" passes `usize::MAX`, which wraps to -1
 /// as an i64 — and DuckDB refuses a negative LIMIT outright.
 fn bounded_limit(limit: usize) -> i64 {
@@ -651,6 +661,30 @@ fn untagged_detail_of(
                 })
             },
         )?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows)
+}
+
+fn untagged_totals_by_provider_of(
+    conn: &Connection,
+    billing_period: &str,
+    tag_key: &str,
+) -> Result<Vec<(String, f64)>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT provider, sum(billed_cost_base) AS amount
+         FROM {NORMALIZED_VIEW}
+         WHERE billing_period = ?
+           AND coalesce(nullif(json_extract_string(tags, ?), ''), '') = ''
+           AND billed_cost_base > 0
+         GROUP BY provider
+         ORDER BY amount DESC"
+    ))?;
+
+    let rows = stmt
+        .query_map(params![billing_period, tag_key], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(rows)
@@ -2543,6 +2577,31 @@ mod tests {
         // "Every row" as usize::MAX must not wrap to a negative LIMIT.
         let every = untagged_detail_of(&conn, "2026-08", "business_line", usize::MAX).unwrap();
         assert_eq!(every.len(), 3);
+    }
+
+    #[test]
+    fn untagged_totals_by_provider_sums_what_untagged_detail_lists() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                tagged_charge("VPC", 24.0, 1, None),
+                tagged_charge("S3", 17.0, 1, Some(r#"{"business_line":"etl"}"#)),
+                tagged_charge("EC2", 12.5, 1, None),
+                Charge {
+                    charge_category: ChargeCategory::Credit,
+                    ..tagged_charge("EC2", -9.0, 1, None)
+                },
+            ],
+        );
+        write(&mut conn, &aliyun(), &[tagged_charge("ECS", 30.0, 1, None)]);
+
+        let totals = untagged_totals_by_provider_of(&conn, "2026-08", "business_line").unwrap();
+        assert_eq!(
+            totals,
+            vec![("AWS".to_string(), 36.5), ("Aliyun".to_string(), 30.0)]
+        );
     }
 
     #[test]

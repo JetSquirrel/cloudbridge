@@ -1147,6 +1147,7 @@ pub fn load_accounts() -> Result<AccountsData> {
             &account,
             descriptor.is_snapshot(),
             &provider,
+            mtd,
             &open,
             &current,
             &mut untagged_by_provider,
@@ -1213,6 +1214,7 @@ fn account_state(
     account: &crate::cloud::CloudAccount,
     is_snapshot: bool,
     provider: &str,
+    mtd: f64,
     open: &[AlertView],
     current: &BillingPeriod,
     untagged_by_provider: &mut Option<BTreeMap<String, f64>>,
@@ -1235,11 +1237,11 @@ fn account_state(
         return Ok(AccountState::Anomaly);
     }
 
-    let key = ingest::period_key(account, current);
-    let total = query::period_total(&key)?;
-    if total > 0.0 {
+    // The month-to-date total comes from the caller, which already read it
+    // for the row's mtd column.
+    if mtd > 0.0 {
         if untagged_by_provider.is_none() {
-            *untagged_by_provider = Some(untagged_usage_by_provider(&key.billing_period)?);
+            *untagged_by_provider = Some(untagged_usage_by_provider(&current.label())?);
         }
         let untagged = untagged_by_provider
             .as_ref()
@@ -1247,7 +1249,7 @@ fn account_state(
             .get(provider)
             .copied()
             .unwrap_or(0.0);
-        if untagged / total > alerts::DEFAULT_UNTAGGED_THRESHOLD {
+        if untagged / mtd > alerts::DEFAULT_UNTAGGED_THRESHOLD {
             return Ok(AccountState::UntaggedSpend);
         }
     }
@@ -1256,14 +1258,14 @@ fn account_state(
 }
 
 /// Untagged usage of a period summed per provider — one period-wide
-/// `untagged_detail` pass, grouped here so the per-account badge check
-/// does not re-query for every account.
+/// aggregate query, grouped in SQL so the per-account badge check neither
+/// re-queries for every account nor materializes the per-charge list.
 fn untagged_usage_by_provider(billing_period: &str) -> Result<BTreeMap<String, f64>> {
-    let mut by_provider: BTreeMap<String, f64> = BTreeMap::new();
-    for charge in query::untagged_detail(billing_period, BUSINESS_LINE_TAG, usize::MAX)? {
-        *by_provider.entry(charge.provider).or_insert(0.0) += charge.amount;
-    }
-    Ok(by_provider)
+    Ok(
+        query::untagged_totals_by_provider(billing_period, BUSINESS_LINE_TAG)?
+            .into_iter()
+            .collect(),
+    )
 }
 
 // ==================== Attribution ====================
