@@ -43,16 +43,24 @@ stays where it is.
 
 ### Steps
 
-1. **Check disk space.** A release build of this project needs roughly 10 GB
-   beyond what the machine already uses:
+1. **Check disk space.** Not only for a release: `target/` reaches 14 GB on
+   an ordinary full build — 11 GB for the desktop debug build and its tests,
+   3.3 GB for the wasm demo (measured 2026-09-24, with duckdb's bundled
+   `json` and `parquet` extensions). A release build is on top of that.
 
    ```bash
    df -h /System/Volumes/Data   # want > 15Gi available
    ```
 
-   The usual culprits are this and sibling Rust projects' `target/`
-   directories. On a full disk the failure is not a clean "out of space" —
-   `libduckdb-sys` dies inside `ar cq` with no explanation.
+   9 GiB free is **not** enough: a cold `cargo test` from that gets most of
+   the way through duckdb and then dies. The usual culprits are this and
+   sibling Rust projects' `target/` directories — `cargo clean` in one of
+   those is usually the fastest 20 GB you will find.
+
+   On a full disk the failure is not a clean "out of space" —
+   `libduckdb-sys` dies inside `ar cq` with no explanation beyond
+   `errno=28`, and a build that gets further reports "failed to link or
+   copy" on the final artifact. Both mean the disk, not the code.
 
 2. **Build from a worktree of the tag, never from the working tree.** The
    maintainer usually has uncommitted work, and it must not end up in a
