@@ -115,10 +115,12 @@ pub fn spend_area_chart(
                 }
             }
 
-            // Actual spend: translucent accent fill under the line.
+            // Actual spend: translucent accent fill under the line, one
+            // closed shape from the bottom edge up to the curve and back.
             if actual.len() >= 2 {
                 let mut fill = PathBuilder::fill();
                 fill.move_to(point(px(actual[0].0), px(bottom)));
+                fill.line_to(point(px(actual[0].0), px(actual[0].1)));
                 trace_smooth(&mut fill, &actual);
                 fill.line_to(point(px(actual[actual.len() - 1].0), px(bottom)));
                 fill.close();
@@ -131,6 +133,7 @@ pub fn spend_area_chart(
             if baseline.len() >= 2 {
                 let mut dashed = PathBuilder::stroke(rems(0.09375).to_pixels(rem))
                     .dash_array(&[px(4.0), px(4.0)]);
+                dashed.move_to(point(px(baseline[0].0), px(baseline[0].1)));
                 trace_smooth(&mut dashed, &baseline);
                 if let Ok(path) = dashed.build() {
                     window.paint_path(path, baseline_color);
@@ -140,6 +143,7 @@ pub fn spend_area_chart(
             // Actual spend: solid accent line.
             if actual.len() >= 2 {
                 let mut line = PathBuilder::stroke(rems(0.125).to_pixels(rem));
+                line.move_to(point(px(actual[0].0), px(actual[0].1)));
                 trace_smooth(&mut line, &actual);
                 if let Ok(path) = line.build() {
                     window.paint_path(path, line_color);
@@ -151,35 +155,68 @@ pub fn spend_area_chart(
     .h(height)
 }
 
-/// Append a Catmull-Rom-smoothed polyline through `points` to the path.
+/// Append a Catmull-Rom-smoothed curve through `points` to the path, which
+/// must already be at `points[0]`.
+///
+/// It moves nowhere itself: a `move_to` here would start a new subpath, and
+/// the area fill, which reaches `points[0]` from the chart's bottom edge,
+/// would then close back to `points[0]` instead of to that edge.
 fn trace_smooth(path: &mut PathBuilder, points: &[(f32, f32)]) {
-    if points.len() < 2 {
-        return;
+    for segment in smooth_segments(points) {
+        path.cubic_bezier_to(
+            point(px(segment.to.0), px(segment.to.1)),
+            point(px(segment.control_a.0), px(segment.control_a.1)),
+            point(px(segment.control_b.0), px(segment.control_b.1)),
+        );
     }
+}
 
+/// One cubic segment of a smoothed curve, from the previous segment's `to`
+/// (or the curve's first point) to `to`.
+#[derive(Debug, Clone, Copy)]
+struct Segment {
+    to: (f32, f32),
+    control_a: (f32, f32),
+    control_b: (f32, f32),
+}
+
+/// The cubic segments of a Catmull-Rom curve through `points`.
+///
+/// Each segment's control points stay within the vertical span of its own
+/// two ends. Plain Catmull-Rom overshoots beside a spike, which on a spend
+/// chart draws days below zero, or below both neighbours, that no data says
+/// happened.
+fn smooth_segments(points: &[(f32, f32)]) -> Vec<Segment> {
+    if points.len() < 2 {
+        return Vec::new();
+    }
     let clamped = |j: isize| -> (f32, f32) {
         let j = j.clamp(0, points.len() as isize - 1);
         points[j as usize]
     };
 
-    path.move_to(point(px(points[0].0), px(points[0].1)));
-    for i in 1..points.len() {
-        let p_prev = clamped(i as isize - 2);
-        let p_from = points[i - 1];
-        let p_to = points[i];
-        let p_next = clamped(i as isize + 1);
-        path.cubic_bezier_to(
-            point(px(p_to.0), px(p_to.1)),
-            point(
-                px(p_from.0 + (p_to.0 - p_prev.0) / 6.0),
-                px(p_from.1 + (p_to.1 - p_prev.1) / 6.0),
-            ),
-            point(
-                px(p_to.0 - (p_next.0 - p_from.0) / 6.0),
-                px(p_to.1 - (p_next.1 - p_from.1) / 6.0),
-            ),
-        );
-    }
+    (1..points.len())
+        .map(|i| {
+            let p_prev = clamped(i as isize - 2);
+            let p_from = points[i - 1];
+            let p_to = points[i];
+            let p_next = clamped(i as isize + 1);
+            let (low, high) = (p_from.1.min(p_to.1), p_from.1.max(p_to.1));
+            let control_a = (
+                p_from.0 + (p_to.0 - p_prev.0) / 6.0,
+                (p_from.1 + (p_to.1 - p_prev.1) / 6.0).clamp(low, high),
+            );
+            let control_b = (
+                p_to.0 - (p_next.0 - p_from.0) / 6.0,
+                (p_to.1 - (p_next.1 - p_from.1) / 6.0).clamp(low, high),
+            );
+            Segment {
+                to: p_to,
+                control_a,
+                control_b,
+            }
+        })
+        .collect()
 }
 
 // ==================== Hover interactivity ====================
@@ -861,7 +898,9 @@ mod tests {
     // Explicit imports only: a `use super::*` glob re-pulls `gpui_kit::*`
     // into the test expansion and tips the crate over the default macro
     // recursion limit.
-    use super::{heat_color, heat_t, mix_color, squarify, text_on, top_tiles, TreemapItem};
+    use super::{
+        heat_color, heat_t, mix_color, smooth_segments, squarify, text_on, top_tiles, TreemapItem,
+    };
     use gpui_kit::{Hsla, Rgba};
 
     fn approx(a: f32, b: f32) -> bool {
@@ -878,6 +917,32 @@ mod tests {
             && b[1] + EPS < a[1] + a[3]
     }
 
+    /// Beside a spike, plain Catmull-Rom pulls the curve below the zero
+    /// days around it. Every control point stays within its segment's ends.
+    #[test]
+    fn a_spike_does_not_drag_the_curve_past_its_neighbours() {
+        // Screen space: y grows downwards, so 100.0 is the zero line.
+        let points = [
+            (0.0, 100.0),
+            (10.0, 100.0),
+            (20.0, 10.0),
+            (30.0, 100.0),
+            (40.0, 100.0),
+        ];
+        for (segment, ends) in smooth_segments(&points).iter().zip(points.windows(2)) {
+            let (from, to) = (ends[0], ends[1]);
+            let (low, high) = (from.1.min(to.1), from.1.max(to.1));
+            for control in [segment.control_a, segment.control_b] {
+                assert!(
+                    (low..=high).contains(&control.1),
+                    "segment {from:?}->{to:?} has a control point at y {}",
+                    control.1
+                );
+            }
+        }
+        assert_eq!(smooth_segments(&points).len(), points.len() - 1);
+        assert!(smooth_segments(&points[..1]).is_empty());
+    }
     #[test]
     fn squarify_handles_degenerate_input() {
         assert!(squarify(&[], 100.0, 100.0).is_empty());
