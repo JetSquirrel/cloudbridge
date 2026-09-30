@@ -10,12 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **AWS Data Exports (FOCUS 1.2) straight from S3.** An AWS account can
   carry the `s3://bucket/prefix` URI of its CUR 2.0 "FOCUS 1.2 with AWS
-  columns" export; refresh then reads the Parquet objects from the bucket
-  — resource-level rows with tags, and no per-request Cost Explorer cost.
+  columns" export; refresh then reads the export's objects from the bucket,
+  Parquet or gzipped CSV as the export was configured — resource-level
+  rows with tags, and no per-request Cost Explorer cost. Only the files
+  the period's export manifest names are read, so an export set to
+  "create new", which keeps every refresh, still counts a month once.
   Accounts without a URI keep the Cost Explorer channel. A period the
   export has not delivered yet is skipped, never written as an empty
   month, and the downloaded objects live in the raw store so
-  normalization replays offline.
+  normalization replays offline. Each row keeps the linked account it
+  was billed under (`SubAccountId` / `SubAccountName`), so a payer's
+  consolidated export can be told apart by member account.
 - Account form: optional "Data export S3 URI" field for AWS accounts.
 - **CloudBridge in a browser.** The same crate now builds for wasm32 as a
   demo: the pages, the view models and the alerting rules are the desktop's
@@ -58,6 +63,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   applies shows again next period
 
 ### Changed
+- **Deleting an account asks about its billing history.** The delete
+  dialog offers "Also delete its billing history", off by default, and says
+  what happens either way: kept history still counts in every total. It
+  used to be kept silently — the account row and its keyring credentials
+  went, its charges and raw payloads stayed and went on counting in totals
+  with no account left on the Accounts page to explain them. History an
+  earlier delete left behind is listed on the Accounts page under "Billing
+  history from deleted accounts", with its months, charge count and usage,
+  and can be deleted from there.
 - The statistics every backend has to agree on — the run-rate forecast, its
   confidence bands, the period-over-period comparison, the cost-change
   decomposition, the trailing daily average, balance burn and the

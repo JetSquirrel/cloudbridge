@@ -26,9 +26,9 @@ use crate::store::Connection;
 
 pub use crate::model::{
     AdhocResult, Balance, BreakdownDim, CategoryDelta, CostChangeDecomposition, DailyTotal,
-    DataQualityIssue, DataQualityKind, ForecastBands, IssueSeverity, MovementKind, PeriodForecast,
-    PeriodOverPeriod, ServiceDailyTotal, ServiceMovement, ServiceTagUsage, TopResource,
-    UntaggedCharge, UntaggedServiceUsage,
+    DataQualityIssue, DataQualityKind, ForecastBands, IssueSeverity, LedgerAccount, MovementKind,
+    PeriodForecast, PeriodOverPeriod, ServiceDailyTotal, ServiceMovement, ServiceTagUsage,
+    TopResource, UntaggedCharge, UntaggedServiceUsage,
 };
 
 /// The bucket a charge with no value for the tag key lands in, as the view's
@@ -996,6 +996,51 @@ pub fn last_ingests() -> Result<Vec<(String, String, DateTime<Utc>)>> {
             .into_iter()
             .map(|((provider, account_id), at)| (provider, account_id, at))
             .collect())
+    })
+}
+
+/// Every account the ledger holds anything for, charges or balances,
+/// whether or not an account row still names it.
+pub fn ledger_accounts() -> Result<Vec<LedgerAccount>> {
+    memory::with_store(|store| {
+        let mut accounts: BTreeMap<(String, String), LedgerAccount> = BTreeMap::new();
+        let mut hold = |provider: &str, account_id: &str| {
+            accounts
+                .entry((provider.to_string(), account_id.to_string()))
+                .or_insert_with(|| LedgerAccount {
+                    provider: provider.to_string(),
+                    account_id: account_id.to_string(),
+                    first_period: None,
+                    last_period: None,
+                    charges: 0,
+                    usage_cost: 0.0,
+                });
+        };
+        for period in store.periods.borrow().iter() {
+            hold(&period.key.provider, &period.key.account_id);
+        }
+        for balance in store.balances.borrow().iter() {
+            hold(&balance.provider, &balance.account_id);
+        }
+
+        for row in memory::normalized(store) {
+            let account = accounts
+                .get_mut(&(row.provider.clone(), row.account_id.clone()))
+                .expect("every row's period was held above");
+            account.charges += 1;
+            if row.charge_category == ChargeCategory::Usage {
+                account.usage_cost += row.billed_cost_base.unwrap_or(0.0);
+            }
+            let period = Some(row.billing_period.clone());
+            if account.first_period.is_none() || period < account.first_period {
+                account.first_period = period.clone();
+            }
+            if period > account.last_period {
+                account.last_period = period;
+            }
+        }
+
+        Ok(accounts.into_values().collect())
     })
 }
 

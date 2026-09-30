@@ -89,6 +89,25 @@ pub fn replace_period(
     Ok(())
 }
 
+/// Remove everything the ledger holds for one account. Returns how many
+/// charges went.
+pub fn delete_account_history(account_id: &str) -> Result<usize> {
+    memory::with_store(|store| {
+        let mut periods = store.periods.borrow_mut();
+        let charges = periods
+            .iter()
+            .filter(|period| period.key.account_id == account_id)
+            .map(|period| period.charges.len())
+            .sum();
+        periods.retain(|period| period.key.account_id != account_id);
+        store
+            .balances
+            .borrow_mut()
+            .retain(|balance| balance.account_id != account_id);
+        Ok(charges)
+    })
+}
+
 /// Record a balance observation.
 ///
 /// Re-observing the same instant overwrites, as the desktop's primary key on

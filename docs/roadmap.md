@@ -294,8 +294,10 @@ normalizes, and nothing else.
 - **Bill export collection (S3 / OSS + Parquet) — AWS landed in the
   working tree, unreleased.** An AWS account can point at its Data Exports
   (CUR 2.0, FOCUS 1.2 with AWS columns) bucket using an
-  `s3://bucket/prefix` URI. Refresh reads resource-level Parquet rows with
-  tags rather than calling Cost Explorer. This avoids Cost Explorer
+  `s3://bucket/prefix` URI. Refresh reads resource-level rows with tags —
+  Parquet or gzipped CSV, as the export was configured — rather than
+  calling Cost Explorer. Each row keeps its linked account
+  (`SubAccountId`). This avoids Cost Explorer
   request charges; S3 storage and request fees still apply, with other AWS
   charges possible depending on the bucket configuration. Downloaded
   objects are retained in the raw store for offline normalization. Accounts
@@ -344,6 +346,84 @@ A desktop app cannot alert while it is closed. Budget alerts are scoped as
 we will not promise real-time alerting in the README. As landed, rules are
 evaluated on open and after each refresh, opening the Alerts page re-checks
 whether open alerts have resolved, and the docs say so.
+
+## Next — resources and the relationships between them
+
+The bill already names resources: on a real FOCUS export, 98% of usage
+cost carries a `ResourceId`, mostly an ARN (S3, Lambda, KMS, DynamoDB),
+bare for EC2 volumes and some bucket rows. Per-resource cost therefore
+needs no inventory at all — it is a read of `fct_charge` — and ships first.
+What an inventory adds is what the bill cannot say: which resource belongs
+to which, and which ones nothing uses any more.
+
+- **Resource inventory from corkscrew, optional.** [corkscrew][corkscrew]
+  (MIT) scans AWS, Azure, GCP and Kubernetes into DuckDB, keeping every
+  scan as `resource_observations` and `relationship_observations`. It is an
+  external tool the user installs, not something the app bundles or
+  downloads:
+  - Bundling means signing, hardening and notarizing two Go executables of
+    roughly 120 MB between them inside our `.app`; downloading an
+    executable at runtime runs into quarantine. Detect `corkscrew` on
+    `PATH` or at a path set in Settings, and without it the pages that use
+    an inventory say so.
+  - The app runs `corkscrew scan --database <a path of ours>` with the
+    account's keyring credentials passed as `AWS_ACCESS_KEY_ID` /
+    `AWS_SECRET_ACCESS_KEY` in the child's environment, never on its
+    command line. Scanning needs read access well beyond billing (Cloud
+    Control, Resource Explorer, each service's Describe/List), so it gets
+    its own template in `docs/policies.md`, and it is off until the user
+    turns it on per account: it runs third-party code with cloud
+    credentials.
+  - The contract is two tables, not corkscrew's database. The scan is
+    copied into `dim_resource` and `dim_resource_edge` in the ledger,
+    stamped with the scan id and time, and nothing reads corkscrew's file
+    afterwards. corkscrew writes with DuckDB 1.5 while the app links 1.4,
+    and its schema is its own to change; a copy through a narrow read
+    keeps either from breaking a page.
+  - Matching a bill row to a resource normalizes both sides to the
+    resource's own id: corkscrew records an ARN when Resource Explorer
+    found the resource and a Cloud Control identifier (often a bare name)
+    when it did not, and its `arn` column falls back to that identifier.
+    The key is `(sub_account_id, region, service, id)`; a name alone is
+    only unique within an account and a service.
+  - *Measured* (2026-09 bill of one account, `scripts/match-inventory.sql`):
+    99.9% of the usage cost that carries a `ResourceId` matched a scanned
+    resource — 97.0% exactly, 2.9% after last-segment normalization, with
+    no ambiguous matches; the rest was EC2 deleted before the scan. That
+    took three corkscrew fixes first ([jlgore/corkscrew#22][corkscrew-pr]:
+    each requested region scanned rather than the first one three times,
+    Resource Explorer's type kept, a resource kept when `GetResource`
+    fails). Before them the same scan matched 59.6%, or stored nothing.
+  - *Not yet usable for relationships.* corkscrew calls `GetResource` with
+    the ARN as identifier, which most Cloud Control types reject, so on
+    the Resource Explorer path no resource gets its configuration and
+    `relationship_observations` stays empty. The relationship questions
+    below wait on that, or on deriving edges from each type's properties
+    here.
+  - The web demo seeds an inventory from `demo_data.rs`, so the pages keep
+    compiling and rendering for wasm32.
+- **Relationship questions, not a topology picture.** Computed in
+  `analytics.rs` from the two tables, and shared by both targets:
+  - *Cost rolled up along ownership* — a volume's cost counted to the
+    instance it is attached to, and on to the group or business line that
+    owns that. This is how the Unallocated share comes down without asking
+    the user to tag everything.
+  - *Orphans that still cost money* — unattached volumes, snapshots of
+    deleted volumes, idle addresses: resources nothing references,
+    ranked by what they cost this period.
+  - *Resource-level change attribution* — the level P2's anomaly
+    detection still owes.
+- **The graph view** draws the neighbourhood of a selected resource or
+  service, sized by cost, in GPUI the way the Sankey is drawn, with a
+  layout written in plain Rust. Traversal is a recursive CTE or `petgraph`
+  over a few thousand nodes at most. **Not DuckPGQ:** it is a loadable
+  extension, which hardened-runtime library validation refuses to map for
+  the same reason `json` and `parquet` are compiled in; it patches DuckDB's
+  parser, so it lags every DuckDB release; and it does not exist for
+  wasm32.
+
+[corkscrew]: https://github.com/jlgore/corkscrew
+[corkscrew-pr]: https://github.com/jlgore/corkscrew/pull/22
 
 ## P3
 

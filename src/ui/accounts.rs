@@ -3,6 +3,7 @@
 use chrono::Utc;
 use gpui_kit::component::{
     button::*,
+    checkbox::Checkbox,
     input::{Input, InputState},
     scroll::ScrollableElement,
     *,
@@ -22,6 +23,16 @@ use crate::ui::theme::CardOutline as _;
 use super::{data, fmt, theme};
 
 actions!(accounts, [CloseAccountDialog]);
+
+/// What the delete dialog is asking about.
+#[derive(Debug, Clone, PartialEq)]
+enum PendingDelete {
+    /// A configured account, by id; its history goes only if the dialog's
+    /// checkbox says so.
+    Account(String),
+    /// The billing history of an account that no longer exists, by id.
+    History(String),
+}
 
 /// Key context for the add-account dialog, so Escape closes it.
 const ACCOUNT_DIALOG_CONTEXT: &str = "AccountDialog";
@@ -86,8 +97,11 @@ pub struct AccountsView {
     /// The add dialog's own form error, kept apart from the page banner so
     /// neither leaks into the other.
     dialog_error: Option<String>,
-    /// The account awaiting delete confirmation, if any.
-    pending_delete: Option<String>,
+    /// What awaits delete confirmation, if anything.
+    pending_delete: Option<PendingDelete>,
+    /// The delete dialog's "also delete its billing history" choice. Off
+    /// each time the dialog opens: removing history is never the default.
+    delete_history: bool,
     /// Error message
     error: Option<String>,
     /// Success message
@@ -157,6 +171,7 @@ impl AccountsView {
             open_add_dialog_requested: false,
             dialog_error: None,
             pending_delete: None,
+            delete_history: false,
             fill_status: None,
             error: None,
             success: None,
@@ -613,7 +628,10 @@ impl AccountsView {
         .detach();
     }
 
-    fn delete_account(&mut self, account_id: &str, cx: &mut Context<Self>) {
+    /// Delete an account, and with `with_history` its billing history
+    /// first: were the account row to go and the history fail, the history
+    /// would be left with nothing on this page to delete it from.
+    fn delete_account(&mut self, account_id: &str, with_history: bool, cx: &mut Context<Self>) {
         // One delete per account at a time: the row's button is disabled
         // while this is in flight.
         let account_id = account_id.to_string();
@@ -624,26 +642,35 @@ impl AccountsView {
 
         cx.spawn(async move |this, cx| {
             let id = account_id.clone();
-            let outcome = smol::unblock(move || db::delete_account(&id))
-                .await
-                .map_err(|e| e.to_string());
+            let outcome = smol::unblock(move || {
+                if with_history {
+                    data::delete_account_history(&id)?;
+                }
+                db::delete_account(&id)
+            })
+            .await
+            .map_err(|e| e.to_string());
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
                     this.deleting_ids.remove(&account_id);
                     match outcome {
                         Ok(_) => {
-                            this.success = Some("Account deleted".to_string());
+                            this.success = Some(if with_history {
+                                "Account and its billing history deleted".to_string()
+                            } else {
+                                "Account deleted".to_string()
+                            });
                             this.info = None;
                             this.schedule_banner_fade(cx);
-                            this.load_accounts(cx);
-                            this.load_data(cx);
                         }
                         Err(e) => {
                             this.error = Some(format!("Delete failed: {}", e));
                             this.info = None;
                         }
                     }
+                    // Totals and the status bar's source count moved.
+                    crate::app::request_reload(cx);
                     cx.notify();
                 })
                 .ok();
@@ -652,15 +679,49 @@ impl AccountsView {
         .detach();
     }
 
-    /// Ask before deleting: the confirmation dialog names the account and
-    /// what goes with it, so a stray click cannot remove credentials.
-    fn ask_delete_account(
-        &mut self,
-        account_id: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.pending_delete = Some(account_id);
+    /// Delete the billing history an earlier account delete left behind.
+    fn delete_orphaned_history(&mut self, account_id: &str, cx: &mut Context<Self>) {
+        let account_id = account_id.to_string();
+        if !self.deleting_ids.insert(account_id.clone()) {
+            return;
+        }
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let id = account_id.clone();
+            let outcome = smol::unblock(move || data::delete_account_history(&id))
+                .await
+                .map_err(|e| e.to_string());
+
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.deleting_ids.remove(&account_id);
+                    match outcome {
+                        Ok(charges) => {
+                            this.success =
+                                Some(format!("Deleted {} charge(s) of billing history", charges));
+                            this.info = None;
+                            this.schedule_banner_fade(cx);
+                        }
+                        Err(e) => {
+                            this.error = Some(format!("Couldn't delete the history: {}", e));
+                            this.info = None;
+                        }
+                    }
+                    crate::app::request_reload(cx);
+                    cx.notify();
+                })
+                .ok();
+            });
+        })
+        .detach();
+    }
+
+    /// Ask before deleting: the confirmation dialog names what goes and
+    /// that there is no undo, so a stray click cannot remove anything.
+    fn ask_delete(&mut self, pending: PendingDelete, window: &mut Window, cx: &mut Context<Self>) {
+        self.pending_delete = Some(pending);
+        self.delete_history = false;
         self.dialog_focus.focus(window, cx);
         cx.notify();
     }
@@ -671,10 +732,11 @@ impl AccountsView {
     }
 
     fn confirm_delete(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.pending_delete.take() else {
-            return;
-        };
-        self.delete_account(&id, cx);
+        match self.pending_delete.take() {
+            Some(PendingDelete::Account(id)) => self.delete_account(&id, self.delete_history, cx),
+            Some(PendingDelete::History(id)) => self.delete_orphaned_history(&id, cx),
+            None => {}
+        }
     }
 
     fn validate_account(&mut self, account: &CloudAccount, cx: &mut Context<Self>) {
@@ -1216,7 +1278,11 @@ impl AccountsView {
                             .small()
                             .disabled(self.deleting_ids.contains(&row.id))
                             .on_click(cx.listener(move |this, _, window, cx| {
-                                this.ask_delete_account(delete_id.clone(), window, cx);
+                                this.ask_delete(
+                                    PendingDelete::Account(delete_id.clone()),
+                                    window,
+                                    cx,
+                                );
                             })),
                     ),
             )
@@ -1334,6 +1400,79 @@ impl AccountsView {
                         ),
                     ),
             )
+    }
+
+    /// Billing history that outlived its account: a delete that kept it, or
+    /// one from before the choice existed. It still counts in every total,
+    /// so it is shown, with a way to remove it. Absent when there is none.
+    fn render_orphaned_histories(&self, cx: &Context<Self>) -> AnyElement {
+        let Some(loaded) = self
+            .accounts_data
+            .as_ref()
+            .filter(|l| !l.orphans.is_empty())
+        else {
+            return div().into_any_element();
+        };
+        let currency = loaded.currency.as_str();
+
+        theme::card(cx)
+            .w_full()
+            .p_5()
+            .v_flex()
+            .gap_3()
+            .child(
+                div()
+                    .v_flex()
+                    .gap_1()
+                    .child(theme::section_title(
+                        cx,
+                        "Billing history from deleted accounts",
+                    ))
+                    .child(theme::caption(
+                        cx,
+                        "No account owns these charges any more, but they still count in \
+                         every total.",
+                    )),
+            )
+            .children(loaded.orphans.iter().map(|history| {
+                let id = history.account_id.clone();
+                let deleting = self.deleting_ids.contains(&id);
+                div()
+                    .w_full()
+                    .h_flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_4()
+                    .child(
+                        div()
+                            .min_w_0()
+                            .v_flex()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme::text_primary(cx))
+                                    .child(format!(
+                                        "{} \u{b7} {}",
+                                        history.provider, history.account_id
+                                    ))
+                                    .text_ellipsis(),
+                            )
+                            .child(theme::caption(cx, history_summary(history, currency))),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("delete-history-{}", id)))
+                            .label("Delete history")
+                            .ghost()
+                            .danger()
+                            .small()
+                            .disabled(deleting)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.ask_delete(PendingDelete::History(id.clone()), window, cx);
+                            })),
+                    )
+            }))
+            .into_any_element()
     }
 
     /// The Data health card, Wealthfolio Health Center style: the ledger's
@@ -1671,21 +1810,55 @@ impl AccountsView {
             .into_any_element()
     }
 
-    /// The delete confirmation: names the account, says the keyring
-    /// credentials go with it, and that there is no undo. Modeled on the
-    /// rules page's delete dialog, scrim included.
+    /// The delete confirmation: names what goes and that there is no undo.
+    /// Deleting an account offers its billing history too, and says what
+    /// happens to it either way — kept history still counts in every total.
+    /// Modeled on the rules page's delete dialog, scrim included.
     fn render_delete_confirm(&self, cx: &Context<Self>) -> AnyElement {
-        let Some(id) = &self.pending_delete else {
+        let Some(pending) = &self.pending_delete else {
             return div().size_0().into_any_element();
         };
-
-        let name = self
-            .accounts
-            .iter()
-            .find(|account| &account.id == id)
-            .map(|account| account.name.clone())
-            .unwrap_or_else(|| "this account".to_string());
+        let (PendingDelete::Account(id) | PendingDelete::History(id)) = pending;
         let deleting = self.deleting_ids.contains(id);
+        let currency = self
+            .accounts_data
+            .as_ref()
+            .map(|loaded| loaded.currency.as_str())
+            .unwrap_or("USD");
+        let history = self
+            .accounts_data
+            .as_ref()
+            .and_then(|loaded| loaded.histories.iter().find(|h| &h.account_id == id));
+
+        let (title, body) = match pending {
+            PendingDelete::Account(_) => {
+                let name = self
+                    .accounts
+                    .iter()
+                    .find(|account| &account.id == id)
+                    .map(|account| account.name.clone())
+                    .unwrap_or_else(|| "this account".to_string());
+                (
+                    format!("Delete \u{201c}{name}\u{201d}?"),
+                    "Its credentials in the OS keyring are removed. This cannot be undone."
+                        .to_string(),
+                )
+            }
+            PendingDelete::History(_) => (
+                "Delete billing history?".to_string(),
+                format!(
+                    "{} and the raw payloads behind it are removed. This cannot be undone.",
+                    history
+                        .map(|h| history_summary(h, currency))
+                        .unwrap_or_else(|| "This history".to_string())
+                ),
+            ),
+        };
+        // Only an account with something in the ledger has a choice to make.
+        let history_choice = match (pending, history) {
+            (PendingDelete::Account(_), Some(history)) if history.charges > 0 => Some(history),
+            _ => None,
+        };
 
         div()
             .id("delete-account-scrim")
@@ -1737,12 +1910,7 @@ impl AccountsView {
                             .h_flex()
                             .justify_between()
                             .items_center()
-                            .child(
-                                div()
-                                    .text_lg()
-                                    .font_weight(FontWeight::BOLD)
-                                    .child("Delete account"),
-                            )
+                            .child(div().text_lg().font_weight(FontWeight::BOLD).child(title))
                             .child(
                                 Button::new("close-delete-account")
                                     .icon(IconName::Close)
@@ -1756,11 +1924,36 @@ impl AccountsView {
                         div()
                             .text_sm()
                             .text_color(theme::text_muted(cx))
-                            .child(format!(
-                                "Delete \"{name}\"? The account and its credentials in the OS \
-                                 keyring are removed. This cannot be undone."
-                            )),
+                            .child(body),
                     )
+                    .when_some(history_choice, |el, history| {
+                        let consequence = if self.delete_history {
+                            format!(
+                                "{} and its raw payloads are removed too.",
+                                history_summary(history, currency)
+                            )
+                        } else {
+                            format!(
+                                "{} stays in the ledger and keeps counting in every total.",
+                                history_summary(history, currency)
+                            )
+                        };
+                        el.child(
+                            div()
+                                .v_flex()
+                                .gap_1()
+                                .child(
+                                    Checkbox::new("delete-account-history")
+                                        .label("Also delete its billing history")
+                                        .checked(self.delete_history)
+                                        .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                            this.delete_history = *checked;
+                                            cx.notify();
+                                        })),
+                                )
+                                .child(theme::caption(cx, consequence)),
+                        )
+                    })
                     .child(
                         div()
                             .h_flex()
@@ -1871,6 +2064,27 @@ fn format_balance(amount: f64, currency: &str) -> String {
 }
 
 /// A byte size as GB, MB, KB, or B, whichever reads whole-ish.
+/// A history in one phrase, sentence-initial: how many charges over which
+/// months, and the usage they add to totals. Shared by the delete dialog and
+/// the left-behind-history card, so both describe it the same way.
+fn history_summary(history: &query::LedgerAccount, currency: &str) -> String {
+    let months = match (&history.first_period, &history.last_period) {
+        (Some(first), Some(last)) if first == last => format!(" in {first}"),
+        (Some(first), Some(last)) => format!(" from {first} to {last}"),
+        _ => String::new(),
+    };
+    if history.charges == 0 {
+        return "Its balance history".to_string();
+    }
+    format!(
+        "{} charge{}{} ({} of usage)",
+        history.charges,
+        if history.charges == 1 { "" } else { "s" },
+        months,
+        fmt::amount(history.usage_cost, currency)
+    )
+}
+
 fn format_bytes(bytes: u64) -> String {
     const GB: u64 = 1 << 30;
     const MB: u64 = 1 << 20;
@@ -1929,6 +2143,7 @@ impl Render for AccountsView {
                     .child(self.render_messages(cx))
                     .child(self.render_health_card(cx))
                     .child(self.render_accounts_table(cx))
+                    .child(self.render_orphaned_histories(cx))
                     .child(self.render_bottom_cards(cx)),
             )
             .child(self.render_add_dialog(cx))

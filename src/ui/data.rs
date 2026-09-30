@@ -24,7 +24,7 @@ use super::fmt;
 use crate::alerts::{self, AlertKind, AlertStatus, AlertView, RuleView};
 use crate::analytics;
 use crate::cloud::registry;
-use crate::cloud::{BillingPeriod, BudgetInfo, BudgetStatus};
+use crate::cloud::{BillingPeriod, BudgetInfo, BudgetStatus, CloudAccount};
 use crate::ledger::query;
 use crate::{db, ingest};
 
@@ -1141,6 +1141,11 @@ pub struct AccountsData {
     pub accounts: Vec<AccountRowData>,
     pub budget: BudgetCardData,
     pub raw: RawPayloadsData,
+    /// What the ledger holds for each account, configured or not.
+    pub histories: Vec<query::LedgerAccount>,
+    /// The histories no account row names any more: left behind by a
+    /// delete that kept them, and still counted in every total.
+    pub orphans: Vec<query::LedgerAccount>,
 }
 
 /// The ceiling of paid fetches the budget card measures against.
@@ -1154,6 +1159,11 @@ pub fn load_accounts() -> Result<AccountsData> {
     let now = Utc::now();
     let current = BillingPeriod::containing(now);
     let accounts = db::get_all_accounts()?;
+    let histories = query::ledger_accounts().unwrap_or_else(|e| {
+        tracing::warn!("Could not read the ledger's accounts: {}", e);
+        Vec::new()
+    });
+    let orphans = orphaned_histories(&histories, &accounts);
     let ingests = query::last_ingests().unwrap_or_else(|e| {
         tracing::warn!("Could not read the last-ingest times: {}", e);
         Vec::new()
@@ -1228,7 +1238,33 @@ pub fn load_accounts() -> Result<AccountsData> {
             spent: used as f64 * API_CALL_COST_USD,
         },
         raw: RawPayloadsData { bytes, path },
+        histories,
+        orphans,
     })
+}
+
+/// The ledger histories whose account no longer exists. Measured against
+/// every account row, not the table's: an account whose source this build
+/// does not know is left out of the table but still owns its history.
+fn orphaned_histories(
+    histories: &[query::LedgerAccount],
+    accounts: &[CloudAccount],
+) -> Vec<query::LedgerAccount> {
+    histories
+        .iter()
+        .filter(|history| {
+            !accounts
+                .iter()
+                .any(|account| account.id == history.account_id)
+        })
+        .cloned()
+        .collect()
+}
+
+/// Delete an account's billing history, ledger rows and raw payloads.
+/// Blocking; wrap in `smol::unblock`.
+pub fn delete_account_history(account_id: &str) -> Result<usize> {
+    ingest::delete_account_history(account_id)
 }
 
 /// What a source reports, as the accounts table's kind column.
@@ -2223,6 +2259,22 @@ mod tests {
             .and_utc()
     }
 
+    #[test]
+    fn a_history_is_orphaned_only_when_no_account_row_names_it() {
+        let history = |id: &str| query::LedgerAccount {
+            provider: "AWS".to_string(),
+            account_id: id.to_string(),
+            first_period: Some("2026-09".to_string()),
+            last_period: Some("2026-09".to_string()),
+            charges: 1,
+            usage_cost: 1.0,
+        };
+        let account = crate::demo_data::account("AWS", "live", "aws", Utc::now());
+
+        let orphans = orphaned_histories(&[history("live"), history("gone")], &[account]);
+        assert_eq!(orphans.len(), 1);
+        assert_eq!(orphans[0].account_id, "gone");
+    }
     #[test]
     fn daily_series_zero_fills_and_baselines_on_demand() {
         let first = NaiveDate::from_ymd_opt(2026, 9, 1).expect("a real date");

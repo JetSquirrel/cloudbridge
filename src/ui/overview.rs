@@ -844,14 +844,13 @@ fn render_stats(cx: &App, d: &data::OverviewData) -> impl IntoElement {
             cx,
             d.spend_label,
             fmt::amount(stats.spend, currency),
+            // Two lines, not one wrapping row: at a card's width the change
+            // wrapped under the split anyway, and a "·" separator then led
+            // the second line with nothing before it.
             div()
-                .h_flex()
+                .v_flex()
                 .gap_1()
-                // The card shrinks below this row on narrow windows; let
-                // the change span wrap under the usage/credits split
-                // instead of being sliced by the next card.
                 .min_w_0()
-                .flex_wrap()
                 // Net stays the big number; the split shows why it differs
                 // from the real burn.
                 .child(div().text_color(theme::text_muted(cx)).child(format!(
@@ -861,7 +860,7 @@ fn render_stats(cx: &App, d: &data::OverviewData) -> impl IntoElement {
                 )))
                 .when_some(stats.change_pct, |el, pct| {
                     el.child(div().text_color(theme::accent(cx)).child(format!(
-                        "· {} {}",
+                        "{} {}",
                         fmt::change_pct(pct),
                         d.change_caption
                     )))
@@ -927,9 +926,13 @@ fn render_movers(cx: &App, d: &data::OverviewData) -> impl IntoElement {
             div()
                 .v_flex()
                 .child(
+                    // The same column gap on the header and every row: the
+                    // right-aligned change column otherwise runs straight
+                    // into the left-aligned DRIVES column beside it.
                     div()
                         .h_flex()
                         .items_center()
+                        .gap_4()
                         .pb_2()
                         .child(theme::header_cell(cx, "SOURCE").w_32())
                         .child(
@@ -975,6 +978,7 @@ fn render_movers(cx: &App, d: &data::OverviewData) -> impl IntoElement {
                     div()
                         .h_flex()
                         .items_center()
+                        .gap_4()
                         .py_3()
                         .border_t_1()
                         .border_color(theme::card_border(cx))

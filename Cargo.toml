@@ -105,6 +105,11 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 # `crypto.getRandomValues`, which `getrandom`'s `js` feature wires up.
 getrandom = { version = "0.2", features = ["js"] }
 
+# Gzips the CSV export fixtures, the way AWS Data Exports delivers them.
+# Already in the tree through `zip`.
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+flate2 = "1"
+
 [workspace]
 members = ["web/smol-bridge"]
 # `cargo build` at the root still means the desktop application.

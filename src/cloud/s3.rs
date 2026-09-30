@@ -1,7 +1,7 @@
 //! S3 over plain HTTPS with hand-rolled SigV4 signing.
 //!
-//! The AWS Data Exports channel lists and downloads the FOCUS Parquet
-//! objects a billing export lands in a bucket. DuckDB's httpfs could read
+//! The AWS Data Exports channel lists and downloads the objects a billing
+//! export lands in a bucket: its data files and the manifest naming them. DuckDB's httpfs could read
 //! `s3://` URIs but cannot enumerate them, and pulling the whole extension
 //! in for two REST calls is not worth it — the signing here is the same
 //! SigV4 the Cost Explorer client already uses, adapted from the DuckLocal
@@ -119,6 +119,16 @@ impl S3Client {
         self.get_bytes(bucket, &format!("/{}", uri_encode_path(key)), &[])
     }
 
+    /// [`Self::get_object`], with a key that does not exist answered as
+    /// `None` rather than an error. Any other failure is still an error.
+    pub fn get_object_opt(&self, bucket: &str, key: &str) -> Result<Option<Vec<u8>>> {
+        match self.get_object(bucket, key) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(e) if e.downcast_ref::<S3Error>().is_some_and(|e| e.status == 404) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     /// A signed GET, with one region-redirect retry, decoded as text.
     fn get_text(&self, bucket: &str, path: &str, query: &[(String, String)]) -> Result<String> {
         String::from_utf8(self.get_bytes(bucket, path, query)?)
@@ -136,6 +146,7 @@ impl S3Client {
             match self.get_once(&region, bucket, path, query)? {
                 S3Response::Ok(body) => return Ok(body),
                 S3Response::Failed {
+                    status,
                     message,
                     region_hint,
                 } => {
@@ -146,7 +157,7 @@ impl S3Client {
                             continue;
                         }
                     }
-                    return Err(anyhow!(message));
+                    return Err(S3Error { status, message }.into());
                 }
             }
         }
@@ -209,6 +220,7 @@ impl S3Client {
             .and_then(|e| e.message.clone())
             .unwrap_or_else(|| body.chars().take(200).collect());
         Ok(S3Response::Failed {
+            status: status.as_u16(),
             message: format!(
                 "S3 GET {} failed (HTTP {}): {}",
                 path,
@@ -220,9 +232,26 @@ impl S3Client {
     }
 }
 
+/// A request S3 answered with an error status, kept typed so a caller can
+/// tell a missing key (404) from a refusal or an outage.
+#[derive(Debug)]
+pub struct S3Error {
+    pub status: u16,
+    pub message: String,
+}
+
+impl std::fmt::Display for S3Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for S3Error {}
+
 enum S3Response {
     Ok(Vec<u8>),
     Failed {
+        status: u16,
         message: String,
         region_hint: Option<String>,
     },

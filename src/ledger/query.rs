@@ -15,9 +15,9 @@ use crate::analytics::{self, QualityCounts, TwoPeriodBuckets};
 use crate::model::BillingPeriod;
 pub use crate::model::{
     AdhocResult, Balance, BreakdownDim, CategoryDelta, CostChangeDecomposition, DailyTotal,
-    DataQualityIssue, DataQualityKind, ForecastBands, IssueSeverity, MovementKind, PeriodForecast,
-    PeriodOverPeriod, ServiceDailyTotal, ServiceMovement, ServiceTagUsage, TopResource,
-    UntaggedCharge, UntaggedServiceUsage,
+    DataQualityIssue, DataQualityKind, ForecastBands, IssueSeverity, LedgerAccount, MovementKind,
+    PeriodForecast, PeriodOverPeriod, ServiceDailyTotal, ServiceMovement, ServiceTagUsage,
+    TopResource, UntaggedCharge, UntaggedServiceUsage,
 };
 
 /// Total charged in one billing period, in the reporting currency.
@@ -973,6 +973,51 @@ fn untagged_usage_by_service_of(
 /// in `fct_charge` counts, as in [`last_ingest`].
 pub fn last_ingests() -> Result<Vec<(String, String, DateTime<Utc>)>> {
     with_connection_ref(last_ingests_of)
+}
+
+/// Every account the ledger holds anything for, charges or balances,
+/// whether or not an account row still names it — deleting an account can
+/// leave its history behind, and this is how that history is found again.
+pub fn ledger_accounts() -> Result<Vec<LedgerAccount>> {
+    with_connection_ref(ledger_accounts_of)
+}
+
+fn ledger_accounts_of(conn: &Connection) -> Result<Vec<LedgerAccount>> {
+    let mut stmt = conn.prepare(&format!(
+        "WITH held AS (
+             SELECT provider, account_id FROM fct_charge
+             UNION SELECT provider, account_id FROM fct_balance_snapshot
+             UNION SELECT provider, account_id FROM ingest_batch
+         ),
+         charges AS (
+             SELECT provider, account_id,
+                    min(billing_period) AS first_period,
+                    max(billing_period) AS last_period,
+                    count(*) AS charges,
+                    coalesce(sum(billed_cost_base)
+                             FILTER (WHERE charge_category = 'Usage'), 0) AS usage_cost
+             FROM {NORMALIZED_VIEW}
+             GROUP BY provider, account_id
+         )
+         SELECT h.provider, h.account_id, c.first_period, c.last_period,
+                coalesce(c.charges, 0), coalesce(c.usage_cost, 0)
+         FROM held h LEFT JOIN charges c USING (provider, account_id)
+         ORDER BY h.provider, h.account_id"
+    ))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(LedgerAccount {
+                provider: row.get(0)?,
+                account_id: row.get(1)?,
+                first_period: row.get(2)?,
+                last_period: row.get(3)?,
+                charges: row.get(4)?,
+                usage_cost: row.get(5)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
 }
 
 fn last_ingests_of(conn: &Connection) -> Result<Vec<(String, String, DateTime<Utc>)>> {
@@ -2103,6 +2148,76 @@ mod tests {
         schema::apply(&conn).expect("schema applies");
         schema::apply_reporting_currency(&conn, reporting_currency).expect("view applies");
         conn
+    }
+
+    /// Every account the ledger holds is listed, a balance-only one too,
+    /// and deleting one account's history leaves the other's alone —
+    /// charges, batches, balances and the day rollup alike.
+    #[test]
+    fn an_accounts_history_is_listed_and_deleted_whole() {
+        let mut conn = conn("USD");
+        let at = |month: u32, day: u32| Utc.with_ymd_and_hms(2026, month, day, 0, 0, 0).unwrap();
+        let usage = |amount: f64, month: u32| Charge {
+            service_name: Some("EC2".to_string()),
+            billed_cost: Some(amount),
+            ..Charge::new(at(month, 3), at(month, 4), "USD")
+        };
+        let credit = Charge {
+            charge_category: ChargeCategory::Credit,
+            billed_cost: Some(-1.0),
+            ..Charge::new(at(9, 3), at(9, 4), "USD")
+        };
+        for (period, charges) in [
+            ("2026-08", vec![usage(2.0, 8)]),
+            ("2026-09", vec![usage(3.0, 9), credit]),
+        ] {
+            let key = PeriodKey::new("AWS", "gone", period);
+            crate::ledger::write_period(&mut conn, &key, period, &charges, None, Channel::Api)
+                .unwrap();
+            crate::ledger::rollup::refresh_for_period_of(&conn, &key).unwrap();
+        }
+        crate::ledger::write_balance(
+            &mut conn,
+            &BalanceSnapshot {
+                provider: "DeepSeek".to_string(),
+                account_id: "kept".to_string(),
+                observed_at: at(9, 5),
+                balance: 10.0,
+                granted_balance: None,
+                topped_up_balance: None,
+                currency: "CNY".to_string(),
+            },
+        )
+        .unwrap();
+
+        let listed = ledger_accounts_of(&conn).unwrap();
+        assert_eq!(listed.len(), 2);
+        let gone = listed.iter().find(|a| a.account_id == "gone").unwrap();
+        assert_eq!(gone.charges, 3);
+        assert_eq!(gone.first_period.as_deref(), Some("2026-08"));
+        assert_eq!(gone.last_period.as_deref(), Some("2026-09"));
+        // Usage only: the credit nets the bill, not what the history adds.
+        assert_eq!(gone.usage_cost, 5.0);
+        let kept = listed.iter().find(|a| a.account_id == "kept").unwrap();
+        assert_eq!((kept.charges, kept.first_period.clone()), (0, None));
+
+        assert_eq!(
+            crate::ledger::delete_account_history_of(&mut conn, "gone").unwrap(),
+            3
+        );
+        let listed = ledger_accounts_of(&conn).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].account_id, "kept");
+        for table in ["fct_charge", "ingest_batch", "daily_cost_rollup"] {
+            let left: i64 = conn
+                .query_row(
+                    &format!("SELECT count(*) FROM {table} WHERE account_id = 'gone'"),
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(left, 0, "{table} still holds the deleted account");
+        }
     }
 
     /// The tag rollups call `json_extract_string` and the raw store writes

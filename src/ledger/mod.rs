@@ -104,6 +104,36 @@ pub fn replace_period(
     with_connection(|conn| write_period(conn, key, batch_id, charges, source_ref, channel))
 }
 
+/// Remove everything the ledger holds for one account — charges, ingest
+/// batches, balance snapshots and the day rollup — in one transaction.
+/// Returns how many charges went. The raw payloads are the caller's: see
+/// [`crate::ingest::delete_account_history`].
+pub fn delete_account_history(account_id: &str) -> Result<usize> {
+    with_connection(|conn| delete_account_history_of(conn, account_id))
+}
+
+pub(crate) fn delete_account_history_of(conn: &mut Connection, account_id: &str) -> Result<usize> {
+    let tx = conn.transaction()?;
+    let charges = tx.execute(
+        "DELETE FROM fct_charge WHERE account_id = ?",
+        params![account_id],
+    )?;
+    for table in ["ingest_batch", "fct_balance_snapshot", "daily_cost_rollup"] {
+        tx.execute(
+            &format!("DELETE FROM {table} WHERE account_id = ?"),
+            params![account_id],
+        )?;
+    }
+    tx.commit()?;
+
+    tracing::info!(
+        "Ledger: deleted {} charges of account {}",
+        charges,
+        account_id
+    );
+    Ok(charges)
+}
+
 /// Record a balance observation. Re-observing the same instant overwrites,
 /// so a repeated ingest of one payload is a no-op.
 pub fn record_balance(snapshot: &BalanceSnapshot) -> Result<()> {
@@ -264,9 +294,11 @@ pub(crate) fn write_period(
               charge_period_start, charge_period_end, charge_category, charge_description,
               service_name, service_category, resource_id, resource_name, region_id,
               billed_cost, effective_cost, list_cost, billing_currency, cost_basis,
-              pricing_quantity, pricing_unit, tags, created_at)
+              pricing_quantity, pricing_unit, tags, created_at,
+              sub_account_id, sub_account_name)
              VALUES (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), ?, ?,
-                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP))",
+                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP),
+                     ?, ?)",
         )?;
 
         for (charge, charge_id) in charges.iter().zip(&ids) {
@@ -301,6 +333,8 @@ pub(crate) fn write_period(
                 charge.pricing_unit,
                 charge.tags,
                 now,
+                charge.sub_account_id,
+                charge.sub_account_name,
             ])?;
         }
     }
@@ -358,7 +392,7 @@ fn charge_ids(key: &PeriodKey, charges: &[Charge]) -> Vec<String> {
     let mut ids = Vec::with_capacity(charges.len());
 
     for charge in charges {
-        let natural_key = [
+        let mut natural_key = [
             key.provider.as_str(),
             key.account_id.as_str(),
             key.billing_period.as_str(),
@@ -380,6 +414,12 @@ fn charge_ids(key: &PeriodKey, charges: &[Charge]) -> Vec<String> {
             charge.billing_currency.as_str(),
         ]
         .join("\u{1f}");
+        // Appended only when present, so a row without one keeps the id it
+        // had before the column existed.
+        if let Some(sub_account) = &charge.sub_account_id {
+            natural_key.push_str("\u{1f}sub_account=");
+            natural_key.push_str(sub_account);
+        }
 
         let occurrence = seen.entry(natural_key.clone()).or_insert(0);
         let mut hasher = Sha256::new();
@@ -590,6 +630,51 @@ mod tests {
 
         write_period(&mut conn, &key, "b-2", &charges, None, Channel::Api).unwrap();
         assert_eq!(stored(&conn, &key), first);
+    }
+
+    /// A payer's export repeats a row for each linked account. The account
+    /// is part of the key, so each keeps its id whatever order the export
+    /// lists them in, instead of taking an occurrence suffix.
+    #[test]
+    fn linked_accounts_key_their_own_charges() {
+        let mut conn = conn();
+        let key = key();
+        let linked = |sub_account: &str, amount: f64| Charge {
+            sub_account_id: Some(sub_account.to_string()),
+            sub_account_name: Some(format!("{sub_account}-name")),
+            ..usage("EC2", amount, 1)
+        };
+
+        write_period(
+            &mut conn,
+            &key,
+            "b-1",
+            &[linked("111111111111", 2.0), linked("222222222222", 3.0)],
+            None,
+            Channel::Api,
+        )
+        .unwrap();
+        let first = stored(&conn, &key);
+
+        write_period(
+            &mut conn,
+            &key,
+            "b-2",
+            &[linked("222222222222", 3.0), linked("111111111111", 2.0)],
+            None,
+            Channel::Api,
+        )
+        .unwrap();
+        assert_eq!(stored(&conn, &key), first);
+
+        let name: String = conn
+            .query_row(
+                "SELECT sub_account_name FROM fct_charge WHERE sub_account_id = '222222222222'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(name, "222222222222-name");
     }
 
     #[test]
