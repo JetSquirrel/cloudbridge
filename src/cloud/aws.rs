@@ -67,9 +67,13 @@ impl AwsCloudService {
 
     /// Find and download the export objects for one billing period.
     ///
-    /// A CUR 2.0 export partitions by `BILLING_PERIOD=<label>` below a
-    /// `data/` directory, but the URI a user copies may point anywhere
-    /// above it, so the candidates run from the most to the least specific.
+    /// An export partitions by `BILLING_PERIOD=<label>` below a `data/`
+    /// directory — upper case for CUR 2.0, `billing_period=` for FOCUS —
+    /// and the URI a user copies may point anywhere above it, so the
+    /// candidates run from the most to the least specific. S3 prefixes are
+    /// case-sensitive, so each spelling is its own candidate. The data is
+    /// Parquet or gzipped CSV, as the export was configured; the manifests
+    /// beside it are neither and are left alone.
     /// A period the export has not produced yet is [`aws_focus::ExportNotReady`]
     /// rather than an empty batch: writing nothing here must never replace
     /// a month's ledger rows with zero rows.
@@ -77,19 +81,13 @@ impl AwsCloudService {
         let uri = S3Uri::parse(self.export_uri.as_deref().unwrap_or_default())?;
         let client = self.s3_client();
         let label = period.label();
-        let marker = format!("BILLING_PERIOD={}", label);
 
-        let candidates = [
-            format!("{}/data/{}/", uri.prefix, marker),
-            format!("{}/{}/", uri.prefix, marker),
-            uri.prefix.clone(),
-        ];
         let mut objects = Vec::new();
-        for prefix in &candidates {
+        for prefix in &export_prefixes(&uri.prefix, &label) {
             let found: Vec<_> = client
                 .list_objects(&uri.bucket, prefix)?
                 .into_iter()
-                .filter(|object| object.key.contains(&marker) && object.key.ends_with(".parquet"))
+                .filter(|object| is_period_data(&object.key, &label))
                 .collect();
             if !found.is_empty() {
                 objects = found;
@@ -121,8 +119,9 @@ impl AwsCloudService {
         let mut payload_files = Vec::with_capacity(objects.len());
         for (index, object) in objects.iter().enumerate() {
             let bytes = client.get_object(&uri.bucket, &object.key)?;
+            let format = aws_focus::ExportFormat::of_key(&object.key).expect("filtered above");
             payload_files.push(PayloadFile {
-                name: format!("focus-{}.parquet", index),
+                name: format!("focus-{}{}", index, format.payload_suffix(&object.key)),
                 bytes,
             });
         }
@@ -359,6 +358,33 @@ const UNIT_NOT_APPLICABLE: &str = "N/A";
 
 const DIMENSION_SERVICE: &str = "SERVICE";
 const DIMENSION_RECORD_TYPE: &str = "RECORD_TYPE";
+
+/// The prefixes to list for one period's export objects, most specific
+/// first, ending with the URI's own prefix for the layouts in between.
+fn export_prefixes(prefix: &str, label: &str) -> Vec<String> {
+    let mut prefixes: Vec<String> = [
+        format!("BILLING_PERIOD={label}"),
+        format!("billing_period={label}"),
+    ]
+    .iter()
+    .flat_map(|marker| {
+        [
+            format!("{prefix}/data/{marker}/"),
+            format!("{prefix}/{marker}/"),
+        ]
+    })
+    .collect();
+    prefixes.push(prefix.to_string());
+    prefixes
+}
+
+/// Whether an object is one of the period's data files, as opposed to
+/// another period's, or a manifest in the same partition.
+fn is_period_data(key: &str, label: &str) -> bool {
+    key.to_ascii_lowercase()
+        .contains(&format!("billing_period={label}"))
+        && aws_focus::ExportFormat::of_key(key).is_some()
+}
 
 /// The GetCostAndUsage request the ledger is built from.
 ///
@@ -667,6 +693,31 @@ mod tests {
     use super::*;
     use crate::ledger::{ChargeCategory, CostBasis};
 
+    /// A FOCUS export spells its partition in lower case; a CUR 2.0 one
+    /// in upper. Both are the period's data, the manifests are not.
+    #[test]
+    fn export_keys_are_matched_to_their_period() {
+        let focus =
+            "cloudbridgeFOCUS/cloudbridge/data/billing_period=2026-09/cloudbridge-00001.csv.gz";
+        assert!(is_period_data(focus, "2026-09"));
+        assert!(is_period_data(
+            "data/BILLING_PERIOD=2026-09/part-0.parquet",
+            "2026-09"
+        ));
+        assert!(!is_period_data(focus, "2026-08"));
+        assert!(!is_period_data(
+            "cloudbridgeFOCUS/cloudbridge/metadata/billing_period=2026-09/cloudbridge-Manifest.json",
+            "2026-09"
+        ));
+    }
+
+    #[test]
+    fn both_partition_spellings_are_listed_before_the_whole_prefix() {
+        let prefixes = export_prefixes("exports/cb", "2026-09");
+        assert!(prefixes.contains(&"exports/cb/data/billing_period=2026-09/".to_string()));
+        assert!(prefixes.contains(&"exports/cb/data/BILLING_PERIOD=2026-09/".to_string()));
+        assert_eq!(prefixes.last().map(String::as_str), Some("exports/cb"));
+    }
     #[test]
     fn cost_explorer_errors_name_the_fix() {
         let denied = cost_explorer_error(

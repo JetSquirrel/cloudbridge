@@ -10,8 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **AWS Data Exports (FOCUS 1.2) straight from S3.** An AWS account can
   carry the `s3://bucket/prefix` URI of its CUR 2.0 "FOCUS 1.2 with AWS
-  columns" export; refresh then reads the Parquet objects from the bucket
-  — resource-level rows with tags, and no per-request Cost Explorer cost.
+  columns" export; refresh then reads the export's objects from the bucket,
+  Parquet or gzipped CSV as the export was configured — resource-level
+  rows with tags, and no per-request Cost Explorer cost.
   Accounts without a URI keep the Cost Explorer channel. A period the
   export has not delivered yet is skipped, never written as an empty
   month, and the downloaded objects live in the raw store so
