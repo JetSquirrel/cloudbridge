@@ -26,7 +26,12 @@ use duckdb::{params, Connection};
 /// [`crate::ledger::rollup`] maintains. A new table needs no `ALTER`: the
 /// `CREATE TABLE IF NOT EXISTS` below is the whole migration, for a fresh
 /// file and an upgraded one alike.
-pub const SCHEMA_VERSION: i32 = 3;
+///
+/// v4 adds `fct_charge.sub_account_id` and `sub_account_name`: the linked
+/// account an AWS payer's export files each row under. Without it a
+/// consolidated bill cannot be split by member account, and a resource id
+/// has no account to be unique within.
+pub const SCHEMA_VERSION: i32 = 4;
 
 /// The view the application reads: every charge with its amount also
 /// expressed in the reporting currency.
@@ -114,7 +119,10 @@ pub fn apply(conn: &Connection) -> Result<()> {
             -- Tokens when model-provider usage lands.
             pricing_unit        VARCHAR,
             tags                VARCHAR,            -- JSON object text
-            created_at          TIMESTAMP NOT NULL
+            created_at          TIMESTAMP NOT NULL,
+            -- Last, like ingest_batch.channel: v4 adds them with ALTER TABLE.
+            sub_account_id      VARCHAR,
+            sub_account_name    VARCHAR
         );
 
         CREATE INDEX IF NOT EXISTS idx_charge_period
@@ -208,6 +216,14 @@ fn migrate(conn: &Connection) -> Result<()> {
         // Existing rows are all API fetches: the file channel did not
         // exist when they were written.
         conn.execute_batch("ALTER TABLE ingest_batch ADD COLUMN channel VARCHAR DEFAULT 'api'")?;
+    }
+    if !has_column(conn, "fct_charge", "sub_account_id")? {
+        tracing::info!("Adding sub-account columns to fct_charge");
+        // NULL for existing rows: no source recorded a sub-account before.
+        conn.execute_batch(
+            "ALTER TABLE fct_charge ADD COLUMN sub_account_id VARCHAR;
+             ALTER TABLE fct_charge ADD COLUMN sub_account_name VARCHAR;",
+        )?;
     }
 
     Ok(())
@@ -319,6 +335,69 @@ mod tests {
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
         assert!(has_column(&conn, "ingest_batch", "channel").unwrap());
+        assert!(has_column(&conn, "fct_charge", "sub_account_id").unwrap());
+        assert!(has_column(&conn, "fct_charge", "sub_account_name").unwrap());
+    }
+
+    /// The v3 `fct_charge`, indexes included: DuckDB refuses some `ALTER`s
+    /// on an indexed table, so the fixture has to have them to prove
+    /// anything.
+    const V3_FCT_CHARGE: &str = "CREATE TABLE fct_charge (
+             charge_id           VARCHAR PRIMARY KEY,
+             batch_id            VARCHAR NOT NULL,
+             provider            VARCHAR NOT NULL,
+             account_id          VARCHAR NOT NULL,
+             billing_account_id  VARCHAR,
+             billing_period      VARCHAR NOT NULL,
+             charge_period_start TIMESTAMP NOT NULL,
+             charge_period_end   TIMESTAMP NOT NULL,
+             charge_category     VARCHAR NOT NULL,
+             charge_description  VARCHAR,
+             service_name        VARCHAR,
+             service_category    VARCHAR,
+             resource_id         VARCHAR,
+             resource_name       VARCHAR,
+             region_id           VARCHAR,
+             billed_cost         DOUBLE,
+             effective_cost      DOUBLE,
+             list_cost           DOUBLE,
+             billing_currency    VARCHAR NOT NULL,
+             cost_basis          VARCHAR NOT NULL,
+             pricing_quantity    DOUBLE,
+             pricing_unit        VARCHAR,
+             tags                VARCHAR,
+             created_at          TIMESTAMP NOT NULL
+         );
+         CREATE INDEX idx_charge_period ON fct_charge (provider, account_id, billing_period);
+         CREATE INDEX idx_charge_batch ON fct_charge (batch_id);
+         INSERT INTO fct_charge
+             (charge_id, batch_id, provider, account_id, billing_period,
+              charge_period_start, charge_period_end, charge_category,
+              billed_cost, billing_currency, cost_basis, created_at)
+         VALUES ('c-1', 'b-1', 'AWS', 'acct-1', '2026-09',
+                 CAST('2026-09-01 00:00:00' AS TIMESTAMP),
+                 CAST('2026-09-02 00:00:00' AS TIMESTAMP), 'Usage',
+                 1.5, 'USD', 'authoritative',
+                 CAST('2026-09-02 00:00:00' AS TIMESTAMP));";
+
+    /// A ledger written before v4 keeps its charges, with no sub-account.
+    #[test]
+    fn an_existing_ledger_gains_the_sub_account_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(V3_FCT_CHARGE).unwrap();
+
+        apply(&conn).unwrap();
+
+        let (cost, sub_account): (f64, Option<String>) = conn
+            .query_row(
+                "SELECT billed_cost, sub_account_id FROM fct_charge WHERE charge_id = 'c-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(cost, 1.5);
+        assert_eq!(sub_account, None);
+        assert!(has_column(&conn, "fct_charge", "sub_account_name").unwrap());
     }
 
     /// A ledger written before v2 keeps its rows, and they read as the API

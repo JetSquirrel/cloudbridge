@@ -77,6 +77,8 @@ const COLUMNS: &[(&str, ColumnKind)] = &[
     ("PricingQuantity", ColumnKind::Numeric),
     ("PricingUnit", ColumnKind::Text),
     ("Tags", ColumnKind::Text),
+    ("SubAccountId", ColumnKind::Text),
+    ("SubAccountName", ColumnKind::Text),
 ];
 
 // SELECT positions, matching COLUMNS above.
@@ -97,6 +99,8 @@ const IX_CURRENCY: usize = 13;
 const IX_QUANTITY: usize = 14;
 const IX_UNIT: usize = 15;
 const IX_TAGS: usize = 16;
+const IX_SUB_ACCOUNT: usize = 17;
+const IX_SUB_ACCOUNT_NAME: usize = 18;
 
 /// Turn a batch of FOCUS Parquet payloads into ledger rows.
 ///
@@ -152,6 +156,8 @@ pub fn normalize(batch: &RawBatch) -> Result<Normalized> {
                     .get::<_, Option<String>>(IX_CATEGORY)?
                     .map_or(ChargeCategory::Usage, |c| charge_category(&c)),
                 billing_account_id: row.get(IX_BILLING_ACCOUNT)?,
+                sub_account_id: row.get(IX_SUB_ACCOUNT)?,
+                sub_account_name: row.get(IX_SUB_ACCOUNT_NAME)?,
                 charge_description: row.get(IX_DESCRIPTION)?,
                 service_name: row.get(IX_SERVICE)?,
                 service_category: row.get(IX_SERVICE_CATEGORY)?,
@@ -294,7 +300,9 @@ mod tests {
                  BillingCurrency VARCHAR,
                  PricingQuantity DOUBLE,
                  PricingUnit VARCHAR,
-                 Tags VARCHAR{extra_columns}
+                 Tags VARCHAR,
+                 SubAccountId VARCHAR,
+                 SubAccountName VARCHAR{extra_columns}
              );
              {rows_sql};
              COPY focus TO '{}' (FORMAT PARQUET)",
@@ -331,12 +339,13 @@ mod tests {
               'Amazon Elastic Compute Cloud - Compute', 'Compute',
               'i-0abc123', 'web-server', 'ap-east-1',
               12.45, 10.20, 15.00, 'USD', 1.0, 'Hours',
-              '{\"business_line\":\"platform\"}', 'ignored'),
+              '{\"business_line\":\"platform\"}',
+              '210987654321', 'staging', 'ignored'),
              ('2026-09-01T00:00:00Z', '2026-09-12T00:00:00Z', '2026-09-13T00:00:00Z',
               'Credit', '123456789012', 'Promotional credit',
               'AWS Credits', 'Credits',
               NULL, NULL, NULL,
-              -3.00, -3.00, 0.0, 'USD', NULL, NULL, NULL, 'ignored')",
+              -3.00, -3.00, 0.0, 'USD', NULL, NULL, NULL, NULL, NULL, 'ignored')",
             ", x_UsageAccountId VARCHAR",
         );
 
@@ -346,6 +355,8 @@ mod tests {
         let usage = &normalized.charges[0];
         assert_eq!(usage.charge_category, ChargeCategory::Usage);
         assert_eq!(usage.billing_account_id.as_deref(), Some("123456789012"));
+        assert_eq!(usage.sub_account_id.as_deref(), Some("210987654321"));
+        assert_eq!(usage.sub_account_name.as_deref(), Some("staging"));
         assert_eq!(
             usage.service_name.as_deref(),
             Some("Amazon Elastic Compute Cloud - Compute")
@@ -375,6 +386,7 @@ mod tests {
         assert_eq!(credit.charge_category, ChargeCategory::Credit);
         assert_eq!(credit.billed_cost, Some(-3.0));
         assert_eq!(credit.resource_id, None);
+        assert_eq!(credit.sub_account_id, None);
         assert_eq!(credit.tags, None);
     }
 

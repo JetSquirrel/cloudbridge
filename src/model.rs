@@ -137,9 +137,14 @@ pub struct Charge {
     pub charge_category: ChargeCategory,
     pub cost_basis: CostBasis,
     pub billing_currency: String,
-    /// Provider-side account, when it differs from the credential's own
-    /// (an AWS payer account reports its linked accounts).
+    /// Provider-side account, when it differs from the credential's own.
+    /// For an AWS export this is the payer, the same on every row.
     pub billing_account_id: Option<String>,
+    /// The account the resource ran in, beneath the billing account: an
+    /// AWS payer's export reports each linked account here. Resource ids
+    /// are only unique within one, so this is half of a resource's key.
+    pub sub_account_id: Option<String>,
+    pub sub_account_name: Option<String>,
     pub charge_description: Option<String>,
     pub service_name: Option<String>,
     pub service_category: Option<String>,
@@ -170,6 +175,8 @@ impl Charge {
             cost_basis: CostBasis::Authoritative,
             billing_currency: billing_currency.into(),
             billing_account_id: None,
+            sub_account_id: None,
+            sub_account_name: None,
             charge_description: None,
             service_name: None,
             service_category: None,

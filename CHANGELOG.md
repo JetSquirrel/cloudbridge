@@ -15,7 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Accounts without a URI keep the Cost Explorer channel. A period the
   export has not delivered yet is skipped, never written as an empty
   month, and the downloaded objects live in the raw store so
-  normalization replays offline.
+  normalization replays offline. Each row keeps the linked account it
+  was billed under (`SubAccountId` / `SubAccountName`), so a payer's
+  consolidated export can be told apart by member account.
 - Account form: optional "Data export S3 URI" field for AWS accounts.
 - **CloudBridge in a browser.** The same crate now builds for wasm32 as a
   demo: the pages, the view models and the alerting rules are the desktop's
