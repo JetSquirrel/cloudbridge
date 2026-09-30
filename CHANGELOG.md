@@ -61,6 +61,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   applies shows again next period
 
 ### Changed
+- **Deleting an account asks about its billing history.** The delete
+  dialog offers "Also delete its billing history", off by default, and says
+  what happens either way: kept history still counts in every total. It
+  used to be kept silently — the account row and its keyring credentials
+  went, its charges and raw payloads stayed and went on counting in totals
+  with no account left on the Accounts page to explain them. History an
+  earlier delete left behind is listed on the Accounts page under "Billing
+  history from deleted accounts", with its months, charge count and usage,
+  and can be deleted from there.
 - The statistics every backend has to agree on — the run-rate forecast, its
   confidence bands, the period-over-period comparison, the cost-change
   decomposition, the trailing daily average, balance burn and the

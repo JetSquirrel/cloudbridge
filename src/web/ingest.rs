@@ -98,6 +98,12 @@ pub fn replay_all() -> Result<ReplayOutcome> {
     Ok(ReplayOutcome::default())
 }
 
+/// Delete an account's billing history. The browser keeps no raw
+/// payloads, so the ledger is all there is to clear.
+pub fn delete_account_history(account_id: &str) -> Result<usize> {
+    crate::ledger::delete_account_history(account_id)
+}
+
 /// Read a bill export the user picked.
 ///
 /// Refused rather than faked: the demo's ledger already holds the twelve

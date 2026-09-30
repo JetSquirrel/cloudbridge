@@ -269,6 +269,30 @@ pub fn batches(
     Ok(ids)
 }
 
+/// Remove every payload stored for one account, under whichever source.
+/// Returns how many source directories held it. A store without the
+/// account is not an error: nothing was ever fetched for it.
+pub fn delete_account(root: &Path, account_id: &str) -> Result<usize> {
+    check_path_segment(account_id, "account id")?;
+    if !root.exists() {
+        return Ok(0);
+    }
+
+    let mut removed = 0;
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        if !entry.file_name().to_string_lossy().starts_with("provider=") {
+            continue;
+        }
+        let account_directory = entry.path().join(format!("account={}", account_id));
+        if account_directory.is_dir() {
+            std::fs::remove_dir_all(&account_directory)?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
 /// Escape a value for interpolation into a SQL string literal.
 ///
 /// Paths cannot be bound as parameters in `COPY ... TO` or `read_parquet`,
@@ -422,6 +446,26 @@ mod tests {
             reread.payload_files[1].bytes,
             vec![0x50, 0x41, 0x52, 0x31, 0x00, 0xff]
         );
+    }
+
+    #[test]
+    fn deleting_an_account_removes_only_its_payloads() {
+        let root = std::env::temp_dir().join(format!("cloudbridge-raw-{}", uuid::Uuid::new_v4()));
+        for (provider, account) in [("AWS", "gone"), ("DeepSeek", "gone"), ("AWS", "kept")] {
+            let dir = root
+                .join(format!("provider={provider}"))
+                .join(format!("account={account}"))
+                .join("billing_period=2026-09");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("part-0.parquet"), b"x").unwrap();
+        }
+
+        assert_eq!(delete_account(&root, "gone").unwrap(), 2);
+        assert!(!root.join("provider=AWS/account=gone").exists());
+        assert!(!root.join("provider=DeepSeek/account=gone").exists());
+        assert!(root.join("provider=AWS/account=kept").exists());
+        assert!(delete_account(&root, "..").is_err());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

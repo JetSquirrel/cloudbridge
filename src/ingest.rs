@@ -530,6 +530,15 @@ fn read_zip_member(path: &Path, bytes: &[u8], format: &BillFileFormat) -> Result
     utf8(path, text)
 }
 
+/// Delete an account's billing history: its ledger rows, then its raw
+/// payloads, which would otherwise bring the rows back on the next replay.
+/// Returns how many charges were removed.
+pub fn delete_account_history(account_id: &str) -> Result<usize> {
+    let charges = ledger::delete_account_history(account_id)?;
+    raw::delete_account(&get_raw_data_dir()?, account_id)?;
+    Ok(charges)
+}
+
 /// Write the payloads under `raw/`, checking first that nothing in the path
 /// came out of the database with a separator in it.
 fn persist(batch: &RawBatch) -> Result<PathBuf> {

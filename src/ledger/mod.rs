@@ -104,6 +104,36 @@ pub fn replace_period(
     with_connection(|conn| write_period(conn, key, batch_id, charges, source_ref, channel))
 }
 
+/// Remove everything the ledger holds for one account — charges, ingest
+/// batches, balance snapshots and the day rollup — in one transaction.
+/// Returns how many charges went. The raw payloads are the caller's: see
+/// [`crate::ingest::delete_account_history`].
+pub fn delete_account_history(account_id: &str) -> Result<usize> {
+    with_connection(|conn| delete_account_history_of(conn, account_id))
+}
+
+pub(crate) fn delete_account_history_of(conn: &mut Connection, account_id: &str) -> Result<usize> {
+    let tx = conn.transaction()?;
+    let charges = tx.execute(
+        "DELETE FROM fct_charge WHERE account_id = ?",
+        params![account_id],
+    )?;
+    for table in ["ingest_batch", "fct_balance_snapshot", "daily_cost_rollup"] {
+        tx.execute(
+            &format!("DELETE FROM {table} WHERE account_id = ?"),
+            params![account_id],
+        )?;
+    }
+    tx.commit()?;
+
+    tracing::info!(
+        "Ledger: deleted {} charges of account {}",
+        charges,
+        account_id
+    );
+    Ok(charges)
+}
+
 /// Record a balance observation. Re-observing the same instant overwrites,
 /// so a repeated ingest of one payload is a no-op.
 pub fn record_balance(snapshot: &BalanceSnapshot) -> Result<()> {
