@@ -16,6 +16,7 @@ type HmacSha256 = Hmac<Sha256>;
 /// Name the S3 object listing is stored under in a raw batch, when the
 /// account is backed by a Data Exports S3 URI.
 const PART_EXPORT_LISTING: &str = "export_listing";
+const PART_EXPORT_MANIFEST: &str = "export_manifest";
 
 /// AWS Cloud Service
 pub struct AwsCloudService {
@@ -72,11 +73,19 @@ impl AwsCloudService {
     /// and the URI a user copies may point anywhere above it, so the
     /// candidates run from the most to the least specific. S3 prefixes are
     /// case-sensitive, so each spelling is its own candidate. The data is
-    /// Parquet or gzipped CSV, as the export was configured; the manifests
-    /// beside it are neither and are left alone.
-    /// A period the export has not produced yet is [`aws_focus::ExportNotReady`]
-    /// rather than an empty batch: writing nothing here must never replace
-    /// a month's ledger rows with zero rows.
+    /// Parquet or gzipped CSV, as the export was configured.
+    ///
+    /// What is read is what the period's manifest names, not everything
+    /// under the partition: an export set to "create new" keeps every
+    /// refresh in its own `<timestamp>-<execution-id>/` folder, and an
+    /// "overwrite" one can leave emptied chunks behind, so the listing
+    /// alone would count a month several times over. AWS writes the
+    /// manifest only once a delivery is complete.
+    ///
+    /// A period the export has not produced yet — no data, or no manifest
+    /// for it yet — is [`aws_focus::ExportNotReady`] rather than an empty
+    /// batch: writing nothing here must never replace a month's ledger rows
+    /// with zero rows.
     fn fetch_focus_export(&self, period: &BillingPeriod) -> Result<Fetched> {
         let uri = S3Uri::parse(self.export_uri.as_deref().unwrap_or_default())?;
         let client = self.s3_client();
@@ -94,13 +103,37 @@ impl AwsCloudService {
                 break;
             }
         }
-        if objects.is_empty() {
-            return Err(aws_focus::ExportNotReady {
+        let not_ready = || -> anyhow::Error {
+            aws_focus::ExportNotReady {
                 uri: self.export_uri.clone().unwrap_or_default(),
-                period: label,
+                period: label.clone(),
             }
-            .into());
+            .into()
+        };
+        if objects.is_empty() {
+            return Err(not_ready());
         }
+
+        let manifest_key = manifest_key(&objects[0].key, &label).ok_or_else(|| {
+            anyhow!(
+                "{} is not under an export's data/ directory, so its manifest cannot be found",
+                objects[0].key
+            )
+        })?;
+        let Some(manifest) = client.get_object_opt(&uri.bucket, &manifest_key)? else {
+            return Err(not_ready());
+        };
+        let manifest = String::from_utf8(manifest)
+            .map_err(|e| anyhow!("Manifest {} is not UTF-8: {}", manifest_key, e))?;
+        let named = manifest_data_keys(&manifest, &uri.bucket)?;
+        let objects = files_named_by_manifest(objects, &named).map_err(|missing| {
+            anyhow!(
+                "Manifest {} names {} file(s) that are not in the bucket, e.g. {}",
+                manifest_key,
+                missing.len(),
+                missing[0]
+            )
+        })?;
 
         // The listing rides as the metadata part: which keys, sizes and
         // ETags the batch was built from, for reproducing the fetch later.
@@ -127,11 +160,18 @@ impl AwsCloudService {
         }
 
         Ok(Fetched {
-            parts: vec![RawPart::new(
-                PART_EXPORT_LISTING,
-                format!("s3://{}/{}", uri.bucket, uri.prefix),
-                listing_json,
-            )],
+            parts: vec![
+                RawPart::new(
+                    PART_EXPORT_LISTING,
+                    format!("s3://{}/{}", uri.bucket, uri.prefix),
+                    listing_json,
+                ),
+                RawPart::new(
+                    PART_EXPORT_MANIFEST,
+                    format!("s3://{}/{}", uri.bucket, manifest_key),
+                    manifest,
+                ),
+            ],
             payload_files,
         })
     }
@@ -384,6 +424,74 @@ fn is_period_data(key: &str, label: &str) -> bool {
     key.to_ascii_lowercase()
         .contains(&format!("billing_period={label}"))
         && aws_focus::ExportFormat::of_key(key).is_some()
+}
+
+/// Where the manifest of the delivery `data_key` belongs to lives:
+/// `<root>/<export-name>/data/<partition>/[<run>/]<file>` has its latest
+/// manifest at `<root>/<export-name>/metadata/<partition>/<export-name>-Manifest.json`.
+/// `None` for a key that is not under a `data/<partition>/` directory.
+fn manifest_key(data_key: &str, label: &str) -> Option<String> {
+    let marker = format!("billing_period={label}");
+    let segments: Vec<&str> = data_key.split('/').collect();
+    let partition = segments
+        .iter()
+        .position(|segment| segment.to_ascii_lowercase() == marker)?;
+    if partition < 2 || segments[partition - 1] != "data" {
+        return None;
+    }
+    let export_name = segments[partition - 2];
+    let root = segments[..partition - 1].join("/");
+    Some(format!(
+        "{root}/metadata/{}/{export_name}-Manifest.json",
+        segments[partition]
+    ))
+}
+
+/// The object keys a manifest's `dataFiles` names in `bucket`.
+fn manifest_data_keys(manifest: &str, bucket: &str) -> Result<Vec<String>> {
+    #[derive(serde::Deserialize)]
+    struct Manifest {
+        #[serde(rename = "dataFiles")]
+        data_files: Vec<String>,
+    }
+    let manifest: Manifest = serde_json::from_str(manifest)
+        .map_err(|e| anyhow!("Export manifest has no readable dataFiles list: {}", e))?;
+    let prefix = format!("s3://{bucket}/");
+    manifest
+        .data_files
+        .iter()
+        .map(|uri| {
+            uri.strip_prefix(&prefix)
+                .map(str::to_string)
+                .ok_or_else(|| anyhow!("Export manifest names a file outside {}: {}", bucket, uri))
+        })
+        .collect()
+}
+
+/// The listed objects the manifest names, in the manifest's order. `Err`
+/// carries the named keys that were not listed: a manifest describes a
+/// complete delivery, so a missing file is not one to read around.
+fn files_named_by_manifest(
+    listed: Vec<crate::cloud::s3::S3Object>,
+    named: &[String],
+) -> std::result::Result<Vec<crate::cloud::s3::S3Object>, Vec<String>> {
+    let mut by_key: std::collections::HashMap<String, crate::cloud::s3::S3Object> = listed
+        .into_iter()
+        .map(|object| (object.key.clone(), object))
+        .collect();
+    let mut kept = Vec::with_capacity(named.len());
+    let mut missing = Vec::new();
+    for key in named {
+        match by_key.remove(key) {
+            Some(object) => kept.push(object),
+            None => missing.push(key.clone()),
+        }
+    }
+    if missing.is_empty() {
+        Ok(kept)
+    } else {
+        Err(missing)
+    }
 }
 
 /// The GetCostAndUsage request the ledger is built from.
@@ -692,6 +800,68 @@ fn cost_explorer_error(status: u16, body: &str) -> anyhow::Error {
 mod tests {
     use super::*;
     use crate::ledger::{ChargeCategory, CostBasis};
+
+    /// The layout of a real FOCUS export under a user's prefix, and of a
+    /// "create new" one whose runs have folders of their own: both have
+    /// their latest manifest in the partition folder under metadata/.
+    #[test]
+    fn a_data_key_leads_to_its_partitions_manifest() {
+        assert_eq!(
+            manifest_key(
+                "cloudbridgeFOCUS/cloudbridge/data/billing_period=2026-09/cloudbridge-00001.csv.gz",
+                "2026-09"
+            )
+            .as_deref(),
+            Some("cloudbridgeFOCUS/cloudbridge/metadata/billing_period=2026-09/cloudbridge-Manifest.json")
+        );
+        assert_eq!(
+            manifest_key(
+                "p/cur/data/BILLING_PERIOD=2026-09/20260930T0100Z-abc/cur-00001.snappy.parquet",
+                "2026-09"
+            )
+            .as_deref(),
+            Some("p/cur/metadata/BILLING_PERIOD=2026-09/cur-Manifest.json")
+        );
+        assert_eq!(
+            manifest_key("loose/billing_period=2026-09/x.csv.gz", "2026-09"),
+            None
+        );
+    }
+
+    /// A "create new" export keeps every run: only the files the manifest
+    /// names are read, so the month is counted once.
+    #[test]
+    fn only_the_files_the_manifest_names_are_read() {
+        let object = |key: &str| crate::cloud::s3::S3Object {
+            key: key.to_string(),
+            size: 1,
+            etag: None,
+        };
+        let listed = vec![
+            object("p/cur/data/BILLING_PERIOD=2026-09/20260929-old/cur-00001.csv.gz"),
+            object("p/cur/data/BILLING_PERIOD=2026-09/20260930-new/cur-00001.csv.gz"),
+            object("p/cur/data/BILLING_PERIOD=2026-09/20260930-new/cur-00002.csv.gz"),
+        ];
+        let manifest = r#"{"executionId":"new","dataFiles":[
+            "s3://bucket/p/cur/data/BILLING_PERIOD=2026-09/20260930-new/cur-00001.csv.gz",
+            "s3://bucket/p/cur/data/BILLING_PERIOD=2026-09/20260930-new/cur-00002.csv.gz"
+        ],"additionalOutputFiles":[]}"#;
+
+        let named = manifest_data_keys(manifest, "bucket").unwrap();
+        let kept = files_named_by_manifest(listed.clone(), &named).unwrap();
+        let keys: Vec<&str> = kept.iter().map(|o| o.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            [
+                "p/cur/data/BILLING_PERIOD=2026-09/20260930-new/cur-00001.csv.gz",
+                "p/cur/data/BILLING_PERIOD=2026-09/20260930-new/cur-00002.csv.gz"
+            ]
+        );
+
+        let missing = files_named_by_manifest(listed[..1].to_vec(), &named).unwrap_err();
+        assert_eq!(missing.len(), 2);
+        assert!(manifest_data_keys(manifest, "other-bucket").is_err());
+    }
 
     /// A FOCUS export spells its partition in lower case; a CUR 2.0 one
     /// in upper. Both are the period's data, the manifests are not.

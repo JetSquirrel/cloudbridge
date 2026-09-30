@@ -12,7 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carry the `s3://bucket/prefix` URI of its CUR 2.0 "FOCUS 1.2 with AWS
   columns" export; refresh then reads the export's objects from the bucket,
   Parquet or gzipped CSV as the export was configured — resource-level
-  rows with tags, and no per-request Cost Explorer cost.
+  rows with tags, and no per-request Cost Explorer cost. Only the files
+  the period's export manifest names are read, so an export set to
+  "create new", which keeps every refresh, still counts a month once.
   Accounts without a URI keep the Cost Explorer channel. A period the
   export has not delivered yet is skipped, never written as an empty
   month, and the downloaded objects live in the raw store so
