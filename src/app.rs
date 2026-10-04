@@ -10,8 +10,8 @@ use gpui_kit::*;
 use crate::ui::data::SyncStatus;
 use crate::ui::{
     account_detail::AccountDetailView, accounts::AccountsView, alerts::AlertsView,
-    attribution::AttributionView, overview::OverviewView, query::QueryView, rules::RulesView,
-    settings::SettingsView,
+    attribution::AttributionView, models::ModelsView, overview::OverviewView, query::QueryView,
+    rules::RulesView, settings::SettingsView,
 };
 use crate::ui::{fmt, theme};
 
@@ -21,6 +21,7 @@ actions!(
         SwitchToOverview,
         SwitchToAlerts,
         SwitchToAttribution,
+        SwitchToModels,
         SwitchToQuery,
         SwitchToAccounts,
         SwitchToRules,
@@ -158,6 +159,8 @@ pub struct CloudBridgeApp {
     alerts_view: Entity<AlertsView>,
     /// Attribution view
     attribution_view: Entity<AttributionView>,
+    /// Models view
+    models_view: Entity<ModelsView>,
     /// Query view
     query_view: Entity<QueryView>,
     /// Accounts view
@@ -190,6 +193,7 @@ pub enum CurrentView {
     Overview,
     Alerts,
     Attribution,
+    Models,
     Query,
     Accounts,
     /// Per-account drill-down; not a sidebar entry — the Accounts nav item
@@ -208,6 +212,7 @@ impl CloudBridgeApp {
         let overview_view = cx.new(|cx| OverviewView::new(window, cx));
         let alerts_view = cx.new(|cx| AlertsView::new(window, cx));
         let attribution_view = cx.new(|cx| AttributionView::new(window, cx));
+        let models_view = cx.new(|cx| ModelsView::new(window, cx));
         let query_view = cx.new(|cx| QueryView::new(window, cx));
         let accounts_view = cx.new(|cx| AccountsView::new(window, cx));
         let account_detail_view = cx.new(|cx| AccountDetailView::new(window, cx));
@@ -216,11 +221,14 @@ impl CloudBridgeApp {
 
         // Shell-wide shortcuts: ⌘1…⌘8 switch pages in sidebar order
         // (⌘8 opens the Account drill-down with the account it last
-        // showed), ⌘R reloads the page on screen. `secondary` is ⌘ on macOS
-        // and Ctrl elsewhere — `cmd` would be the Windows key there, whose
-        // digit and R chords the OS keeps for itself. No key context, so
-        // they fire regardless of which page or input has focus; the action
-        // listeners sit on the shell's root element in `render`.
+        // showed), ⌘9 the Models page — added after the first eight were
+        // handed out, so it keeps the next free digit rather than
+        // renumbering the others — and ⌘R reloads the page on screen.
+        // `secondary` is ⌘ on macOS and Ctrl elsewhere — `cmd` would be the
+        // Windows key there, whose digit and R chords the OS keeps for
+        // itself. No key context, so they fire regardless of which page or
+        // input has focus; the action listeners sit on the shell's root
+        // element in `render`.
         cx.bind_keys([
             KeyBinding::new("secondary-1", SwitchToOverview, None),
             KeyBinding::new("secondary-2", SwitchToAlerts, None),
@@ -230,6 +238,7 @@ impl CloudBridgeApp {
             KeyBinding::new("secondary-6", SwitchToRules, None),
             KeyBinding::new("secondary-7", SwitchToSettings, None),
             KeyBinding::new("secondary-8", SwitchToAccountDetail, None),
+            KeyBinding::new("secondary-9", SwitchToModels, None),
             KeyBinding::new("secondary-r", ReloadCurrentView, None),
         ]);
 
@@ -287,6 +296,7 @@ impl CloudBridgeApp {
             overview_view,
             alerts_view,
             attribution_view,
+            models_view,
             query_view,
             accounts_view,
             account_detail_view,
@@ -338,6 +348,13 @@ impl CloudBridgeApp {
                 }
             }),
             CurrentView::Attribution => self.attribution_view.update(cx, |v, cx| {
+                if first_visit {
+                    v.ensure_loaded(cx);
+                } else {
+                    v.reload(cx);
+                }
+            }),
+            CurrentView::Models => self.models_view.update(cx, |v, cx| {
                 if first_visit {
                     v.ensure_loaded(cx);
                 } else {
@@ -472,6 +489,16 @@ impl CloudBridgeApp {
                 IconName::ChartPie,
                 CurrentView::Attribution,
                 current == CurrentView::Attribution,
+                None,
+                cx,
+            ))
+            // Unlike Query, Rules and Settings below, Models rides on the
+            // demo ledger too, so the wasm demo shows it.
+            .child(self.nav_item(
+                "Models",
+                IconName::Cpu,
+                CurrentView::Models,
+                current == CurrentView::Models,
                 None,
                 cx,
             ))
@@ -644,6 +671,7 @@ impl CloudBridgeApp {
             CurrentView::Overview => div().size_full().child(self.overview_view.clone()),
             CurrentView::Alerts => div().size_full().child(self.alerts_view.clone()),
             CurrentView::Attribution => div().size_full().child(self.attribution_view.clone()),
+            CurrentView::Models => div().size_full().child(self.models_view.clone()),
             CurrentView::Query => div().size_full().child(self.query_view.clone()),
             CurrentView::Accounts => div().size_full().child(self.accounts_view.clone()),
             CurrentView::AccountDetail => div().size_full().child(self.account_detail_view.clone()),
@@ -669,6 +697,9 @@ impl Render for CloudBridgeApp {
             }))
             .on_action(cx.listener(|this, _: &SwitchToAttribution, _, cx| {
                 this.switch_to(CurrentView::Attribution, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SwitchToModels, _, cx| {
+                this.switch_to(CurrentView::Models, cx);
             }))
             .on_action(cx.listener(|this, _: &SwitchToQuery, _, cx| {
                 this.switch_to(CurrentView::Query, cx);

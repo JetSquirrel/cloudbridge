@@ -21,14 +21,14 @@ use chrono::{DateTime, Utc};
 use super::{Channel, ChargeCategory, PeriodKey};
 use crate::analytics::{self, QualityCounts, TwoPeriodBuckets};
 use crate::memory::{self, NormalizedRow};
-use crate::model::BillingPeriod;
+use crate::model::{BillingPeriod, TokenClass};
 use crate::store::Connection;
 
 pub use crate::model::{
-    AdhocResult, Balance, BreakdownDim, CategoryDelta, CostChangeDecomposition, DailyTotal,
-    DataQualityIssue, DataQualityKind, ForecastBands, IssueSeverity, LedgerAccount, MovementKind,
-    PeriodForecast, PeriodOverPeriod, ServiceDailyTotal, ServiceMovement, ServiceTagUsage,
-    TopResource, UntaggedCharge, UntaggedServiceUsage,
+    AdhocResult, Balance, BreakdownDim, CategoryDelta, CostChangeDecomposition, DailyModelTokens,
+    DailyTotal, DataQualityIssue, DataQualityKind, ForecastBands, IssueSeverity, LedgerAccount,
+    ModelTokenSummary, MovementKind, PeriodForecast, PeriodOverPeriod, ServiceDailyTotal,
+    ServiceMovement, ServiceTagUsage, TopResource, UntaggedCharge, UntaggedServiceUsage,
 };
 
 /// The bucket a charge with no value for the tag key lands in, as the view's
@@ -1362,6 +1362,160 @@ fn trailing_daily_average_at(
     Ok(analytics::trailing_average(
         day_count, months, now, &monthly,
     ))
+}
+
+// ==================== Model token economics ====================
+
+/// The sources whose `service_category` names a model rather than a cloud
+/// SKU — the registry's ids for OpenAI, Anthropic and DeepSeek, stored
+/// verbatim in `provider`. A bucket of theirs qualifies on the id alone, so
+/// a model that reported cost but no token rows still appears; any other
+/// bucket has to carry a token-class pricing unit to qualify.
+const MODEL_PROVIDERS: &[&str] = &["OpenAI", "Anthropic", "DeepSeek"];
+
+/// Whether a pricing unit meters something token-shaped — tokens of any
+/// class, or requests — as opposed to an ordinary usage unit like hours or
+/// GB-months, which [`analytics::classify_token_unit`] leaves as `Other`.
+fn is_token_unit(unit: &str) -> bool {
+    !matches!(analytics::classify_token_unit(unit), TokenClass::Other)
+}
+
+/// Cost and token usage per `(provider, model)` over a charge-time window,
+/// against the same totals of a previous window — the Models page's table.
+///
+/// The model key is `(provider, service_category)`: for the model sources
+/// the import writes the model name into `service_category`. Rows with no
+/// category have no model to attribute to and are left out. `usage_cost` is
+/// the sum over Usage rows in `[since, until)` and `previous_cost` the same
+/// over `[prev_since, prev_until)`, so a credit does not shrink what was
+/// consumed; a charge no rate covers adds nothing to either, as `sum`
+/// ignores NULL. Token totals are sums of `pricing_quantity` by class —
+/// input toward `tokens_in`, output toward `tokens_out`, cache toward
+/// `tokens_cache`; request and unclassed units meter no tokens. A row with a
+/// quantity but no billable amount still counts its tokens, so an
+/// absent-basis model can report `has_token_data` at zero cost. Largest
+/// `usage_cost` first.
+pub fn model_token_summary(
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    prev_since: DateTime<Utc>,
+    prev_until: DateTime<Utc>,
+) -> Result<Vec<ModelTokenSummary>> {
+    #[derive(Default)]
+    struct Bucket {
+        usage_cost: f64,
+        previous_cost: f64,
+        tokens_in: f64,
+        tokens_out: f64,
+        tokens_cache: f64,
+        /// Any row under the key carried a token-class unit, in either
+        /// window — the qualification for keys outside [`MODEL_PROVIDERS`].
+        has_token_unit: bool,
+    }
+
+    read(|all| {
+        let mut buckets: BTreeMap<(String, String), Bucket> = BTreeMap::new();
+        for row in all {
+            let Some(model) = row.service_category.as_deref().filter(|m| !m.is_empty()) else {
+                continue;
+            };
+            let current = row.charge_period_start >= since && row.charge_period_start < until;
+            let previous =
+                row.charge_period_start >= prev_since && row.charge_period_start < prev_until;
+            if !current && !previous {
+                continue;
+            }
+
+            let entry = buckets
+                .entry((row.provider.clone(), model.to_string()))
+                .or_default();
+
+            if let Some(unit) = row.pricing_unit.as_deref() {
+                entry.has_token_unit |= is_token_unit(unit);
+                if current {
+                    let quantity = row.pricing_quantity.unwrap_or(0.0);
+                    match analytics::classify_token_unit(unit) {
+                        TokenClass::Input => entry.tokens_in += quantity,
+                        TokenClass::Output => entry.tokens_out += quantity,
+                        TokenClass::Cache => entry.tokens_cache += quantity,
+                        TokenClass::Request | TokenClass::Other => {}
+                    }
+                }
+            }
+
+            if row.charge_category == ChargeCategory::Usage {
+                let cost = row.billed_cost_base.unwrap_or(0.0);
+                if current {
+                    entry.usage_cost += cost;
+                }
+                if previous {
+                    entry.previous_cost += cost;
+                }
+            }
+        }
+
+        let mut summaries: Vec<ModelTokenSummary> = buckets
+            .into_iter()
+            .filter(|((provider, _), bucket)| {
+                bucket.has_token_unit || MODEL_PROVIDERS.contains(&provider.as_str())
+            })
+            .map(|((provider, model), bucket)| ModelTokenSummary {
+                provider,
+                model,
+                usage_cost: bucket.usage_cost,
+                previous_cost: bucket.previous_cost,
+                tokens_in: bucket.tokens_in,
+                tokens_out: bucket.tokens_out,
+                tokens_cache: bucket.tokens_cache,
+                has_token_data: bucket.tokens_in + bucket.tokens_out + bucket.tokens_cache > 0.0,
+            })
+            .collect();
+        summaries.sort_by(|a, b| b.usage_cost.total_cmp(&a.usage_cost));
+
+        summaries
+    })
+}
+
+/// Total tokens per `(day, model)` over a charge-time window `[since,
+/// until)`, oldest day first — the Models page's daily series.
+///
+/// Only token-unit rows contribute, and only input, output and cache classes
+/// count toward the total: a requests-metered row meters no tokens. Days
+/// with no token rows are absent, as they are from every other daily series.
+pub fn daily_model_tokens(
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+) -> Result<Vec<DailyModelTokens>> {
+    read(|all| {
+        // Keyed `(day, model)`, so the map's own order is the day ordering
+        // the series is read back in.
+        let mut grouped: BTreeMap<(String, String), f64> = BTreeMap::new();
+        for row in all {
+            if row.charge_period_start < since || row.charge_period_start >= until {
+                continue;
+            }
+            let Some(model) = row.service_category.as_deref().filter(|m| !m.is_empty()) else {
+                continue;
+            };
+            let Some(unit) = row.pricing_unit.as_deref() else {
+                continue;
+            };
+            let tokens = match analytics::classify_token_unit(unit) {
+                TokenClass::Input | TokenClass::Output | TokenClass::Cache => {
+                    row.pricing_quantity.unwrap_or(0.0)
+                }
+                TokenClass::Request | TokenClass::Other => continue,
+            };
+            *grouped
+                .entry((memory::day_of(row.charge_period_start), model.to_string()))
+                .or_insert(0.0) += tokens;
+        }
+
+        grouped
+            .into_iter()
+            .map(|((day, model), tokens)| DailyModelTokens { day, model, tokens })
+            .collect()
+    })
 }
 
 // ==================== Data-quality summary ====================

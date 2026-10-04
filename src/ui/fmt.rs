@@ -64,6 +64,34 @@ pub fn amount(value: f64, currency: &str) -> String {
     format!("{sign}{prefix}{grouped}")
 }
 
+/// A large count with an adaptive magnitude suffix: whole units under a
+/// thousand (`843`), one decimal with a k/M/B suffix above it (`12.4k`,
+/// `3.4M`, `5.6B`). Token counts are what this is for — a raw `84123841`
+/// is unreadable in a table cell. Sign and zero pass through the same path.
+pub fn quantity(value: f64) -> String {
+    let sign = if value < 0.0 { "-" } else { "" };
+    let magnitude = value.abs();
+    if magnitude < 1_000.0 {
+        format!("{sign}{}", magnitude.round() as i64)
+    } else if magnitude < 1_000_000.0 {
+        format!("{sign}{:.1}k", magnitude / 1_000.0)
+    } else if magnitude < 1_000_000_000.0 {
+        format!("{sign}{:.1}M", magnitude / 1_000_000.0)
+    } else {
+        format!("{sign}{:.1}B", magnitude / 1_000_000_000.0)
+    }
+}
+
+/// A per-million-token price with the currency's symbol, e.g. `$4.20/1M`.
+/// `None` — no token base to divide by — reads as a dash rather than an
+/// invented number.
+pub fn unit_cost(cost: Option<f64>, currency: &str) -> String {
+    match cost {
+        Some(cost) => format!("{}/1M", amount(cost, currency)),
+        None => "—".to_string(),
+    }
+}
+
 /// A timestamp as an age: `just now`, `N min ago`, `N h ago`, `N d ago`,
 /// or the calendar date once it is more than a week out.
 pub fn relative_time(at: DateTime<Utc>) -> String {
@@ -134,5 +162,28 @@ mod tests {
     fn a_change_percentage_carries_its_sign() {
         assert_eq!(change_pct(12.5), "+12.5%");
         assert_eq!(change_pct(-3.26), "-3.3%");
+    }
+
+    #[test]
+    fn quantities_pick_a_readable_magnitude() {
+        assert_eq!(quantity(0.0), "0");
+        assert_eq!(quantity(843.0), "843");
+        assert_eq!(quantity(999.4), "999");
+        assert_eq!(quantity(12_400.0), "12.4k");
+        assert_eq!(quantity(3_400_000.0), "3.4M");
+        assert_eq!(quantity(5_600_000_000.0), "5.6B");
+    }
+
+    #[test]
+    fn a_negative_quantity_keeps_its_sign() {
+        assert_eq!(quantity(-843.0), "-843");
+        assert_eq!(quantity(-12_400.0), "-12.4k");
+    }
+
+    #[test]
+    fn a_unit_cost_prices_a_million_tokens() {
+        assert_eq!(unit_cost(Some(4.2), "USD"), "$4.20/1M");
+        assert_eq!(unit_cost(Some(140.0), "USD"), "$140/1M");
+        assert_eq!(unit_cost(None, "USD"), "—");
     }
 }

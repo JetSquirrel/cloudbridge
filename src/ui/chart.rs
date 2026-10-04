@@ -293,11 +293,27 @@ impl Default for ChartHover {
 /// `px(...)` values here are measured runtime geometry (the coding guide's
 /// accepted exception); every size and offset derives from the rem scale
 /// so the overlay zooms with the base font.
+///
+/// The tooltip formats the point as a currency amount; pages charting
+/// something else (the Models page's token counts) use
+/// [`hover_overlay_with`] with their own formatter.
 pub fn hover_overlay(
     cx: &App,
     hover: &ChartHover,
     points: &[ChartPoint],
     currency: &str,
+    rem: Pixels,
+) -> Option<Vec<AnyElement>> {
+    hover_overlay_with(cx, hover, points, &|v| fmt::amount(v, currency), rem)
+}
+
+/// [`hover_overlay`] with the tooltip's value formatted by `format`
+/// instead of as a currency amount.
+pub fn hover_overlay_with(
+    cx: &App,
+    hover: &ChartHover,
+    points: &[ChartPoint],
+    format: &dyn Fn(f64) -> String,
     rem: Pixels,
 ) -> Option<Vec<AnyElement>> {
     let index = hover.index()?;
@@ -368,7 +384,7 @@ pub fn hover_overlay(
                     .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme::text_primary(cx))
-                    .child(fmt::amount(point.amount, currency)),
+                    .child(format(point.amount)),
             )
             .into_any_element(),
     ])

@@ -542,6 +542,68 @@ pub struct ForecastBands {
     pub daily_stddev: f64,
 }
 
+/// Which side of an LLM bill a token-metered row belongs to, by the pricing
+/// unit the provider reports it in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenClass {
+    /// `"Input Tokens"`, and the bare `"Tokens"` aggregate Aliyun and
+    /// Volcengine report, which is input-side.
+    Input,
+    Output,
+    /// Any cache flavour: cached input, cache read, cache creation.
+    Cache,
+    /// A per-request charge, not a token charge.
+    Request,
+    /// A pricing unit the classification does not know.
+    Other,
+}
+
+/// One model's token economics for a billing period, against the one before
+/// it — the row the Models page is built from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelTokenSummary {
+    pub provider: String,
+    /// The model name, as the import wrote it into `service_category`.
+    pub model: String,
+    /// In the reporting currency.
+    pub usage_cost: f64,
+    /// The previous period's spend, in the reporting currency.
+    pub previous_cost: f64,
+    pub tokens_in: f64,
+    pub tokens_out: f64,
+    pub tokens_cache: f64,
+    /// `false` for a model whose rows carry cost but no token-metered
+    /// pricing quantities — unit economics cannot be computed for it.
+    pub has_token_data: bool,
+}
+
+/// One model's tokens on one day, as the Models page's daily series plots it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DailyModelTokens {
+    /// `YYYY-MM-DD`.
+    pub day: String,
+    pub model: String,
+    pub tokens: f64,
+}
+
+/// How loudly a token-economics finding should be presented.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FindingSeverity {
+    Info,
+    Notice,
+    Warning,
+}
+
+/// One observation about the period's model spend — the same pattern as
+/// [`DataQualityIssue`], for the Models page.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TokenFinding {
+    pub title: String,
+    /// User-readable, with the numbers in it.
+    pub detail: String,
+    pub severity: FindingSeverity,
+}
+
 /// How bad a data-quality issue is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IssueSeverity {

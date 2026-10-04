@@ -43,6 +43,20 @@ AWS columns) can be read from S3. This extends P1's export channel; it is
 not part of 0.3.1. OSS collection remains future work. S3 reads avoid Cost
 Explorer request charges, but S3 storage and request fees still apply.
 
+Also unreleased: the Models page, the first read of the token quantities
+the ledger has stored since P0. It groups model-provider rows by
+`(provider, service_category)` and reports per-model usage cost, token
+volumes split input/output/cache (absent-basis rows included — they carry
+counts, not money), blended cost per million tokens, a price-versus-volume
+decomposition of each model's cost change, cache-read share, and
+deterministic findings (low cache utilization, spend concentration, rising
+unit price, cost-only models without token metering). The statistics are
+pure functions in `analytics.rs`; the reads exist in both backends with
+identical signatures, and the demo bill seeds OpenAI and Anthropic accounts
+with per-model token rows so the page renders in the browser demo. Model
+names embedded in Alibaba/Volcengine billing-item text are not extracted
+yet.
+
 A source is a `SourceDescriptor` registry entry rather than an enum
 variant. API-backed sources implement `BillingSource`; file-only sources
 provide a bill parser without an API client. The ingest pipeline persists
