@@ -14,10 +14,10 @@ use super::{with_connection_ref, Channel, PeriodKey};
 use crate::analytics::{self, QualityCounts, TwoPeriodBuckets};
 use crate::model::BillingPeriod;
 pub use crate::model::{
-    AdhocResult, Balance, BreakdownDim, CategoryDelta, CostChangeDecomposition, DailyTotal,
-    DataQualityIssue, DataQualityKind, ForecastBands, IssueSeverity, LedgerAccount, MovementKind,
-    PeriodForecast, PeriodOverPeriod, ServiceDailyTotal, ServiceMovement, ServiceTagUsage,
-    TopResource, UntaggedCharge, UntaggedServiceUsage,
+    AdhocResult, Balance, BreakdownDim, CategoryDelta, CostChangeDecomposition, DailyModelTokens,
+    DailyTotal, DataQualityIssue, DataQualityKind, ForecastBands, IssueSeverity, LedgerAccount,
+    ModelTokenSummary, MovementKind, PeriodForecast, PeriodOverPeriod, ServiceDailyTotal,
+    ServiceMovement, ServiceTagUsage, TopResource, UntaggedCharge, UntaggedServiceUsage,
 };
 
 /// Total charged in one billing period, in the reporting currency.
@@ -1697,6 +1697,180 @@ fn tag_usage_breakdown_by_service_of(
     Ok(rows)
 }
 
+// ==================== Model token economics ====================
+//
+// LLM providers meter in tokens: a model-provider import writes the model
+// into `service_category` and the token count into `pricing_quantity`,
+// priced in one of the units `analytics::classify_token_unit` knows. These
+// reads group that usage by `(provider, service_category)`; everything
+// computed from the groups is pure, in `analytics`.
+
+/// [`analytics::classify_token_unit`] as a SQL expression over
+/// `pricing_unit`, so a quantity lands in the same class here as it would in
+/// the pure layer — case-insensitive and trimmed, as the classifier is.
+const TOKEN_CLASS_SQL: &str = "CASE lower(trim(pricing_unit))
+         WHEN 'input tokens' THEN 'in'
+         WHEN 'tokens' THEN 'in'
+         WHEN 'output tokens' THEN 'out'
+         WHEN 'cached input tokens' THEN 'cache'
+         WHEN 'cache read tokens' THEN 'cache'
+         WHEN 'cache creation tokens' THEN 'cache'
+         WHEN 'requests' THEN 'request'
+         WHEN 'web search requests' THEN 'request'
+         ELSE 'other' END";
+
+/// Token economics per `(provider, model)` over the charge-time window
+/// `[since, until)`, with the previous window `[prev_since, prev_until)`
+/// alongside for comparison, largest current-window usage first.
+///
+/// A bucket qualifies when any of its rows carries a token-shaped pricing
+/// unit — any class [`analytics::classify_token_unit`] knows, requests
+/// included, though a request meters no tokens — or when it is a model
+/// provider's row: `OpenAI`, `Anthropic` and `DeepSeek` are the registry
+/// ids, so a provider that reports cost without token counts (DeepSeek
+/// today) still appears, with `has_token_data` false. Rows with no model in
+/// `service_category` are left out. Token sums are over the current window
+/// only; `cost_basis='absent'` rows count toward them, since they carry
+/// token quantities with a NULL cost.
+pub fn model_token_summary(
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    prev_since: DateTime<Utc>,
+    prev_until: DateTime<Utc>,
+) -> Result<Vec<ModelTokenSummary>> {
+    with_connection_ref(|conn| model_token_summary_of(conn, since, until, prev_since, prev_until))
+}
+
+pub(crate) fn model_token_summary_of(
+    conn: &Connection,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    prev_since: DateTime<Utc>,
+    prev_until: DateTime<Utc>,
+) -> Result<Vec<ModelTokenSummary>> {
+    // One pass over the span covering both windows; the FILTERs split it.
+    let scan_start = since.min(prev_since);
+    let scan_end = until.max(prev_until);
+    let stamp = |instant: DateTime<Utc>| instant.format(TIMESTAMP_FORMAT).to_string();
+
+    let mut stmt = conn.prepare(&format!(
+        "SELECT provider, service_category AS model,
+                coalesce(sum(billed_cost_base) FILTER (
+                    WHERE charge_category = 'Usage'
+                      AND charge_period_start >= CAST(? AS TIMESTAMP)
+                      AND charge_period_start < CAST(? AS TIMESTAMP)), 0.0) AS usage_cost,
+                coalesce(sum(billed_cost_base) FILTER (
+                    WHERE charge_category = 'Usage'
+                      AND charge_period_start >= CAST(? AS TIMESTAMP)
+                      AND charge_period_start < CAST(? AS TIMESTAMP)), 0.0) AS previous_cost,
+                coalesce(sum(pricing_quantity) FILTER (
+                    WHERE {TOKEN_CLASS_SQL} = 'in'
+                      AND charge_period_start >= CAST(? AS TIMESTAMP)
+                      AND charge_period_start < CAST(? AS TIMESTAMP)), 0.0) AS tokens_in,
+                coalesce(sum(pricing_quantity) FILTER (
+                    WHERE {TOKEN_CLASS_SQL} = 'out'
+                      AND charge_period_start >= CAST(? AS TIMESTAMP)
+                      AND charge_period_start < CAST(? AS TIMESTAMP)), 0.0) AS tokens_out,
+                coalesce(sum(pricing_quantity) FILTER (
+                    WHERE {TOKEN_CLASS_SQL} = 'cache'
+                      AND charge_period_start >= CAST(? AS TIMESTAMP)
+                      AND charge_period_start < CAST(? AS TIMESTAMP)), 0.0) AS tokens_cache
+         FROM {NORMALIZED_VIEW}
+         WHERE charge_period_start >= CAST(? AS TIMESTAMP)
+           AND charge_period_start < CAST(? AS TIMESTAMP)
+           AND nullif(service_category, '') IS NOT NULL
+         GROUP BY provider, model
+         HAVING bool_or({TOKEN_CLASS_SQL} <> 'other')
+             OR provider IN ('OpenAI', 'Anthropic', 'DeepSeek')
+         ORDER BY usage_cost DESC"
+    ))?;
+
+    let rows = stmt
+        .query_map(
+            params![
+                stamp(since),
+                stamp(until),
+                stamp(prev_since),
+                stamp(prev_until),
+                stamp(since),
+                stamp(until),
+                stamp(since),
+                stamp(until),
+                stamp(since),
+                stamp(until),
+                stamp(scan_start),
+                stamp(scan_end),
+            ],
+            |row| {
+                let tokens_in = row.get::<_, f64>(4)?;
+                let tokens_out = row.get::<_, f64>(5)?;
+                let tokens_cache = row.get::<_, f64>(6)?;
+                Ok(ModelTokenSummary {
+                    provider: row.get(0)?,
+                    model: row.get(1)?,
+                    usage_cost: row.get(2)?,
+                    previous_cost: row.get(3)?,
+                    has_token_data: tokens_in + tokens_out + tokens_cache > 0.0,
+                    tokens_in,
+                    tokens_out,
+                    tokens_cache,
+                })
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows)
+}
+
+/// Token counts per `(day, model)` over `[since, until)`, oldest first —
+/// the Models page's daily series. Only token-metered rows count: a
+/// per-request charge is not a token count, and `cost_basis='absent'` rows
+/// count, as in [`model_token_summary`]. The rollup cannot answer this —
+/// it stores no quantities and no model — so the view is read directly.
+pub fn daily_model_tokens(
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+) -> Result<Vec<DailyModelTokens>> {
+    with_connection_ref(|conn| daily_model_tokens_of(conn, since, until))
+}
+
+pub(crate) fn daily_model_tokens_of(
+    conn: &Connection,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+) -> Result<Vec<DailyModelTokens>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT strftime(charge_period_start, '%Y-%m-%d') AS day,
+                service_category AS model,
+                sum(pricing_quantity) AS tokens
+         FROM {NORMALIZED_VIEW}
+         WHERE charge_period_start >= CAST(? AS TIMESTAMP)
+           AND charge_period_start < CAST(? AS TIMESTAMP)
+           AND nullif(service_category, '') IS NOT NULL
+           AND {TOKEN_CLASS_SQL} IN ('in', 'out', 'cache')
+         GROUP BY day, model
+         ORDER BY day"
+    ))?;
+
+    let rows = stmt
+        .query_map(
+            params![
+                since.format(TIMESTAMP_FORMAT).to_string(),
+                until.format(TIMESTAMP_FORMAT).to_string()
+            ],
+            |row| {
+                Ok(DailyModelTokens {
+                    day: row.get(0)?,
+                    model: row.get(1)?,
+                    tokens: row.get::<_, Option<f64>>(2)?.unwrap_or(0.0),
+                })
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows)
+}
+
 // ==================== Per-account reads ====================
 //
 // The Account detail page's series: each mirrors its cross-account
@@ -2140,7 +2314,7 @@ mod tests {
     use super::*;
     use crate::cloud::BillingPeriod;
     use crate::ledger::schema;
-    use crate::ledger::{BalanceSnapshot, Channel, Charge, ChargeCategory};
+    use crate::ledger::{BalanceSnapshot, Channel, Charge, ChargeCategory, CostBasis};
     use chrono::TimeZone;
 
     fn conn(reporting_currency: &str) -> Connection {
@@ -3827,5 +4001,210 @@ mod tests {
         assert_eq!(issues[0].affected_amount, Some(-8.0));
         assert_eq!(issues[0].affected_count, 1);
         assert!(issues[0].message.contains("Unreconciled"));
+    }
+
+    /// A usage charge of one model, metered in `unit`. `None` cost is an
+    /// absent-basis row: it carries the token count and no amount.
+    fn model_charge(
+        provider_service: &str,
+        model: &str,
+        amount: Option<f64>,
+        unit: Option<&str>,
+        quantity: Option<f64>,
+        day: u32,
+    ) -> Charge {
+        Charge {
+            service_name: Some(provider_service.to_string()),
+            service_category: Some(model.to_string()),
+            billed_cost: amount,
+            cost_basis: match amount {
+                Some(_) => CostBasis::Authoritative,
+                None => CostBasis::Absent,
+            },
+            pricing_unit: unit.map(str::to_string),
+            pricing_quantity: quantity,
+            ..charge("ignored", amount.unwrap_or(0.0), "USD", day)
+        }
+    }
+
+    /// Seeds one window of model usage across providers, plus a July charge
+    /// for the previous-window comparison. Returns the connection.
+    fn model_ledger() -> Connection {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &PeriodKey::new("OpenAI", "acct-5", "2026-08"),
+            &[
+                model_charge(
+                    "OpenAI",
+                    "gpt-5",
+                    Some(12.0),
+                    Some("Input Tokens"),
+                    Some(4_000_000.0),
+                    2,
+                ),
+                model_charge(
+                    "OpenAI",
+                    "gpt-5",
+                    Some(30.0),
+                    Some("Output Tokens"),
+                    Some(1_000_000.0),
+                    3,
+                ),
+                model_charge(
+                    "OpenAI",
+                    "gpt-5",
+                    Some(1.5),
+                    Some("Cache Read Tokens"),
+                    Some(5_000_000.0),
+                    3,
+                ),
+                // Absent basis: token count with no amount attached.
+                model_charge(
+                    "OpenAI",
+                    "gpt-5",
+                    None,
+                    Some("Input Tokens"),
+                    Some(2_000_000.0),
+                    4,
+                ),
+                // A per-request charge adds cost but no tokens.
+                model_charge(
+                    "OpenAI",
+                    "gpt-5",
+                    Some(2.0),
+                    Some("Requests"),
+                    Some(500.0),
+                    5,
+                ),
+                // No model: not even a model provider's row can qualify.
+                Charge {
+                    service_name: Some("OpenAI".to_string()),
+                    billed_cost: Some(9.0),
+                    ..charge("ignored", 9.0, "USD", 6)
+                },
+            ],
+        );
+        write(
+            &mut conn,
+            &PeriodKey::new("Anthropic", "acct-6", "2026-08"),
+            &[model_charge(
+                "Anthropic",
+                "claude-4",
+                Some(0.5),
+                Some("Cached Input Tokens"),
+                Some(1_000.0),
+                5,
+            )],
+        );
+        write(
+            &mut conn,
+            &PeriodKey::new("DeepSeek", "acct-3", "2026-08"),
+            // DeepSeek's export carries cost and no token metering.
+            &[model_charge(
+                "DeepSeek",
+                "deepseek-v4-flash",
+                Some(8.0),
+                None,
+                None,
+                6,
+            )],
+        );
+        // A non-LLM provider with a token-metered unit qualifies on the unit.
+        write(
+            &mut conn,
+            &aliyun(),
+            &[model_charge(
+                "Model Studio",
+                "qwen-max",
+                Some(15.0),
+                Some("Tokens"),
+                Some(3_000_000.0),
+                7,
+            )],
+        );
+        // Ordinary cloud usage never appears, even from the same window.
+        write(&mut conn, &aws(), &[charge("EC2", 100.0, "USD", 7)]);
+        // The previous window, for `previous_cost`.
+        let jul = |d: u32| Utc.with_ymd_and_hms(2026, 7, d, 0, 0, 0).unwrap();
+        write(
+            &mut conn,
+            &PeriodKey::new("OpenAI", "acct-5", "2026-07"),
+            &[Charge {
+                service_category: Some("gpt-5".to_string()),
+                ..charge_on("OpenAI", 20.0, "USD", jul(10))
+            }],
+        );
+        conn
+    }
+
+    #[test]
+    fn the_model_summary_groups_tokens_by_class_and_reads_both_windows() {
+        let conn = model_ledger();
+        let sep = Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).unwrap();
+        let jul = Utc.with_ymd_and_hms(2026, 7, 1, 0, 0, 0).unwrap();
+
+        let rows = model_token_summary_of(&conn, at(1), sep, jul, at(1)).unwrap();
+        // Largest current-window usage first; EC2 and the model-less OpenAI
+        // charge are nowhere.
+        let names: Vec<&str> = rows.iter().map(|row| row.model.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["gpt-5", "qwen-max", "deepseek-v4-flash", "claude-4"]
+        );
+
+        let gpt5 = &rows[0];
+        assert_eq!(gpt5.provider, "OpenAI");
+        // 12 + 30 + 1.5 + 2.0 for the request charge; the absent-basis row
+        // adds tokens but no cost.
+        assert!((gpt5.usage_cost - 45.5).abs() < 1e-9, "got {gpt5:?}");
+        assert!((gpt5.previous_cost - 20.0).abs() < 1e-9);
+        // In: 4M + 2M absent; out: 1M; cache: 5M read. Requests count as neither.
+        assert!((gpt5.tokens_in - 6_000_000.0).abs() < 1e-9);
+        assert!((gpt5.tokens_out - 1_000_000.0).abs() < 1e-9);
+        assert!((gpt5.tokens_cache - 5_000_000.0).abs() < 1e-9);
+        assert!(gpt5.has_token_data);
+
+        // The bare "Tokens" aggregate classifies as input-side.
+        assert!((rows[1].tokens_in - 3_000_000.0).abs() < 1e-9);
+
+        // DeepSeek reports cost with no token metering, and no July spend.
+        let deepseek = &rows[2];
+        assert!((deepseek.usage_cost - 8.0).abs() < 1e-9);
+        assert_eq!(deepseek.previous_cost, 0.0);
+        assert_eq!(deepseek.tokens_in, 0.0);
+        assert!(!deepseek.has_token_data);
+
+        // "Cached Input Tokens" is cache class.
+        assert!((rows[3].tokens_cache - 1_000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn daily_model_tokens_sum_classes_per_day_and_model_oldest_first() {
+        let conn = model_ledger();
+        let sep = Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).unwrap();
+
+        let rows = daily_model_tokens_of(&conn, at(1), sep).unwrap();
+        let as_tuples: Vec<(&str, &str, f64)> = rows
+            .iter()
+            .map(|row| (row.day.as_str(), row.model.as_str(), row.tokens))
+            .collect();
+        assert_eq!(
+            as_tuples,
+            vec![
+                ("2026-08-02", "gpt-5", 4_000_000.0),
+                // Output + cache of one day read as one row.
+                ("2026-08-03", "gpt-5", 6_000_000.0),
+                // The absent-basis row's tokens count.
+                ("2026-08-04", "gpt-5", 2_000_000.0),
+                ("2026-08-05", "claude-4", 1_000.0),
+                ("2026-08-07", "qwen-max", 3_000_000.0),
+            ]
+        );
+
+        // A window edge excludes the day it lands on.
+        let rows = daily_model_tokens_of(&conn, at(1), at(3)).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].day, "2026-08-02");
     }
 }

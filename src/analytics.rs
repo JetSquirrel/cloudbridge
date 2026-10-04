@@ -22,8 +22,8 @@ use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
 
 use crate::model::{
     BillingPeriod, CategoryDelta, CostChangeDecomposition, DailyTotal, DataQualityIssue,
-    DataQualityKind, ForecastBands, IssueSeverity, MovementKind, PeriodForecast, PeriodOverPeriod,
-    ServiceMovement,
+    DataQualityKind, FindingSeverity, ForecastBands, IssueSeverity, ModelTokenSummary,
+    MovementKind, PeriodForecast, PeriodOverPeriod, ServiceMovement, TokenClass, TokenFinding,
 };
 
 // ==================== Billing-period arithmetic ====================
@@ -449,6 +449,179 @@ pub fn burn(observations: &[BalanceObservation], days: i64, now: DateTime<Utc>) 
         Some(total) if total > 0.0 => Some(total / days as f64),
         _ => None,
     }
+}
+
+// ==================== Model token economics ====================
+
+/// Cache reads below this share of a model's input side are barely cached.
+const LOW_CACHE_SHARE: f64 = 0.05;
+/// One model above this share of total model spend is a concentration.
+const SPEND_CONCENTRATION_SHARE: f64 = 0.70;
+/// The volume effect within this fraction of the price effect means the
+/// delta is a price move, not a usage move.
+const PRICE_DOMINANCE: f64 = 0.25;
+
+/// Which side of an LLM bill a pricing unit measures.
+///
+/// The match is on the exact strings the ledger stores in `pricing_unit`,
+/// compared case-insensitively and trimmed, so a provider's own spelling —
+/// including a stray space — still classifies. The bare `"Tokens"` aggregate
+/// Aliyun and Volcengine report has no input/output split and is treated as
+/// input-side, which is where such aggregate usage almost always sits.
+pub fn classify_token_unit(unit: &str) -> TokenClass {
+    match unit.trim().to_ascii_lowercase().as_str() {
+        "input tokens" | "tokens" => TokenClass::Input,
+        "output tokens" => TokenClass::Output,
+        "cached input tokens" | "cache read tokens" | "cache creation tokens" => TokenClass::Cache,
+        "requests" | "web search requests" => TokenClass::Request,
+        _ => TokenClass::Other,
+    }
+}
+
+/// The blended cost of one million tokens, the unit LLM prices are quoted
+/// in. `None` when there is nothing to divide by, or a negative cost — a
+/// credit — would produce a nonsensical unit price.
+pub fn blended_unit_cost(cost: f64, tokens: f64) -> Option<f64> {
+    if tokens <= 0.0 || cost < 0.0 {
+        return None;
+    }
+    Some(cost / tokens * 1_000_000.0)
+}
+
+/// The share of a model's input side that came from cache, as
+/// `cache / (cache + input)`. `None` when the model has no input-side tokens
+/// at all, where the share is undefined rather than zero.
+pub fn cache_read_share(tokens_cache: f64, tokens_in: f64) -> Option<f64> {
+    let total = tokens_cache + tokens_in;
+    if total <= 0.0 {
+        return None;
+    }
+    Some(tokens_cache / total)
+}
+
+/// Split a model's spend delta into a volume effect and a price effect, in
+/// currency, as Wealthfolio splits a holding's P&L: the volume effect is the
+/// token change priced at last period's unit cost, the price effect is the
+/// unit-cost change applied to this period's tokens. The two sum to the
+/// delta. `None` when either side has no tokens, because a unit cost does
+/// not exist there.
+pub fn price_volume_decompose(cur: (f64, f64), prev: (f64, f64)) -> Option<(f64, f64)> {
+    let ((cur_cost, cur_tokens), (prev_cost, prev_tokens)) = (cur, prev);
+    if cur_tokens <= 0.0 || prev_tokens <= 0.0 {
+        return None;
+    }
+    let cur_unit = cur_cost / cur_tokens;
+    let prev_unit = prev_cost / prev_tokens;
+    let volume_effect = (cur_tokens - prev_tokens) * prev_unit;
+    let price_effect = cur_tokens * (cur_unit - prev_unit);
+    Some((volume_effect, price_effect))
+}
+
+/// Presentation order: warnings first, then by title, so two reads of the
+/// same data order findings the same way.
+fn finding_rank(severity: FindingSeverity) -> u8 {
+    match severity {
+        FindingSeverity::Warning => 0,
+        FindingSeverity::Notice => 1,
+        FindingSeverity::Info => 2,
+    }
+}
+
+/// The deterministic findings of a period's model spend: cache utilization,
+/// spend concentration, rising unit prices and cost-only models. The rules
+/// are pure over the summaries, so both backends raise the same findings on
+/// the same data.
+pub fn token_findings(models: &[ModelTokenSummary]) -> Vec<TokenFinding> {
+    let mut findings = Vec::new();
+    let total_cost: f64 = models.iter().map(|model| model.usage_cost).sum();
+    let costly_models = models.iter().filter(|model| model.usage_cost > 0.0).count();
+
+    for model in models {
+        let name = format!("{} {}", model.provider, model.model);
+
+        if model.has_token_data {
+            // (a) A model that barely reads from cache pays input price for
+            // what could be cache price.
+            if let Some(share) = cache_read_share(model.tokens_cache, model.tokens_in) {
+                if share < LOW_CACHE_SHARE {
+                    findings.push(TokenFinding {
+                        title: "Low cache utilization".to_string(),
+                        detail: format!(
+                            "{name}: cache tokens are {:.1}% of the input side ({:.0} cached of {:.0} input-side tokens)",
+                            share * 100.0,
+                            model.tokens_cache,
+                            model.tokens_cache + model.tokens_in,
+                        ),
+                        severity: FindingSeverity::Notice,
+                    });
+                }
+            }
+
+            // (b) A spend rise that is a price move, not a usage move. The
+            // summaries carry no previous-period token counts, so volume is
+            // held at this period's and the whole delta decomposes into the
+            // price effect; the dominance check still applies for when a
+            // previous count is added.
+            let tokens = model.tokens_in + model.tokens_out + model.tokens_cache;
+            if model.usage_cost > model.previous_cost {
+                if let Some((volume_effect, price_effect)) = price_volume_decompose(
+                    (model.usage_cost, tokens),
+                    (model.previous_cost, tokens),
+                ) {
+                    if price_effect > 0.0
+                        && volume_effect.abs() <= PRICE_DOMINANCE * price_effect.abs()
+                    {
+                        let previous_unit =
+                            blended_unit_cost(model.previous_cost, tokens).unwrap_or(0.0);
+                        let current_unit =
+                            blended_unit_cost(model.usage_cost, tokens).unwrap_or(0.0);
+                        findings.push(TokenFinding {
+                            title: "Unit price rising".to_string(),
+                            detail: format!(
+                                "{name}: blended unit cost rose from ${previous_unit:.2} to ${current_unit:.2} per 1M tokens while spend went {:.2} to {:.2}",
+                                model.previous_cost, model.usage_cost,
+                            ),
+                            severity: FindingSeverity::Warning,
+                        });
+                    }
+                }
+            }
+        } else {
+            findings.push(TokenFinding {
+                title: "Cost only — no token metering".to_string(),
+                detail: format!(
+                    "{name} has {:.2} of spend but no token-metered rows, so unit economics cannot be computed for it",
+                    model.usage_cost,
+                ),
+                severity: FindingSeverity::Info,
+            });
+        }
+
+        // (c) One model carrying the bill — only meaningful when at least
+        // two models cost anything.
+        if total_cost > 0.0 && costly_models >= 2 {
+            let share = model.usage_cost / total_cost;
+            if share > SPEND_CONCENTRATION_SHARE {
+                findings.push(TokenFinding {
+                    title: "Spend concentration".to_string(),
+                    detail: format!(
+                        "{name} is {:.1}% of model spend ({:.2} of {:.2})",
+                        share * 100.0,
+                        model.usage_cost,
+                        total_cost,
+                    ),
+                    severity: FindingSeverity::Info,
+                });
+            }
+        }
+    }
+
+    findings.sort_by(|a, b| {
+        finding_rank(a.severity)
+            .cmp(&finding_rank(b.severity))
+            .then_with(|| a.title.cmp(&b.title))
+    });
+    findings
 }
 
 // ==================== Data-quality summary ====================
@@ -1051,5 +1224,239 @@ mod tests {
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].severity, IssueSeverity::Info);
         assert!(issues[0].message.contains("0.0%"));
+    }
+
+    // ==================== Model token economics ====================
+
+    fn summary(
+        provider: &str,
+        model: &str,
+        usage_cost: f64,
+        previous_cost: f64,
+    ) -> ModelTokenSummary {
+        ModelTokenSummary {
+            provider: provider.to_string(),
+            model: model.to_string(),
+            usage_cost,
+            previous_cost,
+            tokens_in: 0.0,
+            tokens_out: 0.0,
+            tokens_cache: 0.0,
+            has_token_data: false,
+        }
+    }
+
+    #[test]
+    fn the_known_pricing_units_classify_to_their_side_of_the_bill() {
+        assert_eq!(classify_token_unit("Input Tokens"), TokenClass::Input);
+        assert_eq!(classify_token_unit("Output Tokens"), TokenClass::Output);
+        assert_eq!(
+            classify_token_unit("Cached Input Tokens"),
+            TokenClass::Cache
+        );
+        assert_eq!(classify_token_unit("Cache Read Tokens"), TokenClass::Cache);
+        assert_eq!(
+            classify_token_unit("Cache Creation Tokens"),
+            TokenClass::Cache
+        );
+        assert_eq!(classify_token_unit("Requests"), TokenClass::Request);
+        assert_eq!(
+            classify_token_unit("Web Search Requests"),
+            TokenClass::Request
+        );
+        // The bare aggregate Aliyun and Volcengine report is input-side.
+        assert_eq!(classify_token_unit("Tokens"), TokenClass::Input);
+    }
+
+    #[test]
+    fn classification_ignores_case_and_surrounding_space_but_nothing_else() {
+        assert_eq!(classify_token_unit("  input tokens \n"), TokenClass::Input);
+        assert_eq!(classify_token_unit("CACHE READ TOKENS"), TokenClass::Cache);
+        assert_eq!(classify_token_unit("tokens"), TokenClass::Input);
+
+        assert_eq!(classify_token_unit("GB-Seconds"), TokenClass::Other);
+        assert_eq!(classify_token_unit(""), TokenClass::Other);
+    }
+
+    #[test]
+    fn a_blended_unit_cost_is_quoted_per_million_tokens() {
+        // $150 for 50M tokens is $3.00 per 1M.
+        let unit = blended_unit_cost(150.0, 50_000_000.0).unwrap();
+        assert!((unit - 3.0).abs() < 1e-9);
+        // A free tier costs nothing per token, which is a real answer.
+        assert_eq!(blended_unit_cost(0.0, 1000.0), Some(0.0));
+    }
+
+    #[test]
+    fn a_blended_unit_cost_needs_tokens_and_a_non_negative_cost() {
+        assert!(blended_unit_cost(10.0, 0.0).is_none());
+        assert!(blended_unit_cost(10.0, -5.0).is_none());
+        // A credit has no meaningful unit price.
+        assert!(blended_unit_cost(-3.0, 1000.0).is_none());
+    }
+
+    #[test]
+    fn the_cache_share_is_the_cached_fraction_of_the_input_side() {
+        let share = cache_read_share(25.0, 75.0).unwrap();
+        assert!((share - 0.25).abs() < 1e-9);
+
+        assert!(cache_read_share(0.0, 0.0).is_none());
+        assert!(cache_read_share(0.0, -1.0).is_none());
+    }
+
+    #[test]
+    fn a_spend_delta_splits_into_volume_and_price_effects_that_sum_to_it() {
+        // 100 tokens at $1.00 becomes 150 tokens at $1.50: the delta of 125
+        // is 50 of volume and 75 of price.
+        let (volume, price) = price_volume_decompose((225.0, 150.0), (100.0, 100.0)).unwrap();
+        assert!((volume - 50.0).abs() < 1e-9);
+        assert!((price - 75.0).abs() < 1e-9);
+        assert!((volume + price - 125.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_decomposition_needs_tokens_on_both_sides() {
+        assert!(price_volume_decompose((10.0, 0.0), (10.0, 100.0)).is_none());
+        assert!(price_volume_decompose((10.0, 100.0), (10.0, 0.0)).is_none());
+        assert!(price_volume_decompose((0.0, 0.0), (0.0, 0.0)).is_none());
+    }
+
+    #[test]
+    fn no_models_raise_no_findings() {
+        assert!(token_findings(&[]).is_empty());
+    }
+
+    #[test]
+    fn a_single_model_is_not_a_concentration_on_its_own() {
+        let models = vec![summary("openai", "gpt-4o", 100.0, 80.0)];
+
+        let findings = token_findings(&models);
+
+        // One Info for the missing token metering, nothing else.
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].title, "Cost only — no token metering");
+        assert_eq!(findings[0].severity, FindingSeverity::Info);
+        assert!(findings[0].detail.contains("openai gpt-4o"));
+    }
+
+    #[test]
+    fn a_model_with_barely_any_cache_reads_is_a_notice() {
+        let mut models = vec![ModelTokenSummary {
+            tokens_in: 980_000.0,
+            tokens_cache: 20_000.0,
+            has_token_data: true,
+            ..summary("anthropic", "claude-sonnet-4", 50.0, 50.0)
+        }];
+
+        let findings = token_findings(&models);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].title, "Low cache utilization");
+        assert_eq!(findings[0].severity, FindingSeverity::Notice);
+        assert!(findings[0].detail.contains("2.0%"));
+        assert!(findings[0].detail.contains("anthropic claude-sonnet-4"));
+
+        // Well cached — 40% of the input side — raises nothing.
+        models[0].tokens_cache = 400_000.0;
+        models[0].tokens_in = 600_000.0;
+        assert!(token_findings(&models).is_empty());
+    }
+
+    #[test]
+    fn a_model_with_no_input_side_tokens_has_no_cache_share_to_judge() {
+        let models = vec![ModelTokenSummary {
+            tokens_out: 500_000.0,
+            has_token_data: true,
+            ..summary("openai", "gpt-4o", 50.0, 50.0)
+        }];
+
+        assert!(token_findings(&models).is_empty());
+    }
+
+    #[test]
+    fn one_model_carrying_over_seventy_percent_of_spend_is_a_concentration() {
+        let models = vec![
+            summary("openai", "gpt-4o", 80.0, 60.0),
+            summary("deepseek", "deepseek-chat", 20.0, 20.0),
+        ];
+
+        let findings = token_findings(&models);
+
+        let concentration = findings
+            .iter()
+            .find(|finding| finding.title == "Spend concentration")
+            .expect("an 80% model concentrates the spend");
+        assert_eq!(concentration.severity, FindingSeverity::Info);
+        assert!(concentration.detail.contains("80.0%"));
+        assert!(concentration.detail.contains("openai gpt-4o"));
+    }
+
+    #[test]
+    fn a_rise_that_is_all_price_and_no_volume_is_a_warning() {
+        let models = vec![ModelTokenSummary {
+            tokens_in: 900_000.0,
+            tokens_cache: 100_000.0,
+            has_token_data: true,
+            // Same tokens, spend up from 100 to 150: the whole delta is the
+            // blended unit cost moving.
+            ..summary("openai", "gpt-4o", 150.0, 100.0)
+        }];
+
+        let findings = token_findings(&models);
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].title, "Unit price rising");
+        assert_eq!(findings[0].severity, FindingSeverity::Warning);
+        assert!(findings[0].detail.contains("$100.00"));
+        assert!(findings[0].detail.contains("$150.00"));
+    }
+
+    #[test]
+    fn a_cheaper_period_is_not_a_rising_unit_price() {
+        let models = vec![ModelTokenSummary {
+            tokens_in: 900_000.0,
+            tokens_cache: 100_000.0,
+            has_token_data: true,
+            ..summary("openai", "gpt-4o", 90.0, 100.0)
+        }];
+
+        assert!(token_findings(&models).is_empty());
+    }
+
+    #[test]
+    fn findings_sort_warnings_first_then_notices_then_infos_by_title() {
+        let models = vec![
+            // Info: cost only.
+            summary("deepseek", "deepseek-chat", 10.0, 10.0),
+            // Warning: rising unit price, and also the spend concentration.
+            ModelTokenSummary {
+                tokens_in: 900_000.0,
+                tokens_cache: 100_000.0,
+                has_token_data: true,
+                ..summary("openai", "gpt-4o", 200.0, 100.0)
+            },
+            // Notice: low cache utilization.
+            ModelTokenSummary {
+                tokens_in: 100_000.0,
+                tokens_cache: 1_000.0,
+                has_token_data: true,
+                ..summary("anthropic", "claude-sonnet-4", 30.0, 30.0)
+            },
+        ];
+
+        let findings = token_findings(&models);
+        let order: Vec<_> = findings
+            .iter()
+            .map(|finding| (finding.severity, finding.title.as_str()))
+            .collect();
+
+        assert_eq!(
+            order,
+            vec![
+                (FindingSeverity::Warning, "Unit price rising"),
+                (FindingSeverity::Notice, "Low cache utilization"),
+                (FindingSeverity::Info, "Cost only — no token metering"),
+                (FindingSeverity::Info, "Spend concentration"),
+            ]
+        );
     }
 }
