@@ -47,10 +47,12 @@ Also unreleased: the Models page, the first read of the token quantities
 the ledger has stored since P0. It groups model-provider rows by
 `(provider, service_category)` and reports per-model usage cost, token
 volumes split input/output/cache (absent-basis rows included — they carry
-counts, not money), blended cost per million tokens, a price-versus-volume
-decomposition of each model's cost change, cache-read share, and
-deterministic findings (low cache utilization, spend concentration, rising
-unit price, cost-only models without token metering). The statistics are
+counts, not money), blended cost per million tokens, the change against
+the previous period, cache-read share, and deterministic findings (low
+cache utilization, spend concentration, cost-only models without token
+metering, and a rising unit price — a spend rise that a
+price-versus-volume split of the two periods' tokens puts on price, not
+usage). The statistics are
 pure functions in `analytics.rs`; the reads exist in both backends with
 identical signatures, and the demo bill seeds OpenAI and Anthropic accounts
 with per-model token rows so the page renders in the browser demo. Model

@@ -557,22 +557,21 @@ pub fn token_findings(models: &[ModelTokenSummary]) -> Vec<TokenFinding> {
                 }
             }
 
-            // (b) A spend rise that is a price move, not a usage move. The
-            // summaries carry no previous-period token counts, so volume is
-            // held at this period's and the whole delta decomposes into the
-            // price effect; the dominance check still applies for when a
-            // previous count is added.
+            // (b) A spend rise that is a price move, not a usage move. A
+            // previous period with no tokens has no unit cost to rise from,
+            // so it decomposes to nothing and raises nothing.
             let tokens = model.tokens_in + model.tokens_out + model.tokens_cache;
             if model.usage_cost > model.previous_cost {
                 if let Some((volume_effect, price_effect)) = price_volume_decompose(
                     (model.usage_cost, tokens),
-                    (model.previous_cost, tokens),
+                    (model.previous_cost, model.previous_tokens),
                 ) {
                     if price_effect > 0.0
                         && volume_effect.abs() <= PRICE_DOMINANCE * price_effect.abs()
                     {
                         let previous_unit =
-                            blended_unit_cost(model.previous_cost, tokens).unwrap_or(0.0);
+                            blended_unit_cost(model.previous_cost, model.previous_tokens)
+                                .unwrap_or(0.0);
                         let current_unit =
                             blended_unit_cost(model.usage_cost, tokens).unwrap_or(0.0);
                         findings.push(TokenFinding {
@@ -1242,6 +1241,7 @@ mod tests {
             tokens_in: 0.0,
             tokens_out: 0.0,
             tokens_cache: 0.0,
+            previous_tokens: 0.0,
             has_token_data: false,
         }
     }
@@ -1395,6 +1395,7 @@ mod tests {
         let models = vec![ModelTokenSummary {
             tokens_in: 900_000.0,
             tokens_cache: 100_000.0,
+            previous_tokens: 1_000_000.0,
             has_token_data: true,
             // Same tokens, spend up from 100 to 150: the whole delta is the
             // blended unit cost moving.
@@ -1408,6 +1409,33 @@ mod tests {
         assert_eq!(findings[0].severity, FindingSeverity::Warning);
         assert!(findings[0].detail.contains("$100.00"));
         assert!(findings[0].detail.contains("$150.00"));
+    }
+
+    #[test]
+    fn a_rise_that_is_all_volume_is_not_a_rising_unit_price() {
+        let models = vec![ModelTokenSummary {
+            tokens_in: 1_350_000.0,
+            tokens_cache: 150_000.0,
+            previous_tokens: 1_000_000.0,
+            has_token_data: true,
+            // Half again the tokens at the same $100 per 1M: spend rose
+            // because usage did.
+            ..summary("openai", "gpt-4o", 150.0, 100.0)
+        }];
+
+        assert!(token_findings(&models).is_empty());
+    }
+
+    #[test]
+    fn a_rise_from_a_period_without_tokens_has_no_unit_price_to_compare() {
+        let models = vec![ModelTokenSummary {
+            tokens_in: 900_000.0,
+            tokens_cache: 100_000.0,
+            has_token_data: true,
+            ..summary("openai", "gpt-4o", 150.0, 100.0)
+        }];
+
+        assert!(token_findings(&models).is_empty());
     }
 
     #[test]
@@ -1431,6 +1459,7 @@ mod tests {
             ModelTokenSummary {
                 tokens_in: 900_000.0,
                 tokens_cache: 100_000.0,
+                previous_tokens: 1_000_000.0,
                 has_token_data: true,
                 ..summary("openai", "gpt-4o", 200.0, 100.0)
             },

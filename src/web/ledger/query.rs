@@ -1391,7 +1391,8 @@ fn is_token_unit(unit: &str) -> bool {
 /// consumed; a charge no rate covers adds nothing to either, as `sum`
 /// ignores NULL. Token totals are sums of `pricing_quantity` by class —
 /// input toward `tokens_in`, output toward `tokens_out`, cache toward
-/// `tokens_cache`; request and unclassed units meter no tokens. A row with a
+/// `tokens_cache`, all three in the previous window toward
+/// `previous_tokens`; request and unclassed units meter no tokens. A row with a
 /// quantity but no billable amount still counts its tokens, so an
 /// absent-basis model can report `has_token_data` at zero cost. Largest
 /// `usage_cost` first.
@@ -1408,6 +1409,7 @@ pub fn model_token_summary(
         tokens_in: f64,
         tokens_out: f64,
         tokens_cache: f64,
+        previous_tokens: f64,
         /// Any row under the key carried a token-class unit, in either
         /// window — the qualification for keys outside [`MODEL_PROVIDERS`].
         has_token_unit: bool,
@@ -1432,14 +1434,23 @@ pub fn model_token_summary(
 
             if let Some(unit) = row.pricing_unit.as_deref() {
                 entry.has_token_unit |= is_token_unit(unit);
+                let quantity = row.pricing_quantity.unwrap_or(0.0);
+                let class = analytics::classify_token_unit(unit);
                 if current {
-                    let quantity = row.pricing_quantity.unwrap_or(0.0);
-                    match analytics::classify_token_unit(unit) {
+                    match class {
                         TokenClass::Input => entry.tokens_in += quantity,
                         TokenClass::Output => entry.tokens_out += quantity,
                         TokenClass::Cache => entry.tokens_cache += quantity,
                         TokenClass::Request | TokenClass::Other => {}
                     }
+                }
+                if previous
+                    && matches!(
+                        class,
+                        TokenClass::Input | TokenClass::Output | TokenClass::Cache
+                    )
+                {
+                    entry.previous_tokens += quantity;
                 }
             }
 
@@ -1467,6 +1478,7 @@ pub fn model_token_summary(
                 tokens_in: bucket.tokens_in,
                 tokens_out: bucket.tokens_out,
                 tokens_cache: bucket.tokens_cache,
+                previous_tokens: bucket.previous_tokens,
                 has_token_data: bucket.tokens_in + bucket.tokens_out + bucket.tokens_cache > 0.0,
             })
             .collect();
