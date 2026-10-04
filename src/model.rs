@@ -572,6 +572,9 @@ pub struct ModelTokenSummary {
     pub tokens_in: f64,
     pub tokens_out: f64,
     pub tokens_cache: f64,
+    /// The previous period's tokens, all classes together — what its
+    /// `previous_cost` bought, so the two periods' unit costs compare.
+    pub previous_tokens: f64,
     /// `false` for a model whose rows carry cost but no token-metered
     /// pricing quantities — unit economics cannot be computed for it.
     pub has_token_data: bool,

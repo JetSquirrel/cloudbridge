@@ -1729,9 +1729,10 @@ const TOKEN_CLASS_SQL: &str = "CASE lower(trim(pricing_unit))
 /// provider's row: `OpenAI`, `Anthropic` and `DeepSeek` are the registry
 /// ids, so a provider that reports cost without token counts (DeepSeek
 /// today) still appears, with `has_token_data` false. Rows with no model in
-/// `service_category` are left out. Token sums are over the current window
-/// only; `cost_basis='absent'` rows count toward them, since they carry
-/// token quantities with a NULL cost.
+/// `service_category` are left out. Token sums by class are over the
+/// current window; the previous window's tokens are one total,
+/// `previous_tokens`. `cost_basis='absent'` rows count toward both, since
+/// they carry token quantities with a NULL cost.
 pub fn model_token_summary(
     since: DateTime<Utc>,
     until: DateTime<Utc>,
@@ -1774,7 +1775,11 @@ pub(crate) fn model_token_summary_of(
                 coalesce(sum(pricing_quantity) FILTER (
                     WHERE {TOKEN_CLASS_SQL} = 'cache'
                       AND charge_period_start >= CAST(? AS TIMESTAMP)
-                      AND charge_period_start < CAST(? AS TIMESTAMP)), 0.0) AS tokens_cache
+                      AND charge_period_start < CAST(? AS TIMESTAMP)), 0.0) AS tokens_cache,
+                coalesce(sum(pricing_quantity) FILTER (
+                    WHERE {TOKEN_CLASS_SQL} IN ('in', 'out', 'cache')
+                      AND charge_period_start >= CAST(? AS TIMESTAMP)
+                      AND charge_period_start < CAST(? AS TIMESTAMP)), 0.0) AS previous_tokens
          FROM {NORMALIZED_VIEW}
          WHERE charge_period_start >= CAST(? AS TIMESTAMP)
            AND charge_period_start < CAST(? AS TIMESTAMP)
@@ -1798,6 +1803,8 @@ pub(crate) fn model_token_summary_of(
                 stamp(until),
                 stamp(since),
                 stamp(until),
+                stamp(prev_since),
+                stamp(prev_until),
                 stamp(scan_start),
                 stamp(scan_end),
             ],
@@ -1810,6 +1817,7 @@ pub(crate) fn model_token_summary_of(
                     model: row.get(1)?,
                     usage_cost: row.get(2)?,
                     previous_cost: row.get(3)?,
+                    previous_tokens: row.get(7)?,
                     has_token_data: tokens_in + tokens_out + tokens_cache > 0.0,
                     tokens_in,
                     tokens_out,
@@ -4132,6 +4140,8 @@ mod tests {
             &PeriodKey::new("OpenAI", "acct-5", "2026-07"),
             &[Charge {
                 service_category: Some("gpt-5".to_string()),
+                pricing_unit: Some("Input Tokens".to_string()),
+                pricing_quantity: Some(8_000_000.0),
                 ..charge_on("OpenAI", 20.0, "USD", jul(10))
             }],
         );
@@ -4159,6 +4169,8 @@ mod tests {
         // adds tokens but no cost.
         assert!((gpt5.usage_cost - 45.5).abs() < 1e-9, "got {gpt5:?}");
         assert!((gpt5.previous_cost - 20.0).abs() < 1e-9);
+        // July's tokens are one total, kept apart from September's classes.
+        assert!((gpt5.previous_tokens - 8_000_000.0).abs() < 1e-9);
         // In: 4M + 2M absent; out: 1M; cache: 5M read. Requests count as neither.
         assert!((gpt5.tokens_in - 6_000_000.0).abs() < 1e-9);
         assert!((gpt5.tokens_out - 1_000_000.0).abs() < 1e-9);
@@ -4172,6 +4184,7 @@ mod tests {
         let deepseek = &rows[2];
         assert!((deepseek.usage_cost - 8.0).abs() < 1e-9);
         assert_eq!(deepseek.previous_cost, 0.0);
+        assert_eq!(deepseek.previous_tokens, 0.0);
         assert_eq!(deepseek.tokens_in, 0.0);
         assert!(!deepseek.has_token_data);
 
