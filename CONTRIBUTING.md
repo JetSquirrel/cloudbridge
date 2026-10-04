@@ -202,8 +202,7 @@ and balances in `fct_balance_snapshot` rather than in spend totals.
    raw batch to charges and balances, with no clock, network or database.
    Test it against sanitized fixtures in `src/cloud/testdata/`.
 
-   The AWS S3 export implementation also uses this trait. Its code is in
-   the working tree but remains **unreleased**; see `CHANGELOG.md`.
+   The AWS S3 export implementation also uses this trait.
 
 2. **Bill file import.** A source opts in through a `BillFileFormat` on
    its descriptor. The parser is a pure function over a raw batch.

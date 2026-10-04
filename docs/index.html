@@ -1192,7 +1192,7 @@
                     </details>
                     <details class="faq-item">
                         <summary data-i18n="faq.providers.q">Which cloud providers are supported?</summary>
-                        <div class="faq-answer" data-i18n-html="faq.providers.a">AWS and Alibaba Cloud provide billing APIs. DeepSeek provides a balance API and file imports for spending detail. Alibaba Cloud, Volcengine, OpenAI and Anthropic also support bill imports. Azure and Google Cloud are not currently supported. <strong>Unreleased:</strong> the development tree supports AWS Data Exports from S3; see the <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">changelog</a> for release status.</div>
+                        <div class="faq-answer" data-i18n-html="faq.providers.a">AWS and Alibaba Cloud provide billing APIs. DeepSeek provides a balance API and file imports for spending detail. Alibaba Cloud, Volcengine, OpenAI and Anthropic also support bill imports. Azure and Google Cloud are not currently supported. AWS accounts can also read AWS Data Exports (FOCUS 1.2) from S3.</div>
                     </details>
                     <details class="faq-item">
                         <summary data-i18n="faq.import.q">Can I use a bill I downloaded instead of an API key?</summary>
@@ -1216,7 +1216,7 @@
                     </details>
                     <details class="faq-item">
                         <summary data-i18n="faq.export.q">Can I export my cost data?</summary>
-                        <div class="faq-answer" data-i18n-html="faq.export.a">You can query the local DuckDB ledger directly. Provider responses and imported files are retained under <code>raw/</code>; see <a href="/docs.html#storage">storage and backups</a> before copying or sharing them. Reading provider exports is a separate feature: AWS Data Exports from S3 is <strong>Unreleased</strong>, and OSS collection remains on the <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/roadmap.md" target="_blank" rel="noopener noreferrer">roadmap</a>.</div>
+                        <div class="faq-answer" data-i18n-html="faq.export.a">You can query the local DuckDB ledger directly. Provider responses and imported files are retained under <code>raw/</code>; see <a href="/docs.html#storage">storage and backups</a> before copying or sharing them. Reading provider exports is a separate feature: AWS Data Exports are read from S3, and OSS collection remains on the <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/roadmap.md" target="_blank" rel="noopener noreferrer">roadmap</a>.</div>
                     </details>
                 </div>
             </div>

@@ -49,11 +49,10 @@ required.
 File imports need no provider credentials. DeepSeek's API reports a balance,
 not a spending breakdown. Azure and Google Cloud are not currently supported.
 
-**Unreleased:** the development tree also supports AWS Data Exports (FOCUS 1.2
-with AWS columns) from an S3 bucket. This replaces Cost Explorer for accounts
-with an export URI, reading Parquet or gzipped CSV and only the files the
-period's manifest names; S3 storage and request charges can still apply. See the
-[roadmap](docs/roadmap.md) and [changelog](CHANGELOG.md) for release status.
+AWS accounts can also read AWS Data Exports (FOCUS 1.2 with AWS columns) from
+an S3 bucket. This replaces Cost Explorer for accounts with an export URI,
+reading Parquet or gzipped CSV and only the files the period's manifest names;
+S3 storage and request charges can still apply.
 
 ## Installation
 
@@ -123,7 +122,7 @@ CloudBridge itself is free; provider API fees are separate.
 
 ### Keyboard shortcuts
 
-On the development tree, **⌘1…⌘8** (**Ctrl+1…8** on Windows) switch pages in
+**⌘1…⌘9** (**Ctrl+1…9** on Windows) switch pages in
 sidebar order, **⌘R** reloads the current page, **⌘Enter** runs a query on the
 Query page, and **Esc** closes a dialog. The full list is in the
 [docs](https://cloudbridge.jetsquirrel.cloud/docs.html#shortcuts).
@@ -152,7 +151,7 @@ rather than making their own billing API calls.
 - Deleting an account removes its credentials. Its billing history stays in
   the ledger and keeps counting in totals unless you tick **Also delete its
   billing history**; history left behind is listed on the Accounts page, where
-  it can be deleted (unreleased; see the [changelog](CHANGELOG.md)).
+  it can be deleted.
 - **Local does not mean encrypted.** CloudBridge does not encrypt the ledger or
   raw billing files. Use OS disk encryption and protect your backups.
 - Bills can contain account identifiers, resource names, and tags. Redact these

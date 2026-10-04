@@ -501,7 +501,7 @@
 
                     <section id="aws-s3">
                         <h2 data-i18n="policies.s3.title">AWS Data Exports from S3</h2>
-                        <div class="note" data-i18n-html="policies.s3.unreleased"><strong>Unreleased:</strong> the S3 export channel is listed under Unreleased in the <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">changelog</a> and is not yet in a tagged release. The Cost Explorer policy above does <strong>not</strong> grant access to an export bucket.</div>
+                        <div class="note" data-i18n-html="policies.s3.note">The Cost Explorer policy above does <strong>not</strong> grant access to an export bucket.</div>
                         <p data-i18n-html="policies.s3.p1">For this channel, scope <code>s3:ListBucket</code> to the export bucket and permitted prefix, and <code>s3:GetObject</code> to the objects under that prefix. If objects use a customer-managed KMS key, decryption may also require <code>kms:Decrypt</code> and a compatible key policy. Bucket policies and any organization-level restrictions must allow the reads as well. CloudBridge reads an existing export; it does not need permissions to create exports or write objects. Export delivery permissions are a separate AWS setup.</p>
                         <p data-i18n="policies.s3.p2">S3 collection avoids Cost Explorer request charges, but S3 storage and request fees still apply. Encryption, retrieval or transfer charges may also apply depending on your AWS configuration.</p>
                     </section>

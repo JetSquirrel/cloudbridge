@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="AWS Data Exports straight from S3, a Models page for what each LLM model costs per token, a read-only SQL console, monthly budgets — and the whole app running in a browser.">
+    <meta name="theme-color" content="#0E1420">
+    <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/blog/cloudbridge-0-4-0.html">
+    <meta property="og:type" content="article">
+    <meta property="og:title" content="0.4.0: more ways in, more ways to read it">
+    <meta property="og:description" content="AWS Data Exports straight from S3, a Models page for what each LLM model costs per token, a read-only SQL console, monthly budgets — and the whole app running in a browser.">
+    <meta property="og:url" content="https://cloudbridge.jetsquirrel.cloud/blog/cloudbridge-0-4-0.html">
+    <meta property="og:image" content="https://cloudbridge.jetsquirrel.cloud/cloudbridge.png">
+    <meta property="og:image:width" content="2560">
+    <meta property="og:image:height" content="1584">
+    <meta name="twitter:card" content="summary_large_image">
+    <link rel="icon" type="image/png" href="../icon.png">
+    <link rel="apple-touch-icon" href="../icon.png">
+    <title>0.4.0: more ways in, more ways to read it - CloudBridge Blog</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'IBM Plex Sans', sans-serif;
+            color: #47536B;
+            background: #FAFBFC;
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        :root {
+            --ink: #0E1420;
+            --panel: #151E30;
+            --paper: #FAFBFC;
+            --hairline: #E3E8EF;
+            --hairline-dark: #263349;
+            --fg-strong: #101828;
+            --fg-body: #47536B;
+            --fg-faint: #667085;
+            --fg-faint-on-dark: #7A8699; /* --fg-faint is too dark on --ink/--panel */
+            --signal: #2F6FED;
+            --local: #2FA97C;
+            --radius: 6px;
+            --nav-height: 4.5rem;
+            --font-display: 'Space Grotesk', sans-serif;
+            --font-mono: 'IBM Plex Mono', monospace;
+        }
+
+        h1, h2 {
+            font-family: var(--font-display);
+            color: var(--fg-strong);
+            letter-spacing: -0.02em;
+            line-height: 1.15;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem;
+        }
+
+        .skip-link {
+            position: absolute;
+            left: -9999px;
+            top: 0;
+            background: var(--ink);
+            color: #fff;
+            padding: 0.75rem 1.25rem;
+            z-index: 200;
+            text-decoration: none;
+            font-family: var(--font-mono);
+            font-size: 0.875rem;
+        }
+
+        .skip-link:focus {
+            left: 0;
+        }
+
+        /* Navigation (shared) */
+        nav {
+            background: var(--paper);
+            border-bottom: 1px solid var(--hairline);
+            height: var(--nav-height);
+            display: flex;
+            align-items: center;
+            padding: 0 1rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        nav .container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 2rem;
+            width: 100%;
+        }
+
+        .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.6rem;
+            font-family: var(--font-display);
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--fg-strong);
+            text-decoration: none;
+            letter-spacing: -0.02em;
+            white-space: nowrap;
+        }
+
+        .logo::before {
+            content: '';
+            width: 0.6rem;
+            height: 0.6rem;
+            background: var(--local);
+            flex-shrink: 0;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            list-style: none;
+            overflow-x: auto;
+            white-space: nowrap;
+            min-width: 0;
+            scrollbar-width: none;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .nav-links::-webkit-scrollbar {
+            display: none;
+        }
+
+        .nav-links a {
+            font-family: var(--font-mono);
+            color: var(--fg-body);
+            text-decoration: none;
+            font-size: 0.875rem;
+            transition: color 0.15s;
+        }
+
+        .nav-links a:hover,
+        .nav-links a[aria-current="page"] {
+            color: var(--signal);
+        }
+
+        /* Article */
+        .post {
+            max-width: 44rem;
+            margin: 0 auto;
+            padding: 4rem 0 6rem;
+        }
+
+        .post .eyebrow {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            font-weight: 500;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--local);
+            display: block;
+            margin-bottom: 1.25rem;
+        }
+
+        .post h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+        }
+
+        .post .lede {
+            font-size: 1.25rem;
+            color: var(--fg-strong);
+            margin-bottom: 2.5rem;
+            padding-bottom: 2.5rem;
+            border-bottom: 1px solid var(--hairline);
+        }
+
+        .post h2 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin: 3rem 0 1rem;
+        }
+
+        .post p {
+            margin-bottom: 1.25rem;
+            line-height: 1.8;
+        }
+
+        .post a {
+            color: var(--signal);
+        }
+
+        .post code {
+            font-family: var(--font-mono);
+            font-size: 0.8125rem;
+            background: #fff;
+            border: 1px solid var(--hairline);
+            padding: 0.05rem 0.4rem;
+            border-radius: 4px;
+        }
+
+        .post pre {
+            background: var(--ink);
+            border-radius: var(--radius);
+            padding: 1.25rem 1.5rem;
+            overflow-x: auto;
+            margin-bottom: 1.25rem;
+        }
+
+        .post pre code {
+            background: none;
+            border: none;
+            padding: 0;
+            color: #C4CEDE;
+            font-size: 0.8125rem;
+            line-height: 1.7;
+        }
+
+        .post ul, .post ol {
+            margin: 0 0 1.25rem 1.25rem;
+        }
+
+        .post li {
+            margin-bottom: 0.4rem;
+            line-height: 1.7;
+        }
+
+        .post .table-wrap {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            margin-bottom: 1.25rem;
+        }
+
+        .post table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9375rem;
+        }
+
+        .post th {
+            font-family: var(--font-mono);
+            font-size: 0.6875rem;
+            font-weight: 500;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--fg-faint);
+            text-align: left;
+            padding: 0.6rem 1rem 0.6rem 0;
+            border-bottom: 1px solid var(--hairline);
+            white-space: nowrap;
+        }
+
+        .post td {
+            padding: 0.6rem 1rem 0.6rem 0;
+            border-bottom: 1px solid var(--hairline);
+            vertical-align: top;
+            line-height: 1.5;
+        }
+
+        .post td:first-child {
+            color: var(--fg-strong);
+            font-weight: 500;
+        }
+
+        @media (max-width: 768px) {
+            .post table {
+                min-width: 36rem;
+            }
+        }
+
+        .post-nav {
+            margin-top: 4rem;
+            padding-top: 2rem;
+            border-top: 1px solid var(--hairline);
+            font-family: var(--font-mono);
+            font-size: 0.875rem;
+        }
+
+        .post-nav a {
+            color: var(--signal);
+            text-decoration: none;
+        }
+
+        .post-nav a:hover {
+            text-decoration: underline;
+        }
+
+        /* Footer (shared, compact) */
+        footer {
+            background: var(--ink);
+            color: #8FA0BC;
+            padding: 2rem 0;
+            border-top: 1px solid var(--hairline-dark);
+        }
+
+        footer .container {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            flex-wrap: wrap;
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--fg-faint-on-dark);
+        }
+
+        footer a {
+            color: #8FA0BC;
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            color: #fff;
+        }
+
+        .footer-nav {
+            display: flex;
+            gap: 1.25rem;
+            flex-wrap: wrap;
+            list-style: none;
+        }
+
+        @media (max-width: 768px) {
+            .post {
+                padding: 2.5rem 0 4rem;
+            }
+
+            .post h1 {
+                font-size: 1.875rem;
+            }
+
+            .nav-links {
+                gap: 1.25rem;
+            }
+        }
+
+        a:focus-visible {
+            outline: 2px solid var(--signal);
+            outline-offset: 2px;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            html {
+                scroll-behavior: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <a class="skip-link" href="#main" data-i18n="a11y.skip">Skip to content</a>
+
+    <nav aria-label="Main navigation">
+        <div class="container">
+            <a href="/" class="logo">CloudBridge</a>
+            <ul class="nav-links">
+                <li><a href="/demo/" data-i18n="nav.demo">Demo</a></li>
+                <li><a href="/docs.html" data-i18n="nav.docs">Docs</a></li>
+                <li><a href="/blog.html" aria-current="page" data-i18n="nav.blog">Blog</a></li>
+                <li><a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- GENERATED FROM cloudbridge-0-4-0.md - edit the Markdown, then re-run scripts/render-blog.py -->
+    <main id="main">
+        <article class="post">
+            <span class="eyebrow">Release · 2026-10-05</span>
+            <h1>0.4.0: more ways in, more ways to read it</h1>
+            <p class="lede">AWS Data Exports straight from S3, a Models page for what each LLM model costs per token, a read-only SQL console, monthly budgets — and the whole app running in a browser.</p>
+
+            <p>0.3.0 put every bill into one ledger; 0.3.1 made the interface agree with itself. 0.4.0 works on both ends of that ledger. On the way in, an AWS account can now read its bill from the export AWS writes to S3 rather than asking Cost Explorer for it. On the way out, there are four new ways to read what is already there: per model, per dimension, against a budget, and in SQL. And the same application now runs in a browser, so you can try all of it before installing anything.</p>
+<h2>AWS Data Exports, read from S3</h2>
+<p>Cost Explorer answers with totals, and every question costs a request. AWS's Data Exports (CUR 2.0, in the "FOCUS 1.2 with AWS columns" shape) write the full bill — resource IDs, tags, the linked account each row was billed under — into an S3 bucket you own. Give an AWS account the export's <code>s3://bucket/prefix</code> URI and Refresh reads from there instead: Parquet or gzipped CSV, whichever the export was set to deliver.</p>
+<p>A few things it gets right that are easy to get wrong:</p>
+<ul>
+<li><strong>A month is counted once.</strong> An export set to "create new" keeps every delivery side by side. CloudBridge reads only the files the period's manifest names, so twelve refreshes of September are still one September.</li>
+<li><strong>Not delivered is not zero.</strong> A period the export has not written yet is skipped, never stored as an empty month.</li>
+<li><strong>A payer's export splits by member account.</strong> Each row keeps its <code>SubAccountId</code> and <code>SubAccountName</code>.</li>
+</ul>
+<p>S3 storage and request fees still apply, and the Cost Explorer policy does not grant S3 access — the <a href="https://cloudbridge.jetsquirrel.cloud/policies.html#aws-s3">permissions page</a> has the narrow policy the export channel needs. Accounts without a URI keep using Cost Explorer.</p>
+<h2>The Models page</h2>
+<p>The ledger has been storing token quantities beside LLM costs since 0.2.0; nothing read them. The new Models page does. For the range you pick, each model gets its cost and change, its input, output and cache tokens, a blended cost per million tokens and its cache share, with a daily token chart beneath.</p>
+<p>It also says what stands out. A model whose cache reads are under 5% of its input side is paying input price for what could be cache price. One model carrying more than 70% of model spend is worth knowing about. A model billed with no token metering is flagged as such, because its unit cost cannot be computed. And a spend rise is checked against the two periods' token counts: when the extra tokens explain the rise it is usage, and only when they do not is it reported as a rising unit price.</p>
+<p>Model names buried in Alibaba Cloud and Volcengine billing-item text are not extracted yet; OpenAI, Anthropic and DeepSeek imports name their models directly.</p>
+<h2>Other ways to read the ledger</h2>
+<ul>
+<li><strong>Query.</strong> A read-only SQL console over the local DuckDB ledger, with starter templates. Only reading statements run, and the ledger is opened read-only for them in any case. Desktop only.</li>
+<li><strong>Budgets.</strong> The Rules page holds a monthly budget per account, and an "Account budget" rule alerts on a percentage or an amount, against cost to date or the month-end forecast. Anomaly rules can now be scoped to one account too.</li>
+<li><strong>Breakdown by dimension.</strong> Attribution switches between tag, service, region and service category, drawn as a treemap — area is cost, colour is the change — or as share bars, with the period's costliest resources beside it. An account's detail page has the same drill-down.</li>
+<li><strong>Data health.</strong> Findings for what makes a total less trustworthy than it looks: currencies the rate table cannot convert, usage with no attribution tag or no region, adjustments no charge explains. Dismiss one and it stays dismissed for that period.</li>
+</ul>
+<h2>CloudBridge in a browser</h2>
+<p>The crate now also builds for WebAssembly. The <a href="https://cloudbridge.jetsquirrel.cloud/demo/">demo</a> is not a mock-up: the pages, view models and alert rules are the desktop's own code, running over an in-memory ledger seeded with the demo bill in place of DuckDB, the provider APIs and the keyring. Query, Rules and Settings stay on the desktop; everything else, the Models page included, is there.</p>
+<p>To keep it that way, CI builds the browser version as a required check, and the statistics both builds compute — forecasts, comparisons, decompositions, findings — live in one shared, tested module rather than a copy per backend.</p>
+<h2>Smaller things</h2>
+<ul>
+<li><strong>Deleting an account asks about its history.</strong> Before, the charges stayed behind silently and kept counting in totals with no account left to explain them. The delete dialog now offers to remove them, and history left by an earlier delete is listed on the Accounts page where it can be removed.</li>
+<li><strong>A first run that goes somewhere.</strong> An empty Overview offers to add an account or load the demo bill, and saving an API account fetches its bill straight away.</li>
+<li><strong>Keyboard shortcuts.</strong> ⌘1–⌘9 switch pages, ⌘R reloads.</li>
+<li><strong>The window opens first.</strong> Stores open and pages load in the background, each page on its first visit.</li>
+<li><strong>The spend chart's fill</strong> no longer cuts a diagonal wedge across the chart.</li>
+<li><strong>Security:</strong> rustls and quick-xml are upgraded past three RUSTSEC advisories.</li>
+<li><strong>Rust 1.95</strong> is the declared minimum; the old declaration was never buildable.</li>
+</ul>
+<p>The full list is in the <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CHANGELOG.md">changelog</a>.</p>
+<h2>What's next</h2>
+<p>The <a href="https://github.com/JetSquirrel/cloudbridge/blob/main/docs/roadmap.md">roadmap</a> turns from bills to the resources behind them: cost per resource first, read from the rows the S3 export already provides, and then the relationships between resources — cost rolled up along ownership, orphans that still cost money. The billing APIs for Volcengine, OpenAI and Anthropic are still owed; until then, their exports import.</p>
+
+            <div class="post-nav">
+                <a href="/blog.html" data-i18n="post.back">← All posts</a>
+            </div>
+        </article>
+    </main>
+
+    <footer>
+        <div class="container">
+            <span data-i18n="footer.copy">&copy; 2024-2026 CloudBridge. Released under MIT License.</span>
+            <ul class="footer-nav" aria-label="Site links">
+                <li><a href="/docs.html" data-i18n="footer.docs">Docs</a></li>
+                <li><a href="/demo/" data-i18n="footer.demo">Demo</a></li>
+                <li><a href="/blog.html" data-i18n="footer.blog">Blog</a></li>
+                <li><a href="/policies.html" data-i18n="footer.policies">Permissions</a></li>
+                <li><a href="https://github.com/JetSquirrel/cloudbridge" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+                <li><a href="https://github.com/JetSquirrel/cloudbridge/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer" data-i18n="footer.changelog">Changelog</a></li>
+                <li><a href="https://github.com/JetSquirrel/cloudbridge/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" data-i18n="footer.license">License</a></li>
+            </ul>
+        </div>
+    </footer>
+
+    <!-- Same i18n scaffolding as index.html; see that file for how to add a locale. -->
+    <script>
+        (function () {
+            var LOCALES = {
+                en: {} // default: strings live in the markup
+            };
+
+            function applyLocale(locale) {
+                var dict = LOCALES[locale];
+                if (!dict) return;
+                document.querySelectorAll('[data-i18n]').forEach(function (el) {
+                    var key = el.getAttribute('data-i18n');
+                    if (typeof dict[key] === 'string') el.textContent = dict[key];
+                });
+                document.querySelectorAll('[data-i18n-html]').forEach(function (el) {
+                    var key = el.getAttribute('data-i18n-html');
+                    if (typeof dict[key] === 'string') el.innerHTML = dict[key];
+                });
+                document.documentElement.lang = locale;
+            }
+
+            var saved = null;
+            try { saved = localStorage.getItem('cloudbridge-locale'); } catch (e) {}
+            var browser = (navigator.language || 'en').slice(0, 2);
+            applyLocale(saved && LOCALES[saved] ? saved : (LOCALES[browser] ? browser : 'en'));
+        })();
+    </script>
+</body>
+</html>

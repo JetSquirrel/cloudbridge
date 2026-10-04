@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-05
+
+The bill arrives more ways and is read more ways: AWS Data Exports straight
+from S3, a Models page for LLM token economics, a read-only SQL console,
+monthly budgets, a dimension breakdown and data-quality findings — and the
+same application runs in a browser as a demo.
+
 ### Added
+- **A Models page: what each LLM model costs per token.** It groups the
+  model providers' rows by model and shows, for the selected range, each
+  model's usage cost and its change against the previous period, its input,
+  output and cache tokens, its blended cost per million tokens, its cache
+  share and its share of model spend, with a daily token chart. Findings
+  flag a model that barely reads from cache, one model carrying most of the
+  spend, a spend rise that the two periods' token counts put on unit price
+  rather than usage, and a model billed with no token metering. Rows that
+  carry tokens but no cost count toward the token figures. ⌘9 / Ctrl+9
+  opens it, and it runs in the browser demo. Model names inside Alibaba
+  Cloud and Volcengine billing-item text are not extracted yet
 - **AWS Data Exports (FOCUS 1.2) straight from S3.** An AWS account can
   carry the `s3://bucket/prefix` URI of its CUR 2.0 "FOCUS 1.2 with AWS
   columns" export; refresh then reads the export's objects from the bucket,
@@ -62,6 +80,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   kind and billing period and the dismissal persists; one that no longer
   applies shows again next period
 
+- **Keyboard shortcuts.** ⌘1–⌘9 (Ctrl on Windows and Linux) switch pages
+  and ⌘R reloads the current one from the ledger; they work while a text
+  field has focus and after a dialog closes
+- **A first run that leads somewhere.** An empty Overview offers "Add
+  account…" and "Load demo data"; demo accounts carry a pill and the
+  Overview a "Clear demo data" notice. Saving an API account fetches its
+  bill straight away, and the add dialog explains each source's credential
+  with a link to the permissions page
+
 ### Changed
 - **Deleting an account asks about its billing history.** The delete
   dialog offers "Also delete its billing history", off by default, and says
@@ -93,6 +120,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   load: a `daily_cost_rollup` table (ledger schema v3) keeps the same
   numbers, refreshed for the period an ingest touched and rebuilt in full
   when the reporting currency changes or the demo bill is seeded or cleared
+- The window opens before the stores do, and each page loads on its first
+  visit rather than all at once at startup
+- Refresh skips accounts that have no API instead of reporting them as
+  failed, and AWS AccessDenied and DataUnavailable errors say what to fix
+- The declared minimum Rust is 1.95 (`rust-version`). The 1.75 it said
+  before was never buildable: the locked `gpui-pre` uses
+  `std::hint::cold_path`, stable since 1.95
+
+### Fixed
+- The spend chart's fill closes along its bottom edge instead of cutting a
+  diagonal wedge back to the first point, and a spike no longer drags the
+  curve below the zero days beside it
+- The Overview's movers table no longer runs its change column into the
+  DRIVES column
+- Solid accent buttons render solid rather than as a pale wash under white
+  text
 
 ### Security
 - rustls is upgraded past RUSTSEC-2026-0285 (TLS 1.3 handshake messages
@@ -483,6 +526,7 @@ next.
 
 ## Version History
 
+- **0.4.0** - AWS Data Exports from S3, a Models page, a SQL console, budgets, and a browser demo
 - **0.3.2** - DuckDB's json and parquet extensions compiled in, fixing signed and offline builds
 - **0.3.1** - One shared set of theme components, and a signed, notarized macOS build
 - **0.3.0** - Bill file import, a range-selectable Overview, and a GPUI Kit interface
