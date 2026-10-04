@@ -38,12 +38,13 @@ alert rules from P2. Version 0.3.1 brought interface consistency improvements
 and signed, notarized macOS releases. See the [changelog](../CHANGELOG.md)
 for release boundaries.
 
-**Working tree / unreleased:** AWS Data Exports (CUR 2.0, FOCUS 1.2 with
-AWS columns) can be read from S3. This extends P1's export channel; it is
-not part of 0.3.1. OSS collection remains future work. S3 reads avoid Cost
-Explorer request charges, but S3 storage and request fees still apply.
+0.4.0 extends P1's export channel: AWS Data Exports (CUR 2.0, FOCUS 1.2
+with AWS columns) are read from S3. OSS collection remains future work. S3
+reads avoid Cost Explorer request charges, but S3 storage and request fees
+still apply. Monthly budgets from P2, the dimension breakdown and
+data-quality findings shipped in the same release.
 
-Also unreleased: the Models page, the first read of the token quantities
+0.4.0 also brought the Models page, the first read of the token quantities
 the ledger has stored since P0. It groups model-provider rows by
 `(provider, service_category)` and reports per-model usage cost, token
 volumes split input/output/cache (absent-basis rows included — they carry
@@ -52,12 +53,11 @@ the previous period, cache-read share, and deterministic findings (low
 cache utilization, spend concentration, cost-only models without token
 metering, and a rising unit price — a spend rise that a
 price-versus-volume split of the two periods' tokens puts on price, not
-usage). The statistics are
-pure functions in `analytics.rs`; the reads exist in both backends with
-identical signatures, and the demo bill seeds OpenAI and Anthropic accounts
-with per-model token rows so the page renders in the browser demo. Model
-names embedded in Alibaba/Volcengine billing-item text are not extracted
-yet.
+usage). The statistics are pure functions in `analytics.rs`; the reads
+exist in both backends with identical signatures, and the demo bill seeds
+OpenAI and Anthropic accounts with per-model token rows so the page
+renders in the browser demo. Model names embedded in Alibaba/Volcengine
+billing-item text are not extracted yet.
 
 A source is a `SourceDescriptor` registry entry rather than an enum
 variant. API-backed sources implement `BillingSource`; file-only sources
@@ -307,8 +307,8 @@ normalizes, and nothing else.
     the format names the member it reads, so the zip imports as it
     downloaded and the token file is refused rather than totalled as money.
 
-- **Bill export collection (S3 / OSS + Parquet) — AWS landed in the
-  working tree, unreleased.** An AWS account can point at its Data Exports
+- **Bill export collection (S3 / OSS + Parquet) — AWS shipped in
+  0.4.0.** An AWS account can point at its Data Exports
   (CUR 2.0, FOCUS 1.2 with AWS columns) bucket using an
   `s3://bucket/prefix` URI. Refresh reads resource-level rows with tags —
   Parquet or gzipped CSV, as the export was configured — rather than

@@ -63,11 +63,10 @@ If CloudBridge reports **AccessDenied**, the key authenticated but its
 user lacks `ce:GetCostAndUsage`: attach the policy above to the user that
 owns the key.
 
-### AWS Data Exports from S3 — working tree / unreleased
+### AWS Data Exports from S3
 
-The S3 export channel is listed under **Unreleased** in the
-[changelog](../CHANGELOG.md); it is not yet in a tagged release. The Cost Explorer
-policy above does **not** grant access to an export bucket.
+The S3 export channel shipped in 0.4.0. The Cost Explorer policy above does
+**not** grant access to an export bucket.
 
 For this channel, scope `s3:ListBucket` to the export bucket and permitted
 prefix, and `s3:GetObject` to the objects under that prefix. If objects
