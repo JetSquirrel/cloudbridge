@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **An AWS account can use this machine's credentials.** When the
+  environment or `~/.aws/credentials` holds a key, the add-account dialog
+  offers "Use this machine's credentials", ticked by default: they are
+  read each time they are needed and nothing is saved. A key typed instead
+  is saved in the macOS Keychain (Windows: Credential Manager), and the
+  dialog now says so, including that macOS asks once and to choose Always
+  Allow.
+
 ## [0.4.0] - 2026-10-05
 
 The bill arrives more ways and is read more ways: AWS Data Exports straight

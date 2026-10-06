@@ -123,6 +123,28 @@ pub struct AccountsView {
     selected_source: &'static SourceDescriptor,
     /// What the last "Fill from system" click found, if there has been one.
     fill_status: Option<FillStatus>,
+    /// The add dialog's "use this machine's credentials" choice: on when
+    /// it opens if the machine has a key for the source, so a machine set
+    /// up for the CLI needs nothing typed and nothing kept.
+    use_system_credentials: bool,
+}
+
+/// Where a typed key goes, said where it is typed.
+const KEYRING_NOTE: &str = if cfg!(target_os = "macos") {
+    "Saved in the macOS Keychain, never in CloudBridge's own files. The first time CloudBridge \
+     reads it, macOS asks for permission: choose Always Allow."
+} else if cfg!(target_os = "windows") {
+    "Saved in Windows Credential Manager, never in CloudBridge's own files."
+} else {
+    "Saved in the system keyring, never in CloudBridge's own files."
+};
+
+/// Whether this machine has a usable key for `source` right now: a key,
+/// and its secret where the source needs one.
+fn has_system_credentials(source: &SourceDescriptor) -> bool {
+    source
+        .credentials_from_system()
+        .is_some_and(|found| !source.needs_secret_key() || found.secret_key.is_some())
 }
 
 /// The outcome of one attempt to fill the form from this machine.
@@ -173,6 +195,7 @@ impl AccountsView {
             pending_delete: None,
             delete_history: false,
             fill_status: None,
+            use_system_credentials: false,
             error: None,
             success: None,
             info: None,
@@ -328,6 +351,7 @@ impl AccountsView {
         self.show_add_dialog = true;
         self.selected_source = registry::default_source();
         self.fill_status = None;
+        self.use_system_credentials = has_system_credentials(self.selected_source);
         self.dialog_error = None;
         self.error = None;
         self.success = None;
@@ -345,6 +369,7 @@ impl AccountsView {
         self.selected_source = source;
         // Whatever the last fill found was about the source being left.
         self.fill_status = None;
+        self.use_system_credentials = has_system_credentials(source);
 
         // Every label comes from the descriptor, so a new source needs no
         // change here.
@@ -398,6 +423,37 @@ impl AccountsView {
 
         self.fill_status = Some(FillStatus::Filled(found.origin));
         cx.notify();
+    }
+
+    /// The add dialog's choice between this machine's credentials and a
+    /// key kept in the keyring, and what the first one means.
+    fn render_credential_choice(&self, cx: &Context<Self>) -> impl IntoElement {
+        let places = self.selected_source.credential_places().join(" or ");
+        div()
+            .v_flex()
+            .gap_1()
+            .child(
+                Checkbox::new("use-system-credentials")
+                    .label("Use this machine's credentials")
+                    .checked(self.use_system_credentials)
+                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                        this.use_system_credentials = *checked;
+                        this.dialog_error = None;
+                        cx.notify();
+                    })),
+            )
+            .child(theme::caption(
+                cx,
+                if self.use_system_credentials {
+                    format!(
+                        "Read from {places} each time they are needed; nothing is saved. An app \
+                         opened from Finder cannot see shell variables, so the credentials file \
+                         is what counts."
+                    )
+                } else {
+                    format!("Or enter a key below. Found nothing in {places}? Untick to type one.")
+                },
+            ))
     }
 
     /// What the last fill found, once there has been one.
@@ -468,7 +524,23 @@ impl AccountsView {
         // A source whose bill can be imported from a file is usable with no
         // credentials at all, so an empty key is not an error there — it is
         // the normal case for one that has no billing API in this build.
-        if ak.is_empty() && !self.selected_source.credentials_optional() {
+        let system = self.use_system_credentials;
+        if system && !has_system_credentials(self.selected_source) {
+            self.dialog_error = Some(format!(
+                "No credentials found on this machine (looked in {}). Untick \
+                 \"Use this machine's credentials\" to enter a key instead.",
+                self.selected_source.credential_places().join(" and ")
+            ));
+            cx.notify();
+            return;
+        }
+        // Nothing typed is kept for an account that reads this machine's.
+        let (ak, sk) = if system {
+            (String::new(), String::new())
+        } else {
+            (ak, sk)
+        };
+        if ak.is_empty() && !system && !self.selected_source.credentials_optional() {
             self.dialog_error = Some(format!(
                 "Enter the {}.",
                 self.selected_source.access_key_label
@@ -501,6 +573,7 @@ impl AccountsView {
             enabled: true,
             // Derived by the save, from the key it is given.
             access_key_hint: None,
+            system_credentials: system,
             export_uri: {
                 let uri = self.export_uri_input.read(cx).value().trim().to_string();
                 if uri.is_empty() {
@@ -522,7 +595,8 @@ impl AccountsView {
         // credentials fetches its bill right away, so the first thing the
         // user sees is spend rather than an empty row; one read from a
         // file points at the row's Import button.
-        let fetch_after_save = self.selected_source.fetches_from_api() && !ak.is_empty();
+        let fetch_after_save =
+            self.selected_source.fetches_from_api() && (system || !ak.is_empty());
         let import_hint = self
             .selected_source
             .bill_file
@@ -1179,10 +1253,14 @@ impl AccountsView {
                     // recorded; it appears the next time the account's
                     // credentials are actually used.
                     .when_some(
-                        account
-                            .as_ref()
-                            .and_then(|a| a.masked_access_key())
-                            .map(|masked| format!("AK: {}", masked)),
+                        account.as_ref().and_then(|a| {
+                            if a.system_credentials {
+                                Some("This machine's credentials".to_string())
+                            } else {
+                                a.masked_access_key()
+                                    .map(|masked| format!("AK: {}", masked))
+                            }
+                        }),
                         |el, masked| {
                             el.child(
                                 div()
@@ -1666,25 +1744,34 @@ impl AccountsView {
                             // secret it would only file away unused. Its bill
                             // arrives through Import instead.
                             .when(self.selected_source.fetches_from_api(), |el| {
-                                el.child(
-                                    div()
-                                        .v_flex()
-                                        .gap_1()
-                                        .child(
-                                            div()
-                                                .text_sm()
-                                                .child(self.selected_source.access_key_label),
-                                        )
-                                        .child(Input::new(&self.ak_input)),
-                                )
-                                .when_some(self.selected_source.secret_key_label, |el, label| {
+                                el.when(self.selected_source.local_credentials.is_some(), |el| {
+                                    el.child(self.render_credential_choice(cx))
+                                })
+                                .when(!self.use_system_credentials, |el| {
                                     el.child(
                                         div()
                                             .v_flex()
                                             .gap_1()
-                                            .child(div().text_sm().child(label))
-                                            .child(Input::new(&self.sk_input)),
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .child(self.selected_source.access_key_label),
+                                            )
+                                            .child(Input::new(&self.ak_input)),
                                     )
+                                    .when_some(
+                                        self.selected_source.secret_key_label,
+                                        |el, label| {
+                                            el.child(
+                                                div()
+                                                    .v_flex()
+                                                    .gap_1()
+                                                    .child(div().text_sm().child(label))
+                                                    .child(Input::new(&self.sk_input)),
+                                            )
+                                        },
+                                    )
+                                    .child(theme::caption(cx, KEYRING_NOTE))
                                 })
                                 .when(self.selected_source.default_region.is_some(), |el| {
                                     el.child(
@@ -1745,29 +1832,35 @@ impl AccountsView {
                             // an app launched from Finder inherits no shell
                             // variables, and the credentials file is read
                             // only when the button is clicked.
-                            .when(self.selected_source.local_credentials.is_some(), |el| {
-                                el.child(
-                                    div()
-                                        .h_flex()
-                                        .gap_2()
-                                        .justify_between()
-                                        .items_center()
-                                        .child(self.render_fill_status(cx))
-                                        .child(
-                                            Button::new("fill-from-system")
-                                                .label("Fill from system")
-                                                .ghost()
-                                                .tooltip(
-                                                    "Read the credentials this machine \
+                            .when(
+                                self.selected_source.local_credentials.is_some()
+                                    && !self.use_system_credentials,
+                                |el| {
+                                    el.child(
+                                        div()
+                                            .h_flex()
+                                            .gap_2()
+                                            .justify_between()
+                                            .items_center()
+                                            .child(self.render_fill_status(cx))
+                                            .child(
+                                                Button::new("fill-from-system")
+                                                    .label("Fill from system")
+                                                    .ghost()
+                                                    .tooltip(
+                                                        "Read the credentials this machine \
                                                          already has, from the environment or \
                                                          the provider's credentials file",
-                                                )
-                                                .on_click(cx.listener(|this, _, window, cx| {
-                                                    this.fill_from_system(window, cx);
-                                                })),
-                                        ),
-                                )
-                            }),
+                                                    )
+                                                    .on_click(cx.listener(
+                                                        |this, _, window, cx| {
+                                                            this.fill_from_system(window, cx);
+                                                        },
+                                                    )),
+                                            ),
+                                    )
+                                },
+                            ),
                     )
                     // Error message
                     .when_some(self.dialog_error.clone(), |el, error| {

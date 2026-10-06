@@ -63,7 +63,11 @@ static DB_CONNECTION: LazyLock<Arc<Mutex<Option<Connection>>>> =
 /// finding stays hidden for its billing period across sessions and
 /// refreshes. New table only; `create_tables` runs on every start, so an
 /// existing database gains it without a rebuild.
-const APP_SCHEMA_VERSION: i32 = 8;
+///
+/// v9 adds `system_credentials` to `cloud_accounts`: an account that reads
+/// its credentials from this machine (environment or credentials file)
+/// each time, and keeps none in the keyring.
+const APP_SCHEMA_VERSION: i32 = 9;
 
 /// Initialize database
 pub fn init_database() -> Result<()> {
@@ -117,6 +121,9 @@ pub(crate) fn prepare_schema(conn: &Connection) -> Result<()> {
     if version < 7 {
         migrate_to_v7(conn)?;
     }
+    if version < 9 {
+        migrate_to_v9(conn)?;
+    }
 
     conn.execute(
         "INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (?, ?)",
@@ -158,9 +165,11 @@ const TABLES: &[(&str, &str, &str)] = &[
             -- that already exists, and a fresh install should have the same
             -- column order as an upgraded one.
             access_key_hint VARCHAR,
-            export_uri     VARCHAR
+            export_uri     VARCHAR,
+            -- Nullable, read through coalesce(): v9 adds it with ALTER TABLE.
+            system_credentials BOOLEAN DEFAULT false
         )"#,
-        "id, name, source_id, region, created_at, last_synced_at, enabled, access_key_hint, export_uri",
+        "id, name, source_id, region, created_at, last_synced_at, enabled, access_key_hint, export_uri, system_credentials",
     ),
     (
         "budgets",
@@ -335,6 +344,22 @@ fn migrate_to_v7(conn: &Connection) -> Result<()> {
 
     tracing::info!("Adding export_uri to cloud_accounts");
     conn.execute_batch("ALTER TABLE cloud_accounts ADD COLUMN export_uri VARCHAR")?;
+
+    Ok(())
+}
+
+/// Add the flag for an account that reads its credentials from this
+/// machine. Existing accounts keep theirs in the keyring.
+fn migrate_to_v9(conn: &Connection) -> Result<()> {
+    let columns = column_names(conn, "cloud_accounts")?;
+    if columns.is_empty() || columns.iter().any(|c| c == "system_credentials") {
+        return Ok(());
+    }
+
+    tracing::info!("Adding system_credentials to cloud_accounts");
+    conn.execute_batch(
+        "ALTER TABLE cloud_accounts ADD COLUMN system_credentials BOOLEAN DEFAULT false",
+    )?;
 
     Ok(())
 }
@@ -530,7 +555,8 @@ pub fn save_account(
     access_key_id: &str,
     secret_access_key: &str,
 ) -> Result<()> {
-    let hint = if access_key_id.is_empty() {
+    // An account reading this machine's credentials stores none.
+    let hint = if access_key_id.is_empty() || account.system_credentials {
         None
     } else {
         secret_store::store_account_secrets(&account.id, access_key_id, secret_access_key)?;
@@ -543,8 +569,9 @@ pub fn save_account(
     conn.execute(
         r#"
         INSERT OR REPLACE INTO cloud_accounts
-        (id, name, source_id, region, created_at, last_synced_at, enabled, access_key_hint, export_uri)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, name, source_id, region, created_at, last_synced_at, enabled, access_key_hint, export_uri,
+         system_credentials)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
         params![
             account.id,
@@ -556,6 +583,7 @@ pub fn save_account(
             account.enabled,
             hint,
             account.export_uri,
+            account.system_credentials,
         ],
     )?;
 
@@ -575,6 +603,10 @@ pub fn account_context(
     account: &CloudAccount,
     descriptor: &SourceDescriptor,
 ) -> Result<SourceContext> {
+    if account.system_credentials {
+        return system_context(account, descriptor);
+    }
+
     let (access_key_id, secret_access_key) = secret_store::get_account_secrets(&account.id)?
         .ok_or_else(|| {
             anyhow::anyhow!(
@@ -600,6 +632,31 @@ pub fn account_context(
     })
 }
 
+/// The context of an account that reads this machine's credentials: read
+/// now, from the environment or the credentials file, every time — nothing
+/// is kept. A key there without its secret is as good as none.
+fn system_context(account: &CloudAccount, descriptor: &SourceDescriptor) -> Result<SourceContext> {
+    let not_found = || {
+        anyhow::anyhow!(
+            "No credentials for {} on this machine: looked in {}. An app opened from \
+             Finder cannot see shell variables, so the credentials file is what counts.",
+            account.name,
+            descriptor.credential_places().join(" and ")
+        )
+    };
+    let found = descriptor.credentials_from_system().ok_or_else(not_found)?;
+    let secret_access_key = match (descriptor.needs_secret_key(), found.secret_key) {
+        (true, None) => return Err(not_found()),
+        (_, secret) => secret.unwrap_or_default(),
+    };
+    Ok(SourceContext {
+        access_key_id: found.access_key,
+        secret_access_key,
+        region: descriptor.region_or_default(account.region.clone().or(found.region)),
+        export_uri: account.export_uri.clone(),
+    })
+}
+
 /// Record the leading characters of an account's access key, for a list
 /// that must not read the key itself.
 fn set_access_key_hint(account_id: &str, access_key_id: &str) -> Result<()> {
@@ -621,7 +678,8 @@ pub fn get_all_accounts() -> Result<Vec<CloudAccount>> {
 
 pub(crate) fn get_all_accounts_of(conn: &Connection) -> Result<Vec<CloudAccount>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, source_id, region, created_at, last_synced_at, enabled, access_key_hint, export_uri
+        "SELECT id, name, source_id, region, created_at, last_synced_at, enabled, access_key_hint, export_uri,
+                coalesce(system_credentials, false)
          FROM cloud_accounts",
     )?;
 
@@ -637,6 +695,7 @@ pub(crate) fn get_all_accounts_of(conn: &Connection) -> Result<Vec<CloudAccount>
                 row.get::<_, bool>(6)?,
                 row.get::<_, Option<String>>(7)?,
                 row.get::<_, Option<String>>(8)?,
+                row.get::<_, bool>(9)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -652,6 +711,7 @@ pub(crate) fn get_all_accounts_of(conn: &Connection) -> Result<Vec<CloudAccount>
         enabled,
         access_key_hint,
         export_uri,
+        system_credentials,
     ) in rows
     {
         // An id with no descriptor comes from a build that knew a source this
@@ -689,6 +749,7 @@ pub(crate) fn get_all_accounts_of(conn: &Connection) -> Result<Vec<CloudAccount>
             enabled,
             access_key_hint,
             export_uri,
+            system_credentials,
         });
     }
 
@@ -1361,7 +1422,8 @@ mod tests {
                 "last_synced_at",
                 "enabled",
                 "access_key_hint",
-                "export_uri"
+                "export_uri",
+                "system_credentials"
             ]
         );
         assert!(!table_exists(&conn, "cost_data"));
@@ -1527,6 +1589,20 @@ mod tests {
         assert_eq!(column_names(&fresh, "cloud_accounts").unwrap(), columns);
     }
 
+    /// An account stored before v9 keeps its credentials in the keyring.
+    #[test]
+    fn accounts_already_stored_keep_their_keyring_credentials() {
+        let conn = legacy_database();
+
+        prepare_schema(&conn).unwrap();
+
+        let columns = column_names(&conn, "cloud_accounts").unwrap();
+        assert_eq!(columns.last().unwrap(), "system_credentials");
+        let accounts = get_all_accounts_of(&conn).unwrap();
+        assert!(!accounts.is_empty());
+        assert!(accounts.iter().all(|account| !account.system_credentials));
+    }
+
     /// The column arrives last, NULL for accounts already stored: they keep
     /// reading from their billing API until an export URI is entered.
     #[test]
@@ -1536,7 +1612,8 @@ mod tests {
         prepare_schema(&conn).unwrap();
 
         let columns = column_names(&conn, "cloud_accounts").unwrap();
-        assert_eq!(columns.last().unwrap(), "export_uri");
+        // v9 adds one more after it.
+        assert_eq!(columns[columns.len() - 2], "export_uri");
         let export_uri: Option<String> = conn
             .query_row(
                 "SELECT export_uri FROM cloud_accounts WHERE id = 'acct-1'",
