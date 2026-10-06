@@ -1827,11 +1827,13 @@ impl AccountsView {
                                     )
                                 },
                             )
-                            // Offered whether or not this process can see
-                            // a key, because it cannot know until it looks:
-                            // an app launched from Finder inherits no shell
-                            // variables, and the credentials file is read
-                            // only when the button is clicked.
+                            // Offered whether or not a key was seen when the
+                            // dialog opened: that look decides only whether
+                            // "Use this machine's credentials" starts ticked,
+                            // and an app launched from Finder inherits no
+                            // shell variables, so the button looks again —
+                            // environment, then credentials file — when
+                            // clicked.
                             .when(
                                 self.selected_source.local_credentials.is_some()
                                     && !self.use_system_credentials,
