@@ -17,6 +17,8 @@
 //! credentials and are skipped by refresh, so no demo row ever reaches a real
 //! API.
 
+pub mod inventory;
+
 use chrono::{DateTime, NaiveDate, Utc};
 
 use crate::model::{

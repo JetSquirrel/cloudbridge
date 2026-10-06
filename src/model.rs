@@ -727,6 +727,144 @@ pub struct LedgerAccount {
     pub usage_cost: f64,
 }
 
+/// The regions AWS enables for every account. Opt-in regions are left out:
+/// scanning one the account has not enabled only fails.
+pub const AWS_DEFAULT_REGIONS: &[&str] = &[
+    "us-east-1",
+    "us-east-2",
+    "us-west-1",
+    "us-west-2",
+    "ca-central-1",
+    "sa-east-1",
+    "eu-west-1",
+    "eu-west-2",
+    "eu-west-3",
+    "eu-central-1",
+    "eu-north-1",
+    "ap-south-1",
+    "ap-northeast-1",
+    "ap-northeast-2",
+    "ap-northeast-3",
+    "ap-southeast-1",
+    "ap-southeast-2",
+];
+
+/// A resource as an inventory scan saw it: corkscrew's `resource_observations`,
+/// one row per resource, copied into the ledger by an inventory import.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InventoryResource {
+    /// The ledger's source id the resource belongs to, e.g. `AWS`.
+    pub provider: String,
+    /// The provider-side account (the 12-digit AWS account id), when the
+    /// scan names it.
+    pub cloud_account_id: Option<String>,
+    /// The scan's own id for the resource: an ARN, or a Cloud Control
+    /// identifier when no ARN was found.
+    pub resource_id: String,
+    pub arn: Option<String>,
+    /// The scanner's type, e.g. `ec2:instance` or `AWS::EC2::Instance`.
+    pub resource_type: String,
+    pub region: Option<String>,
+    pub name: Option<String>,
+    /// JSON object text; `None` when the scan reported no tags.
+    pub tags: Option<String>,
+    /// The configuration a describe returned, as JSON object text; `None`
+    /// when the scan found the resource but could not describe it.
+    pub properties: Option<String>,
+}
+
+/// What the current inventory covers: the one scan it was imported from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InventoryScope {
+    pub scan_id: String,
+    pub scanned_at: DateTime<Utc>,
+    pub imported_at: DateTime<Utc>,
+    pub source_path: String,
+    /// The regions the scan was asked for. A resource the bill names in
+    /// another region was never looked for, so is not "missing".
+    pub regions: Vec<String>,
+    pub resource_count: i64,
+    /// Which enrichment plugin wrote the inventory, and at what version —
+    /// `corkscrew cloudbridge-r2`, or `demo`. `None` for a scan imported
+    /// before the ledger recorded it. The ledger reads only the two tables,
+    /// so this is what tells one scanner's inventory from another's.
+    pub scanner: Option<String>,
+}
+
+/// One resource's usage cost in a billing period, as the bill names it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResourceCost {
+    pub provider: String,
+    /// The provider-side account the charges were incurred in, when the
+    /// bill says (`sub_account_id`, else `billing_account_id`).
+    pub cloud_account_id: Option<String>,
+    pub resource_id: String,
+    pub resource_name: Option<String>,
+    pub service: String,
+    pub region: Option<String>,
+    /// In the reporting currency.
+    pub usage_cost: f64,
+    /// Whether any of the charges is for an idle public IPv4 address: AWS
+    /// bills an address that is allocated but not attached to anything.
+    pub idle_public_ip: bool,
+}
+
+/// What an Insights finding says about a resource.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum InsightKind {
+    /// An instance the scan saw stopped: no compute charge, but its
+    /// volumes and addresses still bill.
+    StoppedInstance,
+    /// A public IPv4 address the bill charges as idle.
+    IdlePublicIp,
+    /// A resource with no owner tag and no stack or app that manages it.
+    Unclaimed,
+    /// A resource the bill charges for that the inventory does not have,
+    /// in a region the scan covered.
+    NotInInventory,
+}
+
+/// One resource worth a look, and what it costs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InsightFinding {
+    pub kind: InsightKind,
+    pub provider: String,
+    pub cloud_account_id: Option<String>,
+    pub resource_id: String,
+    pub name: Option<String>,
+    /// The scanner's type for inventory findings, the bill's service name
+    /// for bill-only ones.
+    pub resource_kind: String,
+    pub region: Option<String>,
+    /// This period's usage cost in the reporting currency; 0 when the bill
+    /// names no charge for the resource.
+    pub cost: f64,
+    /// What the finding rests on, in a sentence.
+    pub evidence: String,
+}
+
+/// The Insights page's model: findings worst-cost first, and how much of
+/// the inventory could be judged at all.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct InsightsReport {
+    pub findings: Vec<InsightFinding>,
+    pub resources: usize,
+    /// Resources a describe returned configuration for. State-based
+    /// findings (stopped instances) can only judge these.
+    pub described: usize,
+    /// Unclaimed resources the bill charges nothing for this period:
+    /// counted, not listed, so they do not bury the ones that cost.
+    pub unclaimed_free: usize,
+    /// Whether the period's bill names resources at all. Without that, a
+    /// finding has no price, and unclaimed resources are listed whatever
+    /// they cost rather than only when they cost something.
+    pub priced: bool,
+    /// Of the bill's resource-level usage cost, how much matched an
+    /// inventory resource.
+    pub matched_cost: f64,
+    pub billed_cost: f64,
+}
+
 /// One `(provider, service, tag_value)` usage bucket of a period.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ServiceTagUsage {

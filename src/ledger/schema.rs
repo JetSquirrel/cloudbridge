@@ -38,7 +38,13 @@ use duckdb::{params, Connection};
 /// `ServiceCategory` values, beside a new `service_subcategory`; the product
 /// code moves to `x_service_code` and the model to `x_model`. The move is
 /// made in place by [`migrate`], from columns the ledger already has.
-pub const SCHEMA_VERSION: i32 = 5;
+///
+/// v6 adds `dim_resource` and `inventory_scan`: the resource inventory an
+/// enrichment plugin's import copies in — a corkscrew scan today — and the
+/// one scan it came from. New tables only, so the CREATEs below are the
+/// migration. They are the plugin's whole contract with the ledger:
+/// nothing reads the scanner's own database afterwards.
+pub const SCHEMA_VERSION: i32 = 6;
 
 /// The view the application reads: every charge with its amount also
 /// expressed in the reporting currency.
@@ -199,6 +205,38 @@ pub fn apply(conn: &Connection) -> Result<()> {
 
         CREATE INDEX IF NOT EXISTS idx_rollup_day
             ON daily_cost_rollup (provider, account_id, day);
+
+        -- The resource inventory: one row per resource of the last
+        -- imported scan. An import replaces it whole, the way an ingest
+        -- replaces a period, so a resource deleted since drops out.
+        -- `properties` is NULL for a resource the scan found but could
+        -- not describe; state-based insights cannot judge those.
+        CREATE TABLE IF NOT EXISTS dim_resource (
+            provider          VARCHAR NOT NULL,
+            resource_id       VARCHAR NOT NULL,
+            cloud_account_id  VARCHAR,
+            arn               VARCHAR,
+            resource_type     VARCHAR NOT NULL,
+            region            VARCHAR,
+            name              VARCHAR,
+            tags              VARCHAR,            -- JSON object text
+            properties        VARCHAR,            -- JSON object text
+            PRIMARY KEY (provider, resource_id)
+        );
+
+        -- The scan the inventory came from: at most one row, replaced
+        -- with the inventory. `regions` is what the scan was asked to
+        -- cover, as a JSON array.
+        CREATE TABLE IF NOT EXISTS inventory_scan (
+            scan_id         VARCHAR PRIMARY KEY,
+            scanned_at      TIMESTAMP NOT NULL,
+            imported_at     TIMESTAMP NOT NULL,
+            source_path     VARCHAR NOT NULL,
+            regions         VARCHAR NOT NULL,
+            resource_count  BIGINT NOT NULL,
+            -- The plugin and version that wrote the inventory.
+            scanner         VARCHAR
+        );
         "#,
     )?;
 
@@ -237,6 +275,11 @@ fn migrate(conn: &Connection) -> Result<()> {
             "ALTER TABLE fct_charge ADD COLUMN sub_account_id VARCHAR;
              ALTER TABLE fct_charge ADD COLUMN sub_account_name VARCHAR;",
         )?;
+    }
+    if !has_column(conn, "inventory_scan", "scanner")? {
+        // A scan imported by a build before v6 was settled: NULL, since
+        // nothing recorded which release ran it.
+        conn.execute_batch("ALTER TABLE inventory_scan ADD COLUMN scanner VARCHAR")?;
     }
     if !has_column(conn, "fct_charge", "x_model")? {
         tracing::info!("Separating service categories from product codes and models");
@@ -634,6 +677,35 @@ mod tests {
         )?;
 
         Ok(count > 0)
+    }
+
+    /// A ledger an earlier Insights build wrote has `inventory_scan` without
+    /// `scanner`; it gains the column, and the scan it holds reads as one
+    /// whose scanner nobody recorded.
+    #[test]
+    fn an_early_inventory_gains_the_scanner_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE inventory_scan (
+                 scan_id         VARCHAR PRIMARY KEY,
+                 scanned_at      TIMESTAMP NOT NULL,
+                 imported_at     TIMESTAMP NOT NULL,
+                 source_path     VARCHAR NOT NULL,
+                 regions         VARCHAR NOT NULL,
+                 resource_count  BIGINT NOT NULL
+             );
+             INSERT INTO inventory_scan VALUES
+                 ('scan-1', CAST('2026-10-01 00:00:00' AS TIMESTAMP),
+                  CAST('2026-10-01 00:00:00' AS TIMESTAMP), '/tmp/c.duckdb', '[]', 3);",
+        )
+        .unwrap();
+
+        apply(&conn).unwrap();
+
+        let scanner: Option<String> = conn
+            .query_row("SELECT scanner FROM inventory_scan", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(scanner, None);
     }
 
     /// A ledger written before v3 gains the rollup table the same way a

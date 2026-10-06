@@ -20,6 +20,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stays uncategorized — read as *Uncategorized*, since *Other* is a FOCUS
   category of its own — and is reported as a data-quality finding naming
   the largest such products
+- **Insights: what to cut, priced from the bill — an optional
+  resource-inventory plugin.** A new page compares the bill with a
+  resource inventory and lists stopped instances whose volumes still bill,
+  idle public IPv4 addresses, unclaimed resources (no owner tag, no
+  managing stack or app) and resources billed but missing from the scan,
+  each with this period's cost. The inventory comes from
+  [corkscrew](https://github.com/JetSquirrel/corkscrew/tree/cloudbridge-dist),
+  our fork, installed only when you click **Set up and scan** and confirm:
+  a pinned `cloudbridge-rN` build checked against its SHA-256. It scans
+  each AWS account read-only, in every default region or the ones you
+  choose, and the scan is copied into the ledger's `dim_resource` and
+  `inventory_scan` (ledger schema v6); nothing reads corkscrew's own
+  database afterwards. Without a scan the page says what it would show.
+  Matching a bill row to a resource by its own id covered 99.9% of
+  resource-level usage on a real account. ⌘0 / Ctrl+0 opens it, and the
+  demo carries a small inventory, so it shows in the browser demo too
 
 ### Changed
 - **`service_category` has one meaning (ledger schema v5).** It used to

@@ -18,6 +18,7 @@
 #![allow(dead_code)]
 
 pub mod demo;
+pub mod inventory;
 pub mod query;
 pub mod rollup;
 pub mod schema;

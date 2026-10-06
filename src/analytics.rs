@@ -15,6 +15,8 @@
 //! clock — `now` is always an argument, which is also what makes the tests
 //! below possible without either backend present.
 
+pub mod insights;
+
 use std::collections::BTreeMap;
 
 use anyhow::Result;

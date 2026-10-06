@@ -26,9 +26,10 @@ use crate::store::Connection;
 
 pub use crate::model::{
     AdhocResult, Balance, BreakdownDim, CategoryDelta, CostChangeDecomposition, DailyModelTokens,
-    DailyTotal, DataQualityIssue, DataQualityKind, ForecastBands, IssueSeverity, LedgerAccount,
-    ModelTokenSummary, MovementKind, PeriodForecast, PeriodOverPeriod, ServiceDailyTotal,
-    ServiceMovement, ServiceTagUsage, TopResource, UntaggedCharge, UntaggedServiceUsage,
+    DailyTotal, DataQualityIssue, DataQualityKind, ForecastBands, InventoryResource,
+    InventoryScope, IssueSeverity, LedgerAccount, ModelTokenSummary, MovementKind, PeriodForecast,
+    PeriodOverPeriod, ResourceCost, ServiceDailyTotal, ServiceMovement, ServiceTagUsage,
+    TopResource, UntaggedCharge, UntaggedServiceUsage,
 };
 
 /// The bucket a charge with no value for the tag key lands in, as the view's
@@ -333,6 +334,63 @@ pub fn top_resources(key: &PeriodKey, limit: usize) -> Result<Vec<TopResource>> 
         resources.truncate(limit);
 
         resources
+    })
+}
+
+// ==================== Inventory ====================
+
+/// Every resource of the current inventory, in id order.
+pub fn inventory_resources() -> Result<Vec<InventoryResource>> {
+    memory::with_store(|store| {
+        let mut resources = store.resources.borrow().clone();
+        resources.sort_by(|a, b| {
+            (a.provider.as_str(), a.resource_id.as_str())
+                .cmp(&(b.provider.as_str(), b.resource_id.as_str()))
+        });
+        Ok(resources)
+    })
+}
+
+/// The scan the current inventory came from; `None` before any import.
+pub fn inventory_scope() -> Result<Option<InventoryScope>> {
+    memory::with_store(|store| Ok(store.inventory_scope.borrow().clone()))
+}
+
+/// Each resource the bill names in `billing_period`, with its usage cost
+/// in the reporting currency, across every account — the desktop's
+/// `GROUP BY provider, resource_id`, `any_value` for the descriptive
+/// columns and a usage-only sum.
+pub fn resource_usage_costs(billing_period: &str) -> Result<Vec<ResourceCost>> {
+    read(|all| {
+        let mut grouped: BTreeMap<(String, String), ResourceCost> = BTreeMap::new();
+        for row in all
+            .iter()
+            .filter(|row| row.billing_period == billing_period)
+        {
+            let Some(resource_id) = row.resource_id.as_ref() else {
+                continue;
+            };
+            let cost = grouped
+                .entry((row.provider.clone(), resource_id.clone()))
+                .or_insert_with(|| ResourceCost {
+                    provider: row.provider.clone(),
+                    cloud_account_id: row.cloud_account_id.clone(),
+                    resource_id: resource_id.clone(),
+                    resource_name: row.resource_name.clone(),
+                    service: service_of(row).to_string(),
+                    region: row.region_id.clone(),
+                    usage_cost: 0.0,
+                    idle_public_ip: false,
+                });
+            if row.charge_category == ChargeCategory::Usage {
+                cost.usage_cost += row.billed_cost_base.unwrap_or(0.0);
+            }
+            cost.idle_public_ip |= row
+                .charge_description
+                .as_deref()
+                .is_some_and(|d| d.to_lowercase().contains("idle public ipv4"));
+        }
+        grouped.into_values().collect()
     })
 }
 

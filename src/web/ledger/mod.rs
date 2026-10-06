@@ -6,6 +6,7 @@
 //! module is the API the pages were already written against.
 
 pub mod demo;
+pub mod inventory;
 pub mod query;
 
 use anyhow::Result;

@@ -55,6 +55,10 @@ pub struct AppConfig {
     /// view they are read through.
     #[serde(default = "default_reporting_currency")]
     pub reporting_currency: String,
+    /// The AWS regions an Insights scan covers; `None` for every region
+    /// AWS enables by default ([`crate::model::AWS_DEFAULT_REGIONS`]).
+    #[serde(default)]
+    pub scan_regions: Option<Vec<String>>,
 }
 
 fn default_reporting_currency() -> String {
@@ -72,6 +76,7 @@ impl Default for AppConfig {
             theme: ThemeConfig::default(),
             refresh_interval_hours: default_refresh_interval_hours(),
             reporting_currency: default_reporting_currency(),
+            scan_regions: None,
         }
     }
 }

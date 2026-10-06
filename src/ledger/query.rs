@@ -15,9 +15,10 @@ use crate::analytics::{self, QualityCounts, TwoPeriodBuckets};
 use crate::model::BillingPeriod;
 pub use crate::model::{
     AdhocResult, Balance, BreakdownDim, CategoryDelta, CostChangeDecomposition, DailyModelTokens,
-    DailyTotal, DataQualityIssue, DataQualityKind, ForecastBands, IssueSeverity, LedgerAccount,
-    ModelTokenSummary, MovementKind, PeriodForecast, PeriodOverPeriod, ServiceDailyTotal,
-    ServiceMovement, ServiceTagUsage, TopResource, UntaggedCharge, UntaggedServiceUsage,
+    DailyTotal, DataQualityIssue, DataQualityKind, ForecastBands, InventoryResource,
+    InventoryScope, IssueSeverity, LedgerAccount, ModelTokenSummary, MovementKind, PeriodForecast,
+    PeriodOverPeriod, ResourceCost, ServiceDailyTotal, ServiceMovement, ServiceTagUsage,
+    TopResource, UntaggedCharge, UntaggedServiceUsage,
 };
 
 /// Total charged in one billing period, in the reporting currency.
@@ -1676,6 +1677,116 @@ fn top_resources_of(conn: &Connection, key: &PeriodKey, limit: usize) -> Result<
         )?
         .collect::<Result<Vec<_>, _>>()?;
 
+    Ok(rows)
+}
+
+/// Every resource of the current inventory, in id order.
+pub fn inventory_resources() -> Result<Vec<InventoryResource>> {
+    with_connection_ref(inventory_resources_of)
+}
+
+fn inventory_resources_of(conn: &Connection) -> Result<Vec<InventoryResource>> {
+    let mut stmt = conn.prepare(
+        "SELECT provider, cloud_account_id, resource_id, arn, resource_type, region, name,
+                tags, properties
+         FROM dim_resource
+         ORDER BY provider, resource_id",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(InventoryResource {
+                provider: row.get(0)?,
+                cloud_account_id: row.get(1)?,
+                resource_id: row.get(2)?,
+                arn: row.get(3)?,
+                resource_type: row.get(4)?,
+                region: row.get(5)?,
+                name: row.get(6)?,
+                tags: row.get(7)?,
+                properties: row.get(8)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// The scan the current inventory came from; `None` before any import.
+pub fn inventory_scope() -> Result<Option<InventoryScope>> {
+    with_connection_ref(inventory_scope_of)
+}
+
+fn inventory_scope_of(conn: &Connection) -> Result<Option<InventoryScope>> {
+    let mut stmt = conn.prepare(
+        "SELECT scan_id, CAST(scanned_at AS VARCHAR), CAST(imported_at AS VARCHAR),
+                source_path, regions, resource_count, scanner
+         FROM inventory_scan
+         ORDER BY imported_at DESC
+         LIMIT 1",
+    )?;
+    let mut rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+            row.get::<_, i64>(5)?,
+            row.get::<_, Option<String>>(6)?,
+        ))
+    })?;
+    let Some(row) = rows.next() else {
+        return Ok(None);
+    };
+    let (scan_id, scanned_at, imported_at, source_path, regions, resource_count, scanner) = row?;
+    Ok(Some(InventoryScope {
+        scan_id,
+        scanned_at: super::parse_timestamp(&scanned_at)?,
+        imported_at: super::parse_timestamp(&imported_at)?,
+        source_path,
+        regions: serde_json::from_str(&regions)?,
+        resource_count,
+        scanner,
+    }))
+}
+
+/// Each resource the bill names in `billing_period`, with its usage cost
+/// in the reporting currency, across every account. A resource's charges
+/// carry its provider-side account in `sub_account_id` when the bill has
+/// one (an AWS export's linked account), else in `billing_account_id`.
+pub fn resource_usage_costs(billing_period: &str) -> Result<Vec<ResourceCost>> {
+    with_connection_ref(|conn| resource_usage_costs_of(conn, billing_period))
+}
+
+fn resource_usage_costs_of(conn: &Connection, billing_period: &str) -> Result<Vec<ResourceCost>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT provider,
+                any_value(coalesce(sub_account_id, billing_account_id)),
+                resource_id,
+                any_value(resource_name),
+                any_value(coalesce(service_name, 'Other')),
+                any_value(region_id),
+                coalesce(sum(billed_cost_base) FILTER (WHERE charge_category = 'Usage'), 0),
+                coalesce(bool_or(lower(coalesce(charge_description, '')) LIKE '%idle public ipv4%'),
+                         false)
+         FROM {NORMALIZED_VIEW}
+         WHERE billing_period = ? AND resource_id IS NOT NULL
+         GROUP BY provider, resource_id
+         ORDER BY provider, resource_id"
+    ))?;
+    let rows = stmt
+        .query_map(params![billing_period], |row| {
+            Ok(ResourceCost {
+                provider: row.get(0)?,
+                cloud_account_id: row.get(1)?,
+                resource_id: row.get(2)?,
+                resource_name: row.get(3)?,
+                service: row.get(4)?,
+                region: row.get(5)?,
+                usage_cost: row.get(6)?,
+                idle_public_ip: row.get(7)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
 

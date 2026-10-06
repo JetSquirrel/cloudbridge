@@ -19,7 +19,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use crate::alerts::{AlertEvent, AlertRule};
 use crate::model::{
     BalanceSnapshot, BillingPeriod, BudgetInfo, Channel, Charge, ChargeCategory, CloudAccount,
-    PeriodKey,
+    InventoryResource, InventoryScope, PeriodKey,
 };
 
 /// Rates shipped with the build, as `(from, to, date, rate)`.
@@ -59,6 +59,9 @@ pub struct Store {
     pub periods: RefCell<Vec<StoredPeriod>>,
     pub balances: RefCell<Vec<BalanceSnapshot>>,
     pub reporting_currency: RefCell<String>,
+    /// The desktop's `dim_resource` and `inventory_scan`.
+    pub resources: RefCell<Vec<InventoryResource>>,
+    pub inventory_scope: RefCell<Option<InventoryScope>>,
 }
 
 impl Store {
@@ -72,6 +75,8 @@ impl Store {
             periods: RefCell::new(Vec::new()),
             balances: RefCell::new(Vec::new()),
             reporting_currency: RefCell::new(crate::config::DEFAULT_REPORTING_CURRENCY.to_string()),
+            resources: RefCell::new(Vec::new()),
+            inventory_scope: RefCell::new(None),
         }
     }
 
@@ -115,6 +120,9 @@ pub struct NormalizedRow {
     pub resource_id: Option<String>,
     pub resource_name: Option<String>,
     pub pricing_quantity: Option<f64>,
+    /// `sub_account_id`, else `billing_account_id`: the provider-side
+    /// account the charge was incurred in.
+    pub cloud_account_id: Option<String>,
     pub pricing_unit: Option<String>,
     pub charge_category: ChargeCategory,
     pub tags: Option<String>,
@@ -157,6 +165,10 @@ pub fn normalized(store: &Store) -> Vec<NormalizedRow> {
                 resource_id: charge.resource_id.clone(),
                 resource_name: charge.resource_name.clone(),
                 pricing_quantity: charge.pricing_quantity,
+                cloud_account_id: charge
+                    .sub_account_id
+                    .clone()
+                    .or_else(|| charge.billing_account_id.clone()),
                 pricing_unit: charge.pricing_unit.clone(),
                 charge_category: charge.charge_category,
                 tags: charge.tags.clone(),

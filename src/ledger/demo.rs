@@ -14,7 +14,9 @@
 use anyhow::Result;
 use chrono::Utc;
 
-use super::{record_balance, replace_period, rollup, with_connection, Channel, PeriodKey};
+use super::{
+    inventory, record_balance, replace_period, rollup, with_connection, Channel, PeriodKey,
+};
 use crate::db;
 use crate::demo_data::{self, DEMO_SOURCES};
 
@@ -35,8 +37,13 @@ pub fn seed_demo() -> Result<String> {
     for (provider, account_id, _, currency) in DEMO_SOURCES {
         let services = demo_data::services_of(provider);
         for (index, period) in periods.iter().enumerate() {
-            let charges =
+            let mut charges =
                 demo_data::period_charges(provider, services, currency, *period, index, now);
+            // The inventory's resource-level rows join the current period
+            // of the AWS account, which is where a real export's would be.
+            if *provider == "AWS" && index + 1 == periods.len() {
+                charges.extend(demo_data::inventory::resource_charges(now));
+            }
             charge_count += charges.len();
             replace_period(
                 &PeriodKey::new(*provider, *account_id, period.label()),
@@ -51,6 +58,20 @@ pub fn seed_demo() -> Result<String> {
     for snapshot in demo_data::balance_ladder(&periods) {
         record_balance(&snapshot)?;
     }
+
+    // An imported scan is real data: the demo does not replace it.
+    let (scope, resources) = demo_data::inventory::inventory(now);
+    with_connection(|conn| {
+        let imported: i64 = conn.query_row(
+            "SELECT count(*) FROM inventory_scan WHERE scan_id NOT LIKE 'demo-%'",
+            [],
+            |row| row.get(0),
+        )?;
+        if imported == 0 {
+            inventory::write_inventory(conn, &scope, &resources)?;
+        }
+        Ok(())
+    })?;
 
     for (_, account_id, _, _) in DEMO_SOURCES {
         db::mark_account_synced(account_id, now)?;
@@ -86,6 +107,17 @@ pub fn clear_demo() -> Result<String> {
             "DELETE FROM fct_balance_snapshot WHERE account_id LIKE 'demo-%'",
             [],
         )?;
+        // The inventory is the demo's only if the demo wrote it last; an
+        // imported scan replaced it and stays.
+        let demo_inventory: i64 = tx.query_row(
+            "SELECT count(*) FROM inventory_scan WHERE scan_id LIKE 'demo-%'",
+            [],
+            |row| row.get(0),
+        )?;
+        if demo_inventory > 0 {
+            tx.execute("DELETE FROM dim_resource", [])?;
+            tx.execute("DELETE FROM inventory_scan", [])?;
+        }
         tx.commit()?;
         Ok(())
     })?;

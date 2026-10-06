@@ -1,0 +1,426 @@
+//! The resource scanner behind the Insights page: corkscrew, from our fork
+//! (github.com/JetSquirrel/corkscrew, branch `cloudbridge-dist`; MIT, from
+//! jlgore/corkscrew), installed and run by CloudBridge.
+//!
+//! It is the first enrichment plugin: optional, installed only when the
+//! user asks, and its only output the ledger reads is the two tables an
+//! inventory import writes (`dim_resource`, `inventory_scan`). The
+//! dependency is the fork's `cloudbridge-rN` releases, never upstream's and
+//! never "latest" — upstream ships no built AWS plugin and has not merged
+//! the fixes the scan needs.
+//!
+//! The user never handles it. On the first scan CloudBridge downloads the
+//! pinned release (CLI plus AWS provider plugin), checks it against a
+//! SHA-256 compiled in here, and unpacks it under the app's data
+//! directory. A scan runs it with:
+//!
+//! - the working directory at the install, where corkscrew finds its
+//!   plugin (`build/bin/plugins/official/aws`);
+//! - `HOME` / `USERPROFILE` at a sandbox of CloudBridge's, so a corkscrew
+//!   the user installed themselves — its config, its plugins — plays no
+//!   part, and a config file of CloudBridge's writing in that sandbox
+//!   (`scan` refuses to run without one);
+//! - the account's keyring credentials in the environment, and the shared
+//!   AWS config files pointed nowhere, so no other profile can be picked up.
+//!
+//! It only reads: a scan lists and describes resources and writes its
+//! results to a database file CloudBridge then imports.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{Duration, Instant};
+
+use anyhow::{anyhow, Result};
+use sha2::{Digest, Sha256};
+
+use super::SourceContext;
+use crate::config::get_app_data_dir;
+
+/// The release CloudBridge installs.
+pub const RELEASE: &str = "cloudbridge-r2";
+const DOWNLOAD_BASE: &str = "https://github.com/JetSquirrel/corkscrew/releases/download";
+
+/// (archive, SHA-256) for this platform's build, or `None` where there is
+/// no build: the scanner is then unavailable rather than guessed at.
+fn archive() -> Option<(&'static str, &'static str)> {
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        Some((
+            "corkscrew-cloudbridge_darwin_arm64.tar.gz",
+            "b4467e32c2b554b237a8d33fff44acd826bcf6c370b1e54758256437f7f14601",
+        ))
+    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        Some((
+            "corkscrew-cloudbridge_windows_amd64.zip",
+            "e934753f23954cc9402276e41808dc73d8175aeb21a864abdf38ce15de0c8614",
+        ))
+    } else {
+        None
+    }
+}
+
+/// The services a scan asks for: the ones that carry cost and that the
+/// Insights findings read. Resource Explorer's names.
+pub const SERVICES: &[&str] = &[
+    "ec2",
+    "s3",
+    "rds",
+    "lambda",
+    "dynamodb",
+    "kms",
+    "secretsmanager",
+    "ecr",
+    "elasticloadbalancing",
+    "elasticfilesystem",
+    "eks",
+    "ecs",
+    "elasticache",
+    "cloudfront",
+    "sns",
+    "sqs",
+    "logs",
+    "amplify",
+    "appsync",
+    "cognito-idp",
+    "cloudformation",
+];
+
+/// A scan that runs longer than this is stopped: something is wrong.
+const SCAN_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
+/// Whether this build of CloudBridge has a scanner to install at all.
+pub fn is_supported() -> bool {
+    archive().is_some()
+}
+
+fn install_dir() -> Result<PathBuf> {
+    Ok(get_app_data_dir()?
+        .join("tools")
+        .join("corkscrew")
+        .join(RELEASE))
+}
+
+fn executable(dir: &Path) -> PathBuf {
+    dir.join(if cfg!(windows) {
+        "corkscrew.exe"
+    } else {
+        "corkscrew"
+    })
+}
+
+/// Whether the pinned release is installed and ready to run.
+pub fn is_installed() -> bool {
+    install_dir()
+        .map(|dir| dir.join(".installed").exists() && executable(&dir).exists())
+        .unwrap_or(false)
+}
+
+/// Download, verify and unpack the pinned release, unless it is there
+/// already. Blocking.
+pub fn ensure_installed() -> Result<PathBuf> {
+    let dir = install_dir()?;
+    if is_installed() {
+        return Ok(dir);
+    }
+    install_into(&dir)?;
+    tracing::info!("Scanner {} installed at {}", RELEASE, dir.display());
+    Ok(dir)
+}
+
+/// Download, verify and unpack the pinned release into `dir`, replacing
+/// whatever is there.
+fn install_into(dir: &Path) -> Result<()> {
+    let (name, sha256) =
+        archive().ok_or_else(|| anyhow!("Insights scanning is not available on this platform"))?;
+
+    let bytes = download(&format!("{DOWNLOAD_BASE}/{RELEASE}/{name}"))?;
+    let digest = hex::encode(Sha256::digest(&bytes));
+    if digest != sha256 {
+        return Err(anyhow!(
+            "The downloaded scanner did not match its checksum, so it was not installed"
+        ));
+    }
+
+    // Unpack beside the final directory and move it into place, so a
+    // half-finished install never looks installed.
+    let parent = dir
+        .parent()
+        .ok_or_else(|| anyhow!("No parent for {}", dir.display()))?;
+    std::fs::create_dir_all(parent)?;
+    let staging = parent.join(format!("{RELEASE}.partial"));
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging)?;
+    let archive_path = staging.join(name);
+    std::fs::write(&archive_path, &bytes)?;
+    unpack(&archive_path, &staging)?;
+    std::fs::remove_file(&archive_path)?;
+    if !executable(&staging).exists() {
+        return Err(anyhow!("The scanner archive did not contain the scanner"));
+    }
+    std::fs::write(staging.join(".installed"), sha256)?;
+
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::rename(&staging, dir)?;
+    Ok(())
+}
+
+fn download(url: &str) -> Result<Vec<u8>> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(300)))
+        .build()
+        .into();
+    let mut response = agent
+        .get(url)
+        .call()
+        .map_err(|e| anyhow!("Could not download the scanner: {e}"))?;
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut response.body_mut().as_reader(), &mut bytes)
+        .map_err(|e| anyhow!("Could not download the scanner: {e}"))?;
+    Ok(bytes)
+}
+
+/// Unpack with the system `tar`, which reads both the macOS `.tar.gz` and
+/// the Windows `.zip` (bsdtar ships with macOS and with Windows 10 and
+/// later).
+fn unpack(archive: &Path, into: &Path) -> Result<()> {
+    let status = Command::new("tar")
+        .arg("-xf")
+        .arg(archive)
+        .arg("-C")
+        .arg(into)
+        .status()
+        .map_err(|e| anyhow!("Could not unpack the scanner: {e}"))?;
+    if !status.success() {
+        return Err(anyhow!(
+            "Could not unpack the scanner (tar exited with {status})"
+        ));
+    }
+    Ok(())
+}
+
+/// Scan one AWS account's `regions` into a fresh database at `out`.
+/// Blocking; `ensure_installed` first.
+pub fn scan(
+    install: &Path,
+    credentials: &SourceContext,
+    regions: &[String],
+    out: &Path,
+) -> Result<()> {
+    if regions.is_empty() {
+        return Err(anyhow!("No regions to scan"));
+    }
+    let sandbox = get_app_data_dir()?.join("tools").join("corkscrew-home");
+    std::fs::create_dir_all(&sandbox)?;
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    for stale in [out.to_path_buf(), out.with_extension("duckdb.wal")] {
+        let _ = std::fs::remove_file(stale);
+    }
+    let config = sandbox.join("corkscrew.yaml");
+    std::fs::write(&config, config_yaml(regions, out))?;
+
+    let mut command = Command::new(executable(install));
+    command
+        .current_dir(install)
+        .args(["scan", "--provider", "aws", "--output", "json"])
+        .arg("--region")
+        .arg(regions.join(","))
+        .arg("--services")
+        .arg(SERVICES.join(","))
+        .arg("--database")
+        .arg(out)
+        .env("HOME", &sandbox)
+        .env("USERPROFILE", &sandbox)
+        .env("AWS_ACCESS_KEY_ID", &credentials.access_key_id)
+        .env("AWS_SECRET_ACCESS_KEY", &credentials.secret_access_key)
+        .env("AWS_REGION", &regions[0])
+        .env(
+            "AWS_SHARED_CREDENTIALS_FILE",
+            sandbox.join("no-credentials"),
+        )
+        .env("AWS_CONFIG_FILE", sandbox.join("no-config"))
+        .env_remove("AWS_PROFILE")
+        .env_remove("AWS_SESSION_TOKEN")
+        .env("CORKSCREW_CONFIG_FILE", &config)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped());
+
+    let mut child = command
+        .spawn()
+        .map_err(|e| anyhow!("Could not start the scanner: {e}"))?;
+    let mut stderr = child.stderr.take().expect("stderr is piped");
+    // Read stderr on its own thread: a scan logs a lot, and a full pipe
+    // would stall it.
+    let log = std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = std::io::Read::read_to_string(&mut stderr, &mut text);
+        text
+    });
+
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started.elapsed() > SCAN_TIMEOUT {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(anyhow!(
+                "The scan took longer than 30 minutes and was stopped"
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    };
+    let log = log.join().unwrap_or_default();
+
+    if let Some(message) = scan_failure(&log) {
+        return Err(anyhow!(message));
+    }
+    if !status.success() {
+        tracing::warn!("Scanner exited with {status}; last output: {}", tail(&log));
+        return Err(anyhow!("The scan did not finish ({status})"));
+    }
+    Ok(())
+}
+
+/// The configuration a scan runs with: the AWS provider over `regions`
+/// and [`SERVICES`], writing to `out`. The flags say the same; corkscrew
+/// still wants the file.
+fn config_yaml(regions: &[String], out: &Path) -> String {
+    let quoted = |items: &mut dyn Iterator<Item = &str>| -> String {
+        items
+            .map(|item| {
+                format!(
+                    "      - \"{}\"\n",
+                    item.replace('\\', "\\\\").replace('"', "\\\"")
+                )
+            })
+            .collect()
+    };
+    format!(
+        "version: \"2.0\"\nproviders:\n  aws:\n    enabled: true\n    regions:\n{}    services:\n{}database:\n  path: \"{}\"\n",
+        quoted(&mut regions.iter().map(String::as_str)),
+        quoted(&mut SERVICES.iter().copied()),
+        out.display()
+            .to_string()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\""),
+    )
+}
+
+/// A failure worth saying in the user's terms, from the scanner's log.
+fn scan_failure(log: &str) -> Option<String> {
+    let denied = [
+        "AccessDenied",
+        "UnauthorizedOperation",
+        "is not authorized to perform",
+    ];
+    let invalid = [
+        "InvalidClientTokenId",
+        "SignatureDoesNotMatch",
+        "UnrecognizedClientException",
+    ];
+    if invalid.iter().any(|marker| log.contains(marker)) {
+        return Some(
+            "AWS did not accept this account's access key. Check it on the Accounts page."
+                .to_string(),
+        );
+    }
+    // A scan logs per-resource failures and carries on; only a scan that
+    // stored nothing because every call was refused is the account's
+    // permissions, which the import that follows reports as an empty scan.
+    if denied.iter().any(|marker| log.contains(marker)) && !log.contains("Batch scan") {
+        return Some(
+            "This account's access key cannot read resources. Grant it read-only access \
+             (the AWS ReadOnlyAccess policy) to scan it."
+                .to_string(),
+        );
+    }
+    None
+}
+
+fn tail(log: &str) -> &str {
+    let start = log.len().saturating_sub(800);
+    let start = (start..log.len())
+        .find(|&i| log.is_char_boundary(i))
+        .unwrap_or(log.len());
+    &log[start..]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Downloads the pinned release: run with `--ignored` when changing it.
+    #[test]
+    #[ignore]
+    fn the_pinned_release_installs() {
+        let dir = std::env::temp_dir()
+            .join(format!("cloudbridge-scanner-{}", uuid::Uuid::new_v4()))
+            .join(RELEASE);
+        install_into(&dir).unwrap();
+        assert!(executable(&dir).exists());
+        let plugin = dir.join("build/bin/plugins/official/aws");
+        assert!(plugin.join("plugin.json").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(executable(&dir))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert!(mode & 0o111 != 0, "the scanner must stay executable");
+            let mode = std::fs::metadata(plugin.join("aws-provider"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert!(mode & 0o111 != 0, "the plugin must stay executable");
+        }
+        let _ = std::fs::remove_dir_all(dir.parent().unwrap());
+    }
+
+    #[test]
+    fn the_config_names_the_regions_services_and_database() {
+        let yaml = config_yaml(
+            &["ap-east-1".to_string(), "us-east-1".to_string()],
+            Path::new("/data/inventory/scan-1.duckdb"),
+        );
+        assert!(yaml.starts_with("version: \"2.0\"\nproviders:\n  aws:\n    enabled: true\n"));
+        assert!(yaml.contains("    regions:\n      - \"ap-east-1\"\n      - \"us-east-1\"\n"));
+        assert!(yaml.contains("      - \"kms\"\n"));
+        assert!(yaml.ends_with("database:\n  path: \"/data/inventory/scan-1.duckdb\"\n"));
+        // A Windows path's backslashes are escaped inside the quotes.
+        let windows = config_yaml(
+            &["us-east-1".to_string()],
+            Path::new(r"C:\data\scan.duckdb"),
+        );
+        assert!(
+            windows.contains(r#"path: "C:\\data\\scan.duckdb""#),
+            "{windows}"
+        );
+    }
+
+    #[test]
+    fn a_rejected_key_is_reported_in_the_users_terms() {
+        let log = "operation error STS: GetCallerIdentity, api error InvalidClientTokenId: \
+                   The security token included in the request is invalid";
+        assert!(scan_failure(log).unwrap().contains("access key"));
+    }
+
+    #[test]
+    fn missing_read_permissions_are_reported_when_nothing_was_scanned() {
+        let refused = "api error AccessDeniedException: User is not authorized to perform \
+                       resource-explorer-2:Search";
+        assert!(scan_failure(refused).unwrap().contains("ReadOnlyAccess"));
+        // Per-resource refusals in a scan that went through are not fatal.
+        let partial = format!("{refused}\nBatch scan scan_1: 485 resources across 17 services");
+        assert_eq!(scan_failure(&partial), None);
+    }
+
+    #[test]
+    fn the_scan_covers_the_services_insights_reads() {
+        for service in ["ec2", "s3", "kms", "secretsmanager"] {
+            assert!(SERVICES.contains(&service), "{service}");
+        }
+    }
+}
