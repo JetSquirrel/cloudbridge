@@ -144,7 +144,7 @@ pub fn normalize(layout: &Layout, batch: &RawBatch, part: &str) -> Result<Normal
         let template = || Charge {
             service_name: Some(layout.service_name.to_string()),
             // The model is what a model provider's spend is grouped by.
-            service_category: record.text(columns.model),
+            x_model: record.text(columns.model),
             charge_description: record
                 .text(columns.description)
                 .or_else(|| record.text(columns.model)),
@@ -261,7 +261,7 @@ mod tests {
         assert_eq!(charges.len(), 1);
         let charge = &charges[0];
         assert_eq!(charge.service_name.as_deref(), Some("TestModel"));
-        assert_eq!(charge.service_category.as_deref(), Some("model-x"));
+        assert_eq!(charge.x_model.as_deref(), Some("model-x"));
         assert_eq!(charge.charge_description.as_deref(), Some("model-x input"));
         assert_eq!(charge.billed_cost, Some(12.50));
         assert_eq!(charge.charge_category, ChargeCategory::Usage);

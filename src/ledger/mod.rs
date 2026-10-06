@@ -18,6 +18,7 @@
 #![allow(dead_code)]
 
 pub mod demo;
+pub mod inventory;
 pub mod query;
 pub mod rollup;
 pub mod schema;
@@ -244,6 +245,20 @@ fn parse_timestamp(value: &str) -> Result<DateTime<Utc>> {
     )
 }
 
+/// The charges with FOCUS service categories filled in where their source
+/// left them unset — the one place the desktop applies the mapping, so a
+/// fetch, an import and a replay all come out placed the same way.
+fn categorized(key: &PeriodKey, charges: &[Charge]) -> Vec<Charge> {
+    charges
+        .iter()
+        .cloned()
+        .map(|mut charge| {
+            crate::service_category::fill(&key.provider, &mut charge);
+            charge
+        })
+        .collect()
+}
+
 pub(crate) fn write_period(
     conn: &mut Connection,
     key: &PeriodKey,
@@ -253,6 +268,7 @@ pub(crate) fn write_period(
     channel: Channel,
 ) -> Result<()> {
     let now = Utc::now().format(TIMESTAMP_FORMAT).to_string();
+    let charges = &categorized(key, charges);
     let ids = charge_ids(key, charges);
 
     let tx = conn.transaction()?;
@@ -295,10 +311,12 @@ pub(crate) fn write_period(
               service_name, service_category, resource_id, resource_name, region_id,
               billed_cost, effective_cost, list_cost, billing_currency, cost_basis,
               pricing_quantity, pricing_unit, tags, created_at,
-              sub_account_id, sub_account_name)
+              sub_account_id, sub_account_name,
+              service_subcategory, x_service_code, x_model)
              VALUES (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), ?, ?,
                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP),
-                     ?, ?)",
+                     ?, ?,
+                     ?, ?, ?)",
         )?;
 
         for (charge, charge_id) in charges.iter().zip(&ids) {
@@ -335,6 +353,9 @@ pub(crate) fn write_period(
                 now,
                 charge.sub_account_id,
                 charge.sub_account_name,
+                charge.service_subcategory,
+                charge.x_service_code,
+                charge.x_model,
             ])?;
         }
     }

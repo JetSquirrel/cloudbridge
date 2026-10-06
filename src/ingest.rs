@@ -614,6 +614,90 @@ fn record(
     })
 }
 
+// ==================== Resource scans (Insights) ====================
+
+/// An AWS account an Insights scan covers, and the regions to look in.
+#[derive(Debug, Clone)]
+pub struct ScanTarget {
+    pub account: CloudAccount,
+    pub regions: Vec<String>,
+}
+
+/// Whether this build can install the resource scanner at all.
+pub fn scanner_supported() -> bool {
+    crate::cloud::corkscrew::is_supported()
+}
+
+/// Whether the resource scanner is installed and ready.
+pub fn scanner_installed() -> bool {
+    crate::cloud::corkscrew::is_installed()
+}
+
+/// Download and install the resource scanner, unless it is there. Blocking.
+pub fn install_scanner() -> Result<()> {
+    crate::cloud::corkscrew::ensure_installed().map(|_| ())
+}
+
+/// The regions a scan covers: the ones chosen on the Insights page, or
+/// every region AWS enables by default.
+pub fn scan_regions() -> Vec<String> {
+    crate::config::load_config()
+        .ok()
+        .and_then(|config| config.scan_regions)
+        .filter(|regions| !regions.is_empty())
+        .unwrap_or_else(|| {
+            crate::model::AWS_DEFAULT_REGIONS
+                .iter()
+                .map(|r| r.to_string())
+                .collect()
+        })
+}
+
+/// The AWS accounts an Insights scan covers — enabled, not demo — each
+/// over [`scan_regions`].
+pub fn scan_targets() -> Result<Vec<ScanTarget>> {
+    let regions = scan_regions();
+    let mut targets = Vec::new();
+    for account in crate::db::get_all_accounts()? {
+        let Some(descriptor) = account.descriptor() else {
+            continue;
+        };
+        if descriptor.id != "AWS"
+            || !account.enabled
+            || account.id.starts_with(crate::ledger::demo::DEMO_PREFIX)
+        {
+            continue;
+        }
+        targets.push(ScanTarget {
+            account,
+            regions: regions.clone(),
+        });
+    }
+    Ok(targets)
+}
+
+/// Scan one account with its keyring credentials. Returns where the scan
+/// was written, for [`import_scans`]. Blocking; can take minutes.
+pub fn scan_target(target: &ScanTarget) -> Result<PathBuf> {
+    let descriptor = target
+        .account
+        .descriptor()
+        .ok_or_else(|| anyhow!("No billing source registered for {}", target.account.name))?;
+    let credentials = crate::db::account_context(&target.account, descriptor)?;
+    raw::check_path_segment(&target.account.id, "account id")?;
+    let install = crate::cloud::corkscrew::ensure_installed()?;
+    let out = crate::config::get_app_data_dir()?
+        .join("inventory")
+        .join(format!("scan-{}.duckdb", target.account.id));
+    crate::cloud::corkscrew::scan(&install, &credentials, &target.regions, &out)?;
+    Ok(out)
+}
+
+/// Replace the inventory with the scans just taken, merged. Blocking.
+pub fn import_scans(paths: &[PathBuf]) -> Result<crate::model::InventoryScope> {
+    ledger::inventory::import_scans(paths)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

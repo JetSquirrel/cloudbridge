@@ -90,10 +90,7 @@ mod tests {
         let charge = &charges[0];
 
         assert_eq!(charge.service_name.as_deref(), Some("DeepSeek"));
-        assert_eq!(
-            charge.service_category.as_deref(),
-            Some("deepseek-v4-flash")
-        );
+        assert_eq!(charge.x_model.as_deref(), Some("deepseek-v4-flash"));
         assert_eq!(charge.billed_cost, Some(0.0394352));
         assert_eq!(charge.billing_currency, "CNY");
         assert_eq!(charge.charge_category, ChargeCategory::Usage);

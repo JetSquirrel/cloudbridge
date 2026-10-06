@@ -7,14 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Service categories that mean the same thing on every cloud.** Each
+  source's products are placed in FOCUS `ServiceCategory` and
+  `ServiceSubcategory` on the way into the ledger: Alibaba Cloud's `ecs`,
+  Volcengine's `ecs` and AWS's EC2 are all Compute / Virtual Machines, OSS,
+  TOS and S3 are Storage / Object Storage, and Model Studio, Ark and the
+  model providers are AI and Machine Learning / Generative AI. AWS's Data
+  Exports keep the categories they carry; Cost Explorer rows are placed by
+  service name. The Attribution page's Category dimension, and the Query
+  page's category template, now compare clouds. A product no mapping knows
+  stays uncategorized — read as *Uncategorized*, since *Other* is a FOCUS
+  category of its own — and is reported as a data-quality finding naming
+  the largest such products
+- **Insights: what to cut, priced from the bill — an optional
+  resource-inventory plugin.** A new page compares the bill with a
+  resource inventory and lists stopped instances whose volumes still bill,
+  idle public IPv4 addresses, unclaimed resources (no owner tag, no
+  managing stack or app) and resources billed but missing from the scan,
+  each with this period's cost. The inventory comes from
+  [corkscrew](https://github.com/JetSquirrel/corkscrew/tree/cloudbridge-dist),
+  our fork, installed only when you click **Set up and scan** and confirm:
+  a pinned `cloudbridge-rN` build checked against its SHA-256. It scans
+  each AWS account read-only, in every default region or the ones you
+  choose, and the scan is copied into the ledger's `dim_resource` and
+  `inventory_scan` (ledger schema v6); nothing reads corkscrew's own
+  database afterwards. Without a scan the page says what it would show.
+  Matching a bill row to a resource by its own id covered 99.9% of
+  resource-level usage on a real account. ⌘0 / Ctrl+0 opens it, and the
+  demo carries a small inventory, so it shows in the browser demo too
+
 ### Changed
-- **An AWS account can use this machine's credentials.** When the
-  environment or `~/.aws/credentials` holds a key, the add-account dialog
-  offers "Use this machine's credentials", ticked by default: they are
-  read each time they are needed and nothing is saved. A key typed instead
-  is saved in the macOS Keychain (Windows: Credential Manager), and the
-  dialog now says so, including that macOS asks once and to choose Always
-  Allow.
+- **`service_category` has one meaning (ledger schema v5).** It used to
+  hold a FOCUS category for AWS's export, a product code for Alibaba Cloud
+  and Volcengine, and a model name for the OpenAI, Anthropic and DeepSeek
+  imports. Product codes now live in `x_service_code` and models in
+  `x_model`, beside a new `service_subcategory`; an existing ledger is
+  migrated in place on first open, from the columns it already has. The
+  Models page groups by `x_model`, falling back to the product code for a
+  bill that names no model, so it reads as it did. SQL written against
+  `service_category` for models should read `x_model`
 
 ## [0.4.0] - 2026-10-05
 

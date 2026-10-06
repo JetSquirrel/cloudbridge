@@ -26,9 +26,10 @@ use crate::store::Connection;
 
 pub use crate::model::{
     AdhocResult, Balance, BreakdownDim, CategoryDelta, CostChangeDecomposition, DailyModelTokens,
-    DailyTotal, DataQualityIssue, DataQualityKind, ForecastBands, IssueSeverity, LedgerAccount,
-    ModelTokenSummary, MovementKind, PeriodForecast, PeriodOverPeriod, ServiceDailyTotal,
-    ServiceMovement, ServiceTagUsage, TopResource, UntaggedCharge, UntaggedServiceUsage,
+    DailyTotal, DataQualityIssue, DataQualityKind, ForecastBands, InventoryResource,
+    InventoryScope, IssueSeverity, LedgerAccount, ModelTokenSummary, MovementKind, PeriodForecast,
+    PeriodOverPeriod, ResourceCost, ServiceDailyTotal, ServiceMovement, ServiceTagUsage,
+    TopResource, UntaggedCharge, UntaggedServiceUsage,
 };
 
 /// The bucket a charge with no value for the tag key lands in, as the view's
@@ -201,13 +202,16 @@ fn untagged(row: &NormalizedRow, tag_key: &str) -> bool {
 
 /// A bucket expression, as the native `sum_by_bucket` took it. A charge
 /// without the dimension reads as `'Other'`, as a charge without a service
-/// does.
+/// does — except a category, where `Other` is a FOCUS value of its own.
 fn bucket_of(row: &NormalizedRow, dim: BreakdownDim) -> String {
     let named = |value: &Option<String>| value.clone().unwrap_or_else(|| "Other".to_string());
     match dim {
         BreakdownDim::Service => service_of(row).to_string(),
         BreakdownDim::Region => named(&row.region_id),
-        BreakdownDim::ServiceCategory => named(&row.service_category),
+        BreakdownDim::ServiceCategory => row
+            .service_category
+            .clone()
+            .unwrap_or_else(|| crate::service_category::UNCATEGORIZED.to_string()),
     }
 }
 
@@ -330,6 +334,63 @@ pub fn top_resources(key: &PeriodKey, limit: usize) -> Result<Vec<TopResource>> 
         resources.truncate(limit);
 
         resources
+    })
+}
+
+// ==================== Inventory ====================
+
+/// Every resource of the current inventory, in id order.
+pub fn inventory_resources() -> Result<Vec<InventoryResource>> {
+    memory::with_store(|store| {
+        let mut resources = store.resources.borrow().clone();
+        resources.sort_by(|a, b| {
+            (a.provider.as_str(), a.resource_id.as_str())
+                .cmp(&(b.provider.as_str(), b.resource_id.as_str()))
+        });
+        Ok(resources)
+    })
+}
+
+/// The scan the current inventory came from; `None` before any import.
+pub fn inventory_scope() -> Result<Option<InventoryScope>> {
+    memory::with_store(|store| Ok(store.inventory_scope.borrow().clone()))
+}
+
+/// Each resource the bill names in `billing_period`, with its usage cost
+/// in the reporting currency, across every account — the desktop's
+/// `GROUP BY provider, resource_id`, `any_value` for the descriptive
+/// columns and a usage-only sum.
+pub fn resource_usage_costs(billing_period: &str) -> Result<Vec<ResourceCost>> {
+    read(|all| {
+        let mut grouped: BTreeMap<(String, String), ResourceCost> = BTreeMap::new();
+        for row in all
+            .iter()
+            .filter(|row| row.billing_period == billing_period)
+        {
+            let Some(resource_id) = row.resource_id.as_ref() else {
+                continue;
+            };
+            let cost = grouped
+                .entry((row.provider.clone(), resource_id.clone()))
+                .or_insert_with(|| ResourceCost {
+                    provider: row.provider.clone(),
+                    cloud_account_id: row.cloud_account_id.clone(),
+                    resource_id: resource_id.clone(),
+                    resource_name: row.resource_name.clone(),
+                    service: service_of(row).to_string(),
+                    region: row.region_id.clone(),
+                    usage_cost: 0.0,
+                    idle_public_ip: false,
+                });
+            if row.charge_category == ChargeCategory::Usage {
+                cost.usage_cost += row.billed_cost_base.unwrap_or(0.0);
+            }
+            cost.idle_public_ip |= row
+                .charge_description
+                .as_deref()
+                .is_some_and(|d| d.to_lowercase().contains("idle public ipv4"));
+        }
+        grouped.into_values().collect()
     })
 }
 
@@ -1366,12 +1427,23 @@ fn trailing_daily_average_at(
 
 // ==================== Model token economics ====================
 
-/// The sources whose `service_category` names a model rather than a cloud
-/// SKU — the registry's ids for OpenAI, Anthropic and DeepSeek, stored
+/// The sources whose rows name a model rather than a cloud SKU — the
+/// registry's ids for OpenAI, Anthropic and DeepSeek, stored
 /// verbatim in `provider`. A bucket of theirs qualifies on the id alone, so
 /// a model that reported cost but no token rows still appears; any other
 /// bucket has to carry a token-class pricing unit to qualify.
 const MODEL_PROVIDERS: &[&str] = &["OpenAI", "Anthropic", "DeepSeek"];
+
+/// What a row's usage is grouped under on the Models page: the model, or,
+/// for a bill that names no model — Alibaba Cloud's Model Studio and
+/// Volcengine's Ark today — the product it was billed under. The desktop's
+/// `MODEL_SQL`.
+fn model_key(row: &NormalizedRow) -> Option<&str> {
+    [row.x_model.as_deref(), row.x_service_code.as_deref()]
+        .into_iter()
+        .flatten()
+        .find(|key| !key.is_empty())
+}
 
 /// Whether a pricing unit meters something token-shaped — tokens of any
 /// class, or requests — as opposed to an ordinary usage unit like hours or
@@ -1383,9 +1455,9 @@ fn is_token_unit(unit: &str) -> bool {
 /// Cost and token usage per `(provider, model)` over a charge-time window,
 /// against the same totals of a previous window — the Models page's table.
 ///
-/// The model key is `(provider, service_category)`: for the model sources
-/// the import writes the model name into `service_category`. Rows with no
-/// category have no model to attribute to and are left out. `usage_cost` is
+/// The model key is `(provider, model_key)`: the model the import wrote into
+/// `x_model`, or the product code for a bill that names none. Rows with
+/// neither have nothing to attribute to and are left out. `usage_cost` is
 /// the sum over Usage rows in `[since, until)` and `previous_cost` the same
 /// over `[prev_since, prev_until)`, so a credit does not shrink what was
 /// consumed; a charge no rate covers adds nothing to either, as `sum`
@@ -1418,7 +1490,7 @@ pub fn model_token_summary(
     read(|all| {
         let mut buckets: BTreeMap<(String, String), Bucket> = BTreeMap::new();
         for row in all {
-            let Some(model) = row.service_category.as_deref().filter(|m| !m.is_empty()) else {
+            let Some(model) = model_key(row) else {
                 continue;
             };
             let current = row.charge_period_start >= since && row.charge_period_start < until;
@@ -1506,7 +1578,7 @@ pub fn daily_model_tokens(
             if row.charge_period_start < since || row.charge_period_start >= until {
                 continue;
             }
-            let Some(model) = row.service_category.as_deref().filter(|m| !m.is_empty()) else {
+            let Some(model) = model_key(row) else {
                 continue;
             };
             let Some(unit) = row.pricing_unit.as_deref() else {
@@ -1585,6 +1657,32 @@ pub fn data_quality_issues(billing_period: &str, tag_key: &str) -> Result<Vec<Da
             .collect();
         regionless.sort_by(|a, b| b.1.total_cmp(&a.1));
 
+        // Usage no service-category mapping placed, per product — the
+        // desktop's grouping and order: largest first, then by name.
+        let mut by_product: BTreeMap<String, (f64, i64)> = BTreeMap::new();
+        for row in &rows {
+            if row.charge_category != ChargeCategory::Usage || row.service_category.is_some() {
+                continue;
+            }
+            let code = row
+                .x_service_code
+                .as_deref()
+                .or(row.service_name.as_deref())
+                .unwrap_or("Other");
+            let entry = by_product
+                .entry(format!("{} {code}", row.provider))
+                .or_default();
+            entry.0 += row.billed_cost_base.unwrap_or(0.0);
+            entry.1 += 1;
+        }
+        let mut uncategorized: Vec<(String, f64, i64)> = by_product
+            .into_iter()
+            .filter(|(_, (amount, _))| *amount > 0.0)
+            .map(|(product, (amount, charges))| (product, amount, charges))
+            .collect();
+        // Stable over the map's name order, so equal amounts stay by name.
+        uncategorized.sort_by(|a, b| b.1.total_cmp(&a.1));
+
         analytics::data_quality(QualityCounts {
             tag_key,
             rows: rows.len() as i64,
@@ -1599,6 +1697,7 @@ pub fn data_quality_issues(billing_period: &str, tag_key: &str) -> Result<Vec<Da
             // view does not carry, and the only path that writes such a row is
             // the desktop's bill-file importer.
             unreconciled: None,
+            uncategorized,
         })
     })
 }

@@ -143,7 +143,7 @@ mod tests {
         let charge = &charges[0];
 
         assert_eq!(charge.service_name.as_deref(), Some("OpenAI"));
-        assert_eq!(charge.service_category.as_deref(), Some("gpt-5"));
+        assert_eq!(charge.x_model.as_deref(), Some("gpt-5"));
         assert_eq!(charge.charge_description.as_deref(), Some("gpt-5 input"));
         assert_eq!(charge.billed_cost, Some(12.50));
         assert_eq!(charge.charge_category, ChargeCategory::Usage);
@@ -236,7 +236,7 @@ mod tests {
 
         assert_eq!(charges.len(), 2);
         assert_eq!(charges[0].pricing_quantity, Some(1000.0));
-        assert_eq!(charges[0].service_category.as_deref(), Some("gpt-4o"));
+        assert_eq!(charges[0].x_model.as_deref(), Some("gpt-4o"));
     }
 
     #[test]

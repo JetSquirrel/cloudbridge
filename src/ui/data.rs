@@ -2091,8 +2091,8 @@ ORDER BY spend DESC",
     QueryTemplate {
         category: "Composition",
         title: "Spend by service category this month",
-        description: "How this billing month's spend splits across service categories, in reporting currency; charges with no category count as Other.",
-        sql: "SELECT coalesce(service_category, 'Other') AS category,
+        description: "How this billing month's spend splits across FOCUS service categories — the same categories on every cloud — in reporting currency; charges no mapping places count as Uncategorized.",
+        sql: "SELECT coalesce(service_category, 'Uncategorized') AS category,
        reporting_currency AS currency,
        ROUND(SUM(billed_cost_base), 2) AS spend
 FROM v_charge_normalized

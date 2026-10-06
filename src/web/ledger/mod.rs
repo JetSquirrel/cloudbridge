@@ -6,6 +6,7 @@
 //! module is the API the pages were already written against.
 
 pub mod demo;
+pub mod inventory;
 pub mod query;
 
 use anyhow::Result;
@@ -81,7 +82,16 @@ pub fn replace_period(
             key: key.clone(),
             batch_id: batch_id.to_string(),
             channel,
-            charges: charges.to_vec(),
+            // The same mapping the desktop's writer applies, so a category
+            // reads the same on both targets.
+            charges: charges
+                .iter()
+                .cloned()
+                .map(|mut charge| {
+                    crate::service_category::fill(&key.provider, &mut charge);
+                    charge
+                })
+                .collect(),
             completed_at: Utc::now(),
         });
     });

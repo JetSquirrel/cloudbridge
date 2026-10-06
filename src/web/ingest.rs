@@ -104,6 +104,49 @@ pub fn delete_account_history(account_id: &str) -> Result<usize> {
     crate::ledger::delete_account_history(account_id)
 }
 
+/// An AWS account an Insights scan covers, and the regions to look in.
+#[derive(Debug, Clone)]
+pub struct ScanTarget {
+    pub account: CloudAccount,
+    pub regions: Vec<String>,
+}
+
+/// The browser runs no scanner: the demo ships its inventory.
+pub fn scanner_supported() -> bool {
+    false
+}
+
+pub fn scanner_installed() -> bool {
+    false
+}
+
+pub fn install_scanner() -> Result<()> {
+    Err(anyhow!(
+        "The web demo scans nothing — it ships with a demo inventory"
+    ))
+}
+
+pub fn scan_regions() -> Vec<String> {
+    crate::model::AWS_DEFAULT_REGIONS
+        .iter()
+        .map(|r| r.to_string())
+        .collect()
+}
+
+pub fn scan_targets() -> Result<Vec<ScanTarget>> {
+    Ok(Vec::new())
+}
+
+pub fn scan_target(_target: &ScanTarget) -> Result<PathBuf> {
+    Err(anyhow!(
+        "The web demo scans nothing — it ships with a demo inventory"
+    ))
+}
+
+pub fn import_scans(paths: &[PathBuf]) -> Result<crate::model::InventoryScope> {
+    crate::ledger::inventory::import_scans(paths)
+}
+
 /// Read a bill export the user picked.
 ///
 /// Refused rather than faked: the demo's ledger already holds the twelve

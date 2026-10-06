@@ -160,7 +160,7 @@ pub fn normalize(layout: &Layout, batch: &RawBatch, part: &str) -> Result<Normal
             // A product code is stable across locales; a product name is
             // not. The billing API files it here too, so the two channels
             // group the same way.
-            service_category: record.text(columns.product_code),
+            x_service_code: record.text(columns.product_code),
             // For a model service this is the model and what was metered.
             charge_description: record
                 .text(columns.billing_item)
@@ -305,7 +305,7 @@ mod tests {
         assert_eq!(usage.billed_cost, Some(100.00));
         assert_eq!(usage.list_cost, Some(100.00));
         assert_eq!(usage.service_name.as_deref(), Some("ECS"));
-        assert_eq!(usage.service_category.as_deref(), Some("ecs"));
+        assert_eq!(usage.x_service_code.as_deref(), Some("ecs"));
         assert_eq!(usage.charge_description.as_deref(), Some("Instance hour"));
         assert_eq!(usage.resource_id.as_deref(), Some("i-abc"));
         assert_eq!(usage.region_id.as_deref(), Some("cn-hangzhou"));

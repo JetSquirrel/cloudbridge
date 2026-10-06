@@ -114,6 +114,8 @@ const COLUMNS: &[(&str, ColumnKind)] = &[
     ("Tags", ColumnKind::Text),
     ("SubAccountId", ColumnKind::Text),
     ("SubAccountName", ColumnKind::Text),
+    ("ServiceSubcategory", ColumnKind::Text),
+    ("x_ServiceCode", ColumnKind::Text),
 ];
 
 // SELECT positions, matching COLUMNS above.
@@ -136,6 +138,8 @@ const IX_UNIT: usize = 15;
 const IX_TAGS: usize = 16;
 const IX_SUB_ACCOUNT: usize = 17;
 const IX_SUB_ACCOUNT_NAME: usize = 18;
+const IX_SERVICE_SUBCATEGORY: usize = 19;
+const IX_SERVICE_CODE: usize = 20;
 
 /// Turn a batch of FOCUS export payloads into ledger rows.
 ///
@@ -210,6 +214,9 @@ pub fn normalize(batch: &RawBatch) -> Result<Normalized> {
                 charge_description: row.get(IX_DESCRIPTION)?,
                 service_name: row.get(IX_SERVICE)?,
                 service_category: row.get(IX_SERVICE_CATEGORY)?,
+                service_subcategory: row.get(IX_SERVICE_SUBCATEGORY)?,
+                x_service_code: row.get(IX_SERVICE_CODE)?,
+                x_model: None,
                 resource_id: row.get(IX_RESOURCE_ID)?,
                 resource_name: row.get(IX_RESOURCE_NAME)?,
                 region_id: row.get(IX_REGION)?,

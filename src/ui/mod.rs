@@ -7,6 +7,7 @@ pub mod attribution;
 pub mod chart;
 pub mod data;
 pub mod fmt;
+pub mod insights;
 pub mod models;
 pub mod overview;
 pub mod query;

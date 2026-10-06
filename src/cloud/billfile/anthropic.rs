@@ -139,7 +139,7 @@ mod tests {
         let charge = &charges[0];
 
         assert_eq!(charge.service_name.as_deref(), Some("Anthropic"));
-        assert_eq!(charge.service_category.as_deref(), Some("claude-opus-5"));
+        assert_eq!(charge.x_model.as_deref(), Some("claude-opus-5"));
         assert_eq!(charge.charge_description.as_deref(), Some("Input tokens"));
         assert_eq!(charge.billed_cost, Some(30.00));
         assert_eq!(charge.charge_category, ChargeCategory::Usage);
@@ -160,10 +160,7 @@ mod tests {
         let september = charges(COSTS, BillingPeriod::new(2026, 9));
         assert_eq!(september.len(), 1);
         assert_eq!(september[0].billed_cost, Some(2.00));
-        assert_eq!(
-            september[0].service_category.as_deref(),
-            Some("claude-sonnet-5")
-        );
+        assert_eq!(september[0].x_model.as_deref(), Some("claude-sonnet-5"));
     }
 
     #[test]

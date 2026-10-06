@@ -418,6 +418,24 @@ to which, and which ones nothing uses any more.
     here.
   - The web demo seeds an inventory from `demo_data.rs`, so the pages keep
     compiling and rendering for wasm32.
+- *First slice landed* (unreleased): the Insights page, the first
+  enrichment plugin. An import copies the newest complete corkscrew scan
+  into `dim_resource` and `inventory_scan` (ledger schema v6, which also
+  records the scanner and its release); `analytics::insights` prices
+  stopped instances (with their volumes), idle public IPv4 addresses,
+  unclaimed resources and billed resources missing from the scan. It is
+  off until the user asks: **Set up and scan** asks first, then downloads
+  the fork's pinned `cloudbridge-r2` build (CLI and AWS plugin), checks it
+  against a SHA-256 compiled into the app, and scans every AWS account.
+  This replaces "detect it on `PATH`" above: a file the app downloads
+  itself carries no quarantine flag, and a pinned, checksummed release
+  under the app's data directory is the build we tested, which a
+  `corkscrew` on `PATH` is not. The dependency stays the fork — no
+  switch back to upstream is planned. Still owed: unattached volumes and
+  low utilization (CloudWatch or Compute Optimizer; corkscrew reads no
+  metrics), owner tag keys set in Settings rather than the built-in list,
+  and relationships (`dim_resource_edge`), which wait on the Resource
+  Explorer path describing resources.
 - **Relationship questions, not a topology picture.** Computed in
   `analytics.rs` from the two tables, and shared by both targets:
   - *Cost rolled up along ownership* — a volume's cost counted to the

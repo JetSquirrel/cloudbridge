@@ -15,6 +15,8 @@
 //! clock — `now` is always an argument, which is also what makes the tests
 //! below possible without either backend present.
 
+pub mod insights;
+
 use std::collections::BTreeMap;
 
 use anyhow::Result;
@@ -633,6 +635,8 @@ const UNTAGGED_WARNING_SHARE: f64 = 0.20;
 const REGION_NOTICE_SHARE: f64 = 0.05;
 /// ...and above this one it is a warning.
 const REGION_WARNING_SHARE: f64 = 0.25;
+/// How many uncategorized products a finding names before it trails off.
+const UNCATEGORIZED_NAMED: usize = 3;
 
 /// What a backend has to count for [`data_quality`] to judge a period.
 ///
@@ -659,11 +663,17 @@ pub struct QualityCounts<'a> {
     /// cannot see it — the browser's reading view carries no charge
     /// description, and no row it can be given would raise the finding.
     pub unreconciled: Option<(i64, f64)>,
+    /// Usage no service-category mapping placed, as `(product, amount,
+    /// charges)` — the product being the provider and its code, or its
+    /// service name where it reports no code — largest first and already
+    /// filtered to positive amounts.
+    pub uncategorized: Vec<(String, f64, i64)>,
 }
 
 /// The data-quality findings for a period: unconverted charges, untagged
-/// usage, services whose usage carries no region, and unreconciled
-/// adjustments. A clean period yields an empty list.
+/// usage, services whose usage carries no region, unreconciled adjustments,
+/// and usage no service category was found for. A clean period yields an
+/// empty list.
 pub fn data_quality(counts: QualityCounts<'_>) -> Vec<DataQualityIssue> {
     let QualityCounts {
         tag_key,
@@ -674,6 +684,7 @@ pub fn data_quality(counts: QualityCounts<'_>) -> Vec<DataQualityIssue> {
         untagged_count,
         regionless,
         unreconciled,
+        uncategorized,
     } = counts;
     let mut issues = Vec::new();
 
@@ -747,6 +758,36 @@ pub fn data_quality(counts: QualityCounts<'_>) -> Vec<DataQualityIssue> {
             ),
             affected_amount: Some(amount),
             affected_count: count,
+        });
+    }
+
+    // (e) Usage no mapping placed in a service category: it is missing from
+    // every cross-vendor category total until a mapping knows its product.
+    // One finding, naming the largest few products, since it is fixed in
+    // one place — the mapping tables — however many products it lists.
+    if !uncategorized.is_empty() {
+        let amount: f64 = uncategorized.iter().map(|(_, amount, _)| amount).sum();
+        let charges: i64 = uncategorized.iter().map(|(_, _, charges)| charges).sum();
+        let share = if usage > 0.0 { amount / usage } else { 0.0 };
+        let mut named: Vec<&str> = uncategorized
+            .iter()
+            .take(UNCATEGORIZED_NAMED)
+            .map(|(product, _, _)| product.as_str())
+            .collect();
+        if uncategorized.len() > UNCATEGORIZED_NAMED {
+            named.push("…");
+        }
+        issues.push(DataQualityIssue {
+            kind: DataQualityKind::UncategorizedUsage,
+            severity: IssueSeverity::Info,
+            message: format!(
+                "{amount:.2} of usage ({:.1}% of the period's usage) is from products with no \
+                 service category yet: {}",
+                share * 100.0,
+                named.join(", ")
+            ),
+            affected_amount: Some(amount),
+            affected_count: charges,
         });
     }
 
@@ -1123,6 +1164,7 @@ mod tests {
             untagged_count: 0,
             regionless: Vec::new(),
             unreconciled: None,
+            uncategorized: Vec::new(),
         }
     }
 
@@ -1207,6 +1249,30 @@ mod tests {
             ..clean()
         })
         .is_empty());
+    }
+
+    #[test]
+    fn uncategorized_usage_is_one_finding_naming_the_largest_products() {
+        let issues = data_quality(QualityCounts {
+            uncategorized: vec![
+                ("Aliyun mystery".to_string(), 60.0, 4),
+                ("Volcengine vei".to_string(), 30.0, 2),
+                ("AWS AmazonNew".to_string(), 8.0, 1),
+                ("Aliyun tiny".to_string(), 2.0, 1),
+            ],
+            ..clean()
+        });
+
+        assert_eq!(issues.len(), 1);
+        let issue = &issues[0];
+        assert_eq!(issue.kind, DataQualityKind::UncategorizedUsage);
+        assert_eq!(issue.severity, IssueSeverity::Info);
+        assert_eq!(issue.affected_amount, Some(100.0));
+        assert_eq!(issue.affected_count, 8);
+        assert!(issue.message.contains("10.0%"), "{}", issue.message);
+        assert!(issue
+            .message
+            .ends_with("Aliyun mystery, Volcengine vei, AWS AmazonNew, …"));
     }
 
     #[test]

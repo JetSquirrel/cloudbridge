@@ -37,8 +37,13 @@ pub fn seed_demo() -> Result<String> {
     for (provider, account_id, _, currency) in DEMO_SOURCES {
         let services = demo_data::services_of(provider);
         for (index, period) in periods.iter().enumerate() {
-            let charges =
+            let mut charges =
                 demo_data::period_charges(provider, services, currency, *period, index, now);
+            // The inventory's resource-level rows join the current period
+            // of the AWS account, which is where a real export's would be.
+            if *provider == "AWS" && index + 1 == periods.len() {
+                charges.extend(demo_data::inventory::resource_charges(now));
+            }
             charge_count += charges.len();
             replace_period(
                 &PeriodKey::new(*provider, *account_id, period.label()),
@@ -52,6 +57,20 @@ pub fn seed_demo() -> Result<String> {
 
     for snapshot in demo_data::balance_ladder(&periods) {
         record_balance(&snapshot)?;
+    }
+
+    // An imported scan is real data: the demo does not replace it. (The
+    // browser imports none, but the rule is the desktop's.)
+    let imported = memory::with_store(|store| {
+        store
+            .inventory_scope
+            .borrow()
+            .as_ref()
+            .is_some_and(|scope| !scope.scan_id.starts_with(DEMO_PREFIX))
+    });
+    if !imported {
+        let (scope, resources) = demo_data::inventory::inventory(now);
+        super::inventory::write_inventory(&scope, &resources);
     }
 
     for (_, account_id, _, _) in DEMO_SOURCES {
@@ -92,6 +111,15 @@ pub fn clear_demo() -> Result<String> {
                 .balances
                 .borrow_mut()
                 .retain(|snapshot| !snapshot.account_id.starts_with(DEMO_PREFIX));
+            let demo_inventory = store
+                .inventory_scope
+                .borrow()
+                .as_ref()
+                .is_some_and(|scope| scope.scan_id.starts_with(DEMO_PREFIX));
+            if demo_inventory {
+                store.resources.borrow_mut().clear();
+                *store.inventory_scope.borrow_mut() = None;
+            }
         });
 
         Ok(())
