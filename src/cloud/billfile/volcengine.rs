@@ -146,7 +146,7 @@ mod tests {
             charge.service_name.as_deref(),
             Some("火山方舟大模型服务平台")
         );
-        assert_eq!(charge.service_category.as_deref(), Some("ark"));
+        assert_eq!(charge.x_service_code.as_deref(), Some("ark"));
         assert_eq!(charge.billed_cost, Some(20.00));
         assert_eq!(charge.list_cost, Some(20.00));
         assert_eq!(charge.billing_currency, "CNY");
@@ -236,7 +236,7 @@ mod tests {
                        20.00,2.00,0.00,18.00,CNY,2000000,Tokens\n";
 
         let charges = charges(english, BillingPeriod::new(2026, 8));
-        assert_eq!(charges[0].service_category.as_deref(), Some("ark"));
+        assert_eq!(charges[0].x_service_code.as_deref(), Some("ark"));
         assert_eq!(charges[0].billed_cost, Some(20.00));
         assert!((total(&charges) - 18.00).abs() < 1e-9);
     }

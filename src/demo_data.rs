@@ -106,6 +106,27 @@ pub fn services_of(provider: &str) -> &'static [(&'static str, f64, Option<&'sta
     }
 }
 
+/// The product code a cloud's own bill files a demo service under, so the
+/// demo's rows are placed in FOCUS categories the way a real bill's are.
+pub fn service_code(provider: &str, service: &str) -> Option<&'static str> {
+    let code = match (provider, service) {
+        ("AWS", "EC2") => "AmazonEC2",
+        ("AWS", "RDS") => "AmazonRDS",
+        ("AWS", "Bedrock") => "AmazonBedrock",
+        ("AWS", "S3") => "AmazonS3",
+        ("AWS", "Lambda") => "AWSLambda",
+        ("AWS", "Data Transfer") => "AWSDataTransfer",
+        ("AWS", "CloudWatch") => "AmazonCloudWatch",
+        ("Aliyun", "ECS") => "ecs",
+        ("Aliyun", "OSS") => "oss",
+        ("Aliyun", "RDS") => "rds",
+        ("Aliyun", "CDN") => "cdn",
+        ("Aliyun", "SLB") => "slb",
+        _ => return None,
+    };
+    Some(code)
+}
+
 /// Per-1M-token list prices for one demo model, so the token rows beside its
 /// cost imply a blended unit cost in the right neighborhood.
 struct ModelPrices {
@@ -375,9 +396,10 @@ fn usage_charge(
     charge.service_name = Some(service.to_string());
     if model_prices(provider, service).is_some() {
         // For the model providers the service is the model; the row names it
-        // as its category the way the usage exports do.
-        charge.service_category = Some(service.to_string());
+        // as its model the way the usage exports do.
+        charge.x_model = Some(service.to_string());
     }
+    charge.x_service_code = service_code(provider, service).map(str::to_string);
     charge.charge_description = Some(format!("{provider} {service} usage"));
     charge.billed_cost = Some(amount);
     charge.effective_cost = Some(amount);
@@ -400,7 +422,7 @@ fn token_charge(
 ) -> Charge {
     let mut charge = Charge::new(start, end, currency);
     charge.service_name = Some(service.to_string());
-    charge.service_category = Some(service.to_string());
+    charge.x_model = Some(service.to_string());
     charge.charge_description = Some(format!("{provider} {service} {unit}"));
     charge.cost_basis = CostBasis::Absent;
     charge.pricing_quantity = Some(quantity);
@@ -567,10 +589,11 @@ mod tests {
             11,
             now(),
         );
-        // Every Anthropic row names its model as the category.
-        assert!(anthropic
-            .iter()
-            .all(|charge| charge.service_category == charge.service_name));
+        // Every Anthropic row names its model, and leaves the category to
+        // the writer's mapping.
+        assert!(anthropic.iter().all(
+            |charge| charge.x_model == charge.service_name && charge.service_category.is_none()
+        ));
 
         let tokens: Vec<&Charge> = anthropic
             .iter()

@@ -147,7 +147,20 @@ pub struct Charge {
     pub sub_account_name: Option<String>,
     pub charge_description: Option<String>,
     pub service_name: Option<String>,
+    /// FOCUS `ServiceCategory` — only a value the specification allows, or
+    /// `None` when nothing maps the product yet. Filled from
+    /// [`crate::service_category`] at write time when a source leaves it
+    /// unset.
     pub service_category: Option<String>,
+    /// FOCUS `ServiceSubcategory`, under the same rule.
+    pub service_subcategory: Option<String>,
+    /// The vendor's own product code (`ecs`, `ark`, AWS's `x_ServiceCode`),
+    /// which is what a category mapping keys on. `x_` because FOCUS has no
+    /// such column.
+    pub x_service_code: Option<String>,
+    /// The model a model-provider row bills, as the vendor names it. FOCUS
+    /// has no model column either.
+    pub x_model: Option<String>,
     pub resource_id: Option<String>,
     pub resource_name: Option<String>,
     pub region_id: Option<String>,
@@ -180,6 +193,9 @@ impl Charge {
             charge_description: None,
             service_name: None,
             service_category: None,
+            service_subcategory: None,
+            x_service_code: None,
+            x_model: None,
             resource_id: None,
             resource_name: None,
             region_id: None,
@@ -563,7 +579,7 @@ pub enum TokenClass {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelTokenSummary {
     pub provider: String,
-    /// The model name, as the import wrote it into `service_category`.
+    /// The model name, as the import wrote it into `x_model`.
     pub model: String,
     /// In the reporting currency.
     pub usage_cost: f64,
@@ -627,6 +643,8 @@ pub enum DataQualityKind {
     /// `cloud::deduction`'s escape hatch: a bill line whose named
     /// deductions did not add up.
     UnreconciledAdjustment,
+    /// Usage of a product no FOCUS service-category mapping knows yet.
+    UncategorizedUsage,
 }
 
 impl DataQualityKind {
@@ -639,6 +657,7 @@ impl DataQualityKind {
             Self::UntaggedUsage => "untagged_usage",
             Self::MissingRegion => "missing_region",
             Self::UnreconciledAdjustment => "unreconciled_adjustment",
+            Self::UncategorizedUsage => "uncategorized_usage",
         }
     }
 }

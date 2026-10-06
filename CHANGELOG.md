@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Service categories that mean the same thing on every cloud.** Each
+  source's products are placed in FOCUS `ServiceCategory` and
+  `ServiceSubcategory` on the way into the ledger: Alibaba Cloud's `ecs`,
+  Volcengine's `ecs` and AWS's EC2 are all Compute / Virtual Machines, OSS,
+  TOS and S3 are Storage / Object Storage, and Model Studio, Ark and the
+  model providers are AI and Machine Learning / Generative AI. AWS's Data
+  Exports keep the categories they carry; Cost Explorer rows are placed by
+  service name. The Attribution page's Category dimension, and the Query
+  page's category template, now compare clouds. A product no mapping knows
+  stays uncategorized — read as *Uncategorized*, since *Other* is a FOCUS
+  category of its own — and is reported as a data-quality finding naming
+  the largest such products
+
+### Changed
+- **`service_category` has one meaning (ledger schema v5).** It used to
+  hold a FOCUS category for AWS's export, a product code for Alibaba Cloud
+  and Volcengine, and a model name for the OpenAI, Anthropic and DeepSeek
+  imports. Product codes now live in `x_service_code` and models in
+  `x_model`, beside a new `service_subcategory`; an existing ledger is
+  migrated in place on first open, from the columns it already has. The
+  Models page groups by `x_model`, falling back to the product code for a
+  bill that names no model, so it reads as it did. SQL written against
+  `service_category` for models should read `x_model`
+
 ## [0.4.0] - 2026-10-05
 
 The bill arrives more ways and is read more ways: AWS Data Exports straight

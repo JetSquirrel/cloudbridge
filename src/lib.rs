@@ -18,6 +18,10 @@ pub mod store;
 // functions over aggregates, so both targets compute them the same way.
 pub mod analytics;
 
+// Each vendor's products placed in FOCUS service categories, so a category
+// means the same thing on every cloud. Applied by both backends' writers.
+pub mod service_category;
+
 // The demo bill, as rows. Written into whichever ledger the target has, by
 // that ledger's own `demo` module.
 pub mod demo_data;

@@ -144,7 +144,7 @@ mod tests {
     fn product<'a>(charges: &'a [Charge], code: &str) -> Vec<&'a Charge> {
         charges
             .iter()
-            .filter(|charge| charge.service_category.as_deref() == Some(code))
+            .filter(|charge| charge.x_service_code.as_deref() == Some(code))
             .collect()
     }
 
@@ -166,7 +166,7 @@ mod tests {
         let charge = item(&charges, "qwen-max 输入token");
 
         assert_eq!(charge.service_name.as_deref(), Some("大模型服务平台百炼"));
-        assert_eq!(charge.service_category.as_deref(), Some("bailian"));
+        assert_eq!(charge.x_service_code.as_deref(), Some("bailian"));
         assert_eq!(charge.billed_cost, Some(12.34));
         assert_eq!(charge.billing_currency, "CNY");
         assert_eq!(charge.charge_category, ChargeCategory::Usage);
@@ -301,7 +301,7 @@ mod tests {
 
         let charges = charges(english, BillingPeriod::new(2026, 8));
         let usage = &charges[0];
-        assert_eq!(usage.service_category.as_deref(), Some("bailian"));
+        assert_eq!(usage.x_service_code.as_deref(), Some("bailian"));
         assert_eq!(usage.billed_cost, Some(15.00));
         assert_eq!(usage.pricing_unit.as_deref(), Some("Tokens"));
         // 15.00 - 2.66 is what was charged.

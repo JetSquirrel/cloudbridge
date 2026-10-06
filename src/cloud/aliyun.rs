@@ -255,7 +255,7 @@ pub fn normalize(batch: &RawBatch) -> Result<Normalized> {
         let template = || Charge {
             service_name: item.product_name.clone(),
             // ProductCode is stable across locales; ProductName is not.
-            service_category: item.product_code.clone(),
+            x_service_code: item.product_code.clone(),
             ..Charge::new(start, end, currency.clone())
         };
 
@@ -378,7 +378,7 @@ mod tests {
         normalized
             .charges
             .iter()
-            .filter(|charge| charge.service_category.as_deref() == Some(product))
+            .filter(|charge| charge.x_service_code.as_deref() == Some(product))
             .collect()
     }
 

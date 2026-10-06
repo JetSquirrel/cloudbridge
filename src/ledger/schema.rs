@@ -31,7 +31,14 @@ use duckdb::{params, Connection};
 /// account an AWS payer's export files each row under. Without it a
 /// consolidated bill cannot be split by member account, and a resource id
 /// has no account to be unique within.
-pub const SCHEMA_VERSION: i32 = 4;
+///
+/// v5 gives `service_category` one meaning. It had held a FOCUS category
+/// for AWS's export, a product code for Alibaba Cloud and Volcengine, and a
+/// model name for the model-provider imports. Now it holds only FOCUS
+/// `ServiceCategory` values, beside a new `service_subcategory`; the product
+/// code moves to `x_service_code` and the model to `x_model`. The move is
+/// made in place by [`migrate`], from columns the ledger already has.
+pub const SCHEMA_VERSION: i32 = 5;
 
 /// The view the application reads: every charge with its amount also
 /// expressed in the reporting currency.
@@ -122,7 +129,13 @@ pub fn apply(conn: &Connection) -> Result<()> {
             created_at          TIMESTAMP NOT NULL,
             -- Last, like ingest_batch.channel: v4 adds them with ALTER TABLE.
             sub_account_id      VARCHAR,
-            sub_account_name    VARCHAR
+            sub_account_name    VARCHAR,
+            -- v5: FOCUS ServiceSubcategory, the vendor's product code, and
+            -- the model a model-provider row bills. FOCUS has no column for
+            -- the last two, hence the x_ prefix.
+            service_subcategory VARCHAR,
+            x_service_code      VARCHAR,
+            x_model             VARCHAR
         );
 
         CREATE INDEX IF NOT EXISTS idx_charge_period
@@ -224,6 +237,90 @@ fn migrate(conn: &Connection) -> Result<()> {
             "ALTER TABLE fct_charge ADD COLUMN sub_account_id VARCHAR;
              ALTER TABLE fct_charge ADD COLUMN sub_account_name VARCHAR;",
         )?;
+    }
+    if !has_column(conn, "fct_charge", "x_model")? {
+        tracing::info!("Separating service categories from product codes and models");
+        conn.execute_batch("BEGIN TRANSACTION")?;
+        let moved = split_service_category(conn);
+        conn.execute_batch(if moved.is_ok() { "COMMIT" } else { "ROLLBACK" })?;
+        moved?;
+    }
+
+    Ok(())
+}
+
+/// The v5 move. Before it, what `service_category` held depended on the
+/// source; every row it touches is one a source wrote before the column
+/// meant one thing.
+///
+/// - the model providers wrote the model: it moves to `x_model`;
+/// - Alibaba Cloud and Volcengine wrote the product code: it moves to
+///   `x_service_code`;
+/// - AWS's export wrote a real FOCUS category, which stays.
+///
+/// Then every row left without a category is placed by
+/// [`crate::service_category::classify`], the same as a new write would be.
+fn split_service_category(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "ALTER TABLE fct_charge ADD COLUMN service_subcategory VARCHAR;
+         ALTER TABLE fct_charge ADD COLUMN x_service_code VARCHAR;
+         ALTER TABLE fct_charge ADD COLUMN x_model VARCHAR;
+         UPDATE fct_charge SET x_model = service_category, service_category = NULL
+          WHERE provider IN ('OpenAI', 'Anthropic', 'DeepSeek');
+         UPDATE fct_charge SET x_service_code = service_category, service_category = NULL
+          WHERE provider IN ('Aliyun', 'Volcengine');",
+    )?;
+
+    // The demo bill was written straight into the ledger, with short names
+    // and no product codes, and it has no raw payload to replay. Give its
+    // rows the codes the demo writes now, so they are placed like a fresh
+    // seed's.
+    let demo_services: Vec<(String, String)> = conn
+        .prepare(
+            "SELECT DISTINCT provider, service_name FROM fct_charge
+             WHERE starts_with(account_id, ?) AND x_service_code IS NULL
+               AND service_name IS NOT NULL",
+        )?
+        .query_map(params![crate::demo_data::DEMO_PREFIX], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?
+        .collect::<Result<_, _>>()?;
+    let mut code = conn.prepare(
+        "UPDATE fct_charge SET x_service_code = ?
+         WHERE starts_with(account_id, ?) AND provider = ? AND service_name = ?
+           AND x_service_code IS NULL",
+    )?;
+    for (provider, service) in &demo_services {
+        if let Some(service_code) = crate::demo_data::service_code(provider, service) {
+            code.execute(params![
+                service_code,
+                crate::demo_data::DEMO_PREFIX,
+                provider,
+                service
+            ])?;
+        }
+    }
+
+    let products: Vec<(String, Option<String>, Option<String>)> = conn
+        .prepare(
+            "SELECT DISTINCT provider, x_service_code, service_name
+             FROM fct_charge WHERE service_category IS NULL",
+        )?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect::<Result<_, _>>()?;
+
+    let mut place = conn.prepare(
+        "UPDATE fct_charge SET service_category = ?, service_subcategory = ?
+         WHERE service_category IS NULL AND provider = ?
+           AND x_service_code IS NOT DISTINCT FROM ?
+           AND service_name IS NOT DISTINCT FROM ?",
+    )?;
+    for (provider, code, name) in &products {
+        if let Some((category, subcategory)) =
+            crate::service_category::classify(provider, code.as_deref(), name.as_deref())
+        {
+            place.execute(params![category, subcategory, provider, code, name])?;
+        }
     }
 
     Ok(())
@@ -337,6 +434,9 @@ mod tests {
         assert!(has_column(&conn, "ingest_batch", "channel").unwrap());
         assert!(has_column(&conn, "fct_charge", "sub_account_id").unwrap());
         assert!(has_column(&conn, "fct_charge", "sub_account_name").unwrap());
+        assert!(has_column(&conn, "fct_charge", "x_model").unwrap());
+        assert!(has_column(&conn, "fct_charge", "x_service_code").unwrap());
+        assert!(has_column(&conn, "fct_charge", "service_subcategory").unwrap());
     }
 
     /// The v3 `fct_charge`, indexes included: DuckDB refuses some `ALTER`s
@@ -398,6 +498,113 @@ mod tests {
         assert_eq!(cost, 1.5);
         assert_eq!(sub_account, None);
         assert!(has_column(&conn, "fct_charge", "sub_account_name").unwrap());
+    }
+
+    /// v5 takes apart what `service_category` held per source: a model
+    /// moves to `x_model`, a product code to `x_service_code`, AWS's own
+    /// FOCUS category stays, and whatever is left uncategorized is placed by
+    /// the mapping a new write would use.
+    #[test]
+    fn an_existing_ledger_separates_categories_from_codes_and_models() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(V3_FCT_CHARGE).unwrap();
+        conn.execute_batch(
+            "INSERT INTO fct_charge
+                 (charge_id, batch_id, provider, account_id, billing_period,
+                  charge_period_start, charge_period_end, charge_category,
+                  service_name, service_category,
+                  billed_cost, billing_currency, cost_basis, created_at)
+             SELECT id, 'b-1', provider,
+                    CASE WHEN id = 'demo' THEN 'demo-aws' ELSE 'acct' END, '2026-09',
+                    CAST('2026-09-01 00:00:00' AS TIMESTAMP),
+                    CAST('2026-09-02 00:00:00' AS TIMESTAMP), 'Usage',
+                    name, category, 1.0, 'USD', 'authoritative',
+                    CAST('2026-09-02 00:00:00' AS TIMESTAMP)
+             FROM (VALUES
+                 ('openai', 'OpenAI', 'OpenAI', 'gpt-5'),
+                 ('demo', 'AWS', 'EC2', NULL),
+                 ('ecs', 'Aliyun', '云服务器 ECS', 'ecs'),
+                 ('novel', 'Aliyun', '新产品', 'some-new-product'),
+                 ('ark', 'Volcengine', '火山方舟', 'ark'),
+                 ('focus', 'AWS', 'Amazon Simple Storage Service', 'Storage'),
+                 ('ce', 'AWS', 'Amazon Simple Storage Service', NULL)
+             ) AS t(id, provider, name, category);",
+        )
+        .unwrap();
+
+        apply(&conn).unwrap();
+
+        let row = |id: &str| -> (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) {
+            conn.query_row(
+                "SELECT service_category, service_subcategory, x_service_code, x_model
+                 FROM fct_charge WHERE charge_id = ?",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap()
+        };
+        let some = |value: &str| Some(value.to_string());
+
+        assert_eq!(
+            row("openai"),
+            (
+                some("AI and Machine Learning"),
+                some("Generative AI"),
+                None,
+                some("gpt-5")
+            )
+        );
+        assert_eq!(
+            row("ecs"),
+            (some("Compute"), some("Virtual Machines"), some("ecs"), None)
+        );
+        assert_eq!(
+            row("ark"),
+            (
+                some("AI and Machine Learning"),
+                some("Generative AI"),
+                some("ark"),
+                None
+            )
+        );
+        // A code the tables do not know keeps its code and no category.
+        assert_eq!(row("novel"), (None, None, some("some-new-product"), None));
+        // AWS's own category is left exactly as the export gave it.
+        assert_eq!(row("focus"), (some("Storage"), None, None, None));
+        // A Cost Explorer row is placed by its service name.
+        assert_eq!(
+            row("ce"),
+            (some("Storage"), some("Object Storage"), None, None)
+        );
+        // A demo row, written without a code, gets the one the demo writes
+        // now — but only on a demo account.
+        assert_eq!(
+            row("demo"),
+            (
+                some("Compute"),
+                some("Virtual Machines"),
+                some("AmazonEC2"),
+                None
+            )
+        );
+        // The charge that predates all of this is untouched.
+        let cost: f64 = conn
+            .query_row(
+                "SELECT billed_cost FROM fct_charge WHERE charge_id = 'c-1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cost, 1.5);
+
+        // And it happens once: a second start leaves the rows alone.
+        apply(&conn).unwrap();
+        assert_eq!(row("novel"), (None, None, some("some-new-product"), None));
     }
 
     /// A ledger written before v2 keeps its rows, and they read as the API

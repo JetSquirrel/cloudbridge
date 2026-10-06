@@ -1549,6 +1549,28 @@ fn data_quality_issues_of(
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
+    // Usage no service-category mapping placed, per product.
+    let mut stmt = conn.prepare(&format!(
+        "SELECT provider || ' ' || coalesce(x_service_code, service_name, 'Other') AS product,
+                sum(billed_cost_base) AS amount, count(*) AS charges
+         FROM {NORMALIZED_VIEW}
+         WHERE billing_period = ?
+           AND charge_category = 'Usage'
+           AND service_category IS NULL
+         GROUP BY product
+         HAVING amount > 0
+         ORDER BY amount DESC, product"
+    ))?;
+    let uncategorized = stmt
+        .query_map(params![billing_period], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, f64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
     // `cloud::deduction`'s escape hatch: money a bill accounts for that no
     // named deduction covers.
     let unreconciled: (i64, Option<f64>) = conn.query_row(
@@ -1572,6 +1594,7 @@ fn data_quality_issues_of(
         untagged_count,
         regionless,
         unreconciled: Some((unreconciled.0, unreconciled.1.unwrap_or(0.0))),
+        uncategorized,
     }))
 }
 
@@ -1579,12 +1602,14 @@ fn data_quality_issues_of(
 
 impl BreakdownDim {
     /// The bucket expression; a charge without the dimension reads as
-    /// `'Other'`, as a charge without a service does.
+    /// `'Other'`, as a charge without a service does — except a category,
+    /// where `Other` is a FOCUS value and the absence of one reads as
+    /// [`service_category::UNCATEGORIZED`](crate::service_category::UNCATEGORIZED).
     fn bucket_sql(self) -> &'static str {
         match self {
             Self::Service => "coalesce(service_name, 'Other')",
             Self::Region => "coalesce(region_id, 'Other')",
-            Self::ServiceCategory => "coalesce(service_category, 'Other')",
+            Self::ServiceCategory => "coalesce(service_category, 'Uncategorized')",
         }
     }
 }
@@ -1700,10 +1725,15 @@ fn tag_usage_breakdown_by_service_of(
 // ==================== Model token economics ====================
 //
 // LLM providers meter in tokens: a model-provider import writes the model
-// into `service_category` and the token count into `pricing_quantity`,
-// priced in one of the units `analytics::classify_token_unit` knows. These
-// reads group that usage by `(provider, service_category)`; everything
-// computed from the groups is pure, in `analytics`.
+// into `x_model` and the token count into `pricing_quantity`, priced in one
+// of the units `analytics::classify_token_unit` knows. These reads group
+// that usage by `(provider, MODEL_SQL)`; everything computed from the
+// groups is pure, in `analytics`.
+
+/// What a row's usage is grouped under on the Models page: the model, or,
+/// for a bill that names no model — Alibaba Cloud's Model Studio and
+/// Volcengine's Ark today — the product it was billed under.
+const MODEL_SQL: &str = "coalesce(nullif(x_model, ''), nullif(x_service_code, ''))";
 
 /// [`analytics::classify_token_unit`] as a SQL expression over
 /// `pricing_unit`, so a quantity lands in the same class here as it would in
@@ -1728,8 +1758,8 @@ const TOKEN_CLASS_SQL: &str = "CASE lower(trim(pricing_unit))
 /// included, though a request meters no tokens — or when it is a model
 /// provider's row: `OpenAI`, `Anthropic` and `DeepSeek` are the registry
 /// ids, so a provider that reports cost without token counts (DeepSeek
-/// today) still appears, with `has_token_data` false. Rows with no model in
-/// `service_category` are left out. Token sums by class are over the
+/// today) still appears, with `has_token_data` false. Rows with neither a
+/// model nor a product code are left out. Token sums by class are over the
 /// current window; the previous window's tokens are one total,
 /// `previous_tokens`. `cost_basis='absent'` rows count toward both, since
 /// they carry token quantities with a NULL cost.
@@ -1755,7 +1785,7 @@ pub(crate) fn model_token_summary_of(
     let stamp = |instant: DateTime<Utc>| instant.format(TIMESTAMP_FORMAT).to_string();
 
     let mut stmt = conn.prepare(&format!(
-        "SELECT provider, service_category AS model,
+        "SELECT provider, {MODEL_SQL} AS model,
                 coalesce(sum(billed_cost_base) FILTER (
                     WHERE charge_category = 'Usage'
                       AND charge_period_start >= CAST(? AS TIMESTAMP)
@@ -1783,7 +1813,7 @@ pub(crate) fn model_token_summary_of(
          FROM {NORMALIZED_VIEW}
          WHERE charge_period_start >= CAST(? AS TIMESTAMP)
            AND charge_period_start < CAST(? AS TIMESTAMP)
-           AND nullif(service_category, '') IS NOT NULL
+           AND {MODEL_SQL} IS NOT NULL
          GROUP BY provider, model
          HAVING bool_or({TOKEN_CLASS_SQL} <> 'other')
              OR provider IN ('OpenAI', 'Anthropic', 'DeepSeek')
@@ -1849,12 +1879,12 @@ pub(crate) fn daily_model_tokens_of(
 ) -> Result<Vec<DailyModelTokens>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT strftime(charge_period_start, '%Y-%m-%d') AS day,
-                service_category AS model,
+                {MODEL_SQL} AS model,
                 sum(pricing_quantity) AS tokens
          FROM {NORMALIZED_VIEW}
          WHERE charge_period_start >= CAST(? AS TIMESTAMP)
            AND charge_period_start < CAST(? AS TIMESTAMP)
-           AND nullif(service_category, '') IS NOT NULL
+           AND {MODEL_SQL} IS NOT NULL
            AND {TOKEN_CLASS_SQL} IN ('in', 'out', 'cache')
          GROUP BY day, model
          ORDER BY day"
@@ -3497,6 +3527,57 @@ mod tests {
         );
     }
 
+    /// 0.5.0's acceptance target: one query over the ledger answers what
+    /// compute and storage cost across clouds, because each cloud's products
+    /// are placed in the same FOCUS categories on the way in.
+    #[test]
+    fn one_query_totals_a_category_across_clouds() {
+        let mut conn = conn("USD");
+        let coded = |code: &str, service: &str, amount: f64| Charge {
+            x_service_code: Some(code.to_string()),
+            ..charge(service, amount, "USD", 1)
+        };
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                coded("AmazonEC2", "EC2", 100.0),
+                coded("AmazonS3", "S3", 20.0),
+                // Cost Explorer reports a name and no code.
+                charge("Amazon Simple Storage Service", 5.0, "USD", 2),
+            ],
+        );
+        write(
+            &mut conn,
+            &aliyun(),
+            &[
+                coded("ecs", "云服务器 ECS", 40.0),
+                coded("oss", "对象存储 OSS", 8.0),
+                coded("some-new-product", "新产品", 3.0),
+            ],
+        );
+
+        let totals: Vec<(String, f64)> = conn
+            .prepare(&format!(
+                "SELECT coalesce(service_category, 'Uncategorized'), sum(billed_cost_base)
+                 FROM {NORMALIZED_VIEW} GROUP BY 1 ORDER BY 2 DESC"
+            ))
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+
+        assert_eq!(
+            totals,
+            vec![
+                ("Compute".to_string(), 140.0),
+                ("Storage".to_string(), 33.0),
+                ("Uncategorized".to_string(), 3.0),
+            ]
+        );
+    }
+
     #[test]
     fn top_resources_ranks_resources_and_skips_unresourced_charges() {
         let mut conn = conn("USD");
@@ -3840,6 +3921,56 @@ mod tests {
         assert!((series[3].1 - 153.0 / 61.0).abs() < 1e-9);
     }
 
+    /// The period's findings without the uncategorized-usage one. The
+    /// fixtures below name services as `"EC2"`, which no mapping places;
+    /// what they test is every other check, and
+    /// `uncategorized_usage_is_reported_per_product` tests that one.
+    fn quality_issues_but_categories(
+        conn: &Connection,
+        billing_period: &str,
+        tag_key: &str,
+    ) -> Result<Vec<DataQualityIssue>> {
+        Ok(data_quality_issues_of(conn, billing_period, tag_key)?
+            .into_iter()
+            .filter(|issue| issue.kind != DataQualityKind::UncategorizedUsage)
+            .collect())
+    }
+
+    #[test]
+    fn uncategorized_usage_is_reported_per_product() {
+        let mut conn = conn("USD");
+        let coded = |code: &str, amount: f64, day: u32| Charge {
+            x_service_code: Some(code.to_string()),
+            ..charge(code, amount, "USD", day)
+        };
+        write(
+            &mut conn,
+            &aliyun(),
+            &[
+                coded("ecs", 100.0, 1),
+                coded("mystery", 30.0, 1),
+                coded("mystery", 10.0, 2),
+                coded("riddle", 5.0, 2),
+            ],
+        );
+
+        let issues: Vec<DataQualityIssue> =
+            data_quality_issues_of(&conn, "2026-08", "business_line")
+                .unwrap()
+                .into_iter()
+                .filter(|issue| issue.kind == DataQualityKind::UncategorizedUsage)
+                .collect();
+
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].affected_amount, Some(45.0));
+        assert_eq!(issues[0].affected_count, 3);
+        assert!(
+            issues[0].message.ends_with("Aliyun mystery, Aliyun riddle"),
+            "{}",
+            issues[0].message
+        );
+    }
+
     #[test]
     fn a_clean_period_raises_no_data_quality_issues() {
         let mut conn = conn("USD");
@@ -3853,9 +3984,11 @@ mod tests {
             &[clean("EC2", 100.0, 1), clean("S3", 10.0, 2)],
         );
 
-        assert!(data_quality_issues_of(&conn, "2026-08", "business_line")
-            .unwrap()
-            .is_empty());
+        assert!(
+            quality_issues_but_categories(&conn, "2026-08", "business_line")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -3877,7 +4010,7 @@ mod tests {
             ],
         );
 
-        let issues = data_quality_issues_of(&conn, "2026-08", "business_line").unwrap();
+        let issues = quality_issues_but_categories(&conn, "2026-08", "business_line").unwrap();
         assert_eq!(issues.len(), 1);
         let issue = &issues[0];
         assert_eq!(issue.kind, DataQualityKind::UnconvertedCharges);
@@ -3910,7 +4043,7 @@ mod tests {
         );
 
         // 30 of 130 = 23.1%: over the warning line.
-        let issues = data_quality_issues_of(&conn, "2026-08", "business_line").unwrap();
+        let issues = quality_issues_but_categories(&conn, "2026-08", "business_line").unwrap();
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].kind, DataQualityKind::UntaggedUsage);
         assert_eq!(issues[0].severity, IssueSeverity::Warning);
@@ -3936,7 +4069,7 @@ mod tests {
                 regioned(charge_on("NAT", 10.0, "USD", jul(4))),
             ],
         );
-        let issues = data_quality_issues_of(&conn, "2026-07", "business_line").unwrap();
+        let issues = quality_issues_but_categories(&conn, "2026-07", "business_line").unwrap();
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].kind, DataQualityKind::UntaggedUsage);
         assert_eq!(issues[0].severity, IssueSeverity::Info);
@@ -3962,7 +4095,7 @@ mod tests {
             ],
         );
 
-        let issues = data_quality_issues_of(&conn, "2026-08", "business_line").unwrap();
+        let issues = quality_issues_but_categories(&conn, "2026-08", "business_line").unwrap();
         assert_eq!(issues.len(), 2);
         // Largest first; 30% is over the warning line, 20% is a note.
         assert_eq!(issues[0].kind, DataQualityKind::MissingRegion);
@@ -4002,7 +4135,7 @@ mod tests {
             ],
         );
 
-        let issues = data_quality_issues_of(&conn, "2026-08", "business_line").unwrap();
+        let issues = quality_issues_but_categories(&conn, "2026-08", "business_line").unwrap();
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].kind, DataQualityKind::UnreconciledAdjustment);
         assert_eq!(issues[0].severity, IssueSeverity::Critical);
@@ -4023,7 +4156,7 @@ mod tests {
     ) -> Charge {
         Charge {
             service_name: Some(provider_service.to_string()),
-            service_category: Some(model.to_string()),
+            x_model: Some(model.to_string()),
             billed_cost: amount,
             cost_basis: match amount {
                 Some(_) => CostBasis::Authoritative,
@@ -4139,7 +4272,7 @@ mod tests {
             &mut conn,
             &PeriodKey::new("OpenAI", "acct-5", "2026-07"),
             &[Charge {
-                service_category: Some("gpt-5".to_string()),
+                x_model: Some("gpt-5".to_string()),
                 pricing_unit: Some("Input Tokens".to_string()),
                 pricing_quantity: Some(8_000_000.0),
                 ..charge_on("OpenAI", 20.0, "USD", jul(10))
