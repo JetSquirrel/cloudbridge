@@ -238,6 +238,7 @@ pub fn account(provider: &str, account_id: &str, name: &str, now: DateTime<Utc>)
         // key there is none to show.
         access_key_hint: None,
         export_uri: None,
+        system_credentials: false,
     }
 }
 

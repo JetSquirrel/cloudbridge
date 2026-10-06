@@ -338,6 +338,10 @@ pub struct CloudAccount {
     /// an AWS Data Exports-backed account). `None` for an account read by
     /// its billing API, and for one stored before exports were supported.
     pub export_uri: Option<String>,
+    /// Read the credentials from this machine — the environment, or the
+    /// provider's credentials file — each time they are needed, and keep
+    /// none in the keyring.
+    pub system_credentials: bool,
 }
 
 /// How much of an access key is kept as a hint.
