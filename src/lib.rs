@@ -74,6 +74,12 @@ pub mod secret_store;
 #[cfg(not(target_family = "wasm"))]
 pub mod crypto;
 
+// Running with the window closed: the refresh schedule, alert
+// notifications, the menu bar icon and the login item. A browser tab has
+// none of these to offer.
+#[cfg(not(target_family = "wasm"))]
+pub mod background;
+
 // Everything the two targets genuinely share.
 pub mod alerts;
 pub mod app;

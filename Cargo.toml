@@ -90,6 +90,41 @@ directories = "6"
 
 zip = { version = "4.2.0", default-features = false, features = ["deflate"] }
 
+# Running in the background: start at login, and tell the user when an alert
+# fires while no window is open. Pure Rust on every desktop OS — the Linux
+# side talks D-Bus and writes an XDG autostart entry, no C library to link.
+auto-launch = "0.6.0"
+notify-rust = "4.18.0"
+# Carries menu bar icon clicks, which arrive on a callback, to the GPUI task
+# that acts on them. Already in the tree through smol.
+async-channel = "2.5"
+
+# The menu bar (macOS) and notification-area (Windows) icon. Not on Linux:
+# tray-icon reaches the panel through GTK and libappindicator there, which
+# every Linux CI job would have to install for a feature most desktops hide.
+# Without it a Linux build quits with its last window, as before.
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+tray-icon = "0.25.1"
+
+# Showing and hiding the Dock icon as the window opens and closes, the way a
+# menu bar app does, and finding where the menu bar icon sits. Already in the
+# tree through tray-icon and GPUI.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = [
+    "NSApplication",
+    "NSButton",
+    "NSControl",
+    "NSResponder",
+    "NSRunningApplication",
+    "NSScreen",
+    "NSStatusBarButton",
+    "NSStatusItem",
+    "NSView",
+    "NSWindow",
+] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSGeometry"] }
+
 # Browser only. The web demo has no filesystem, no keyring and no threads,
 # so the desktop's platform crates are replaced rather than shared.
 [target.'cfg(target_family = "wasm")'.dependencies]

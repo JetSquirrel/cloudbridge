@@ -2305,7 +2305,8 @@ pub struct SyncStatus {
     /// How many accounts are configured.
     pub source_count: usize,
     /// When Refresh would next fetch rather than skip: the last sync plus
-    /// the configured freshness window. Nothing fetches on a timer. `None`
+    /// the configured freshness window, which the background schedule
+    /// waits out like the button does. `None`
     /// before the first sync.
     pub next_fetch_at: Option<DateTime<Utc>>,
 }

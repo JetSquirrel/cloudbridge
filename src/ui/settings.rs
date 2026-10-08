@@ -1,5 +1,7 @@
 //! Settings View
 
+#[cfg(not(target_family = "wasm"))]
+use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{button::*, scroll::ScrollableElement, select::*, *};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -62,6 +64,10 @@ pub struct SettingsView {
     demo_running: bool,
     /// Theme picker state
     theme_select: Entity<SelectState<SearchableVec<ThemeItem>>>,
+    /// Whether the OS starts CloudBridge at login, as last read from it;
+    /// `None` when it could not be read.
+    #[cfg(not(target_family = "wasm"))]
+    open_at_login: Option<bool>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -114,8 +120,123 @@ impl SettingsView {
             save_pending: false,
             demo_running: false,
             theme_select,
+            #[cfg(not(target_family = "wasm"))]
+            open_at_login: Self::read_open_at_login(),
             _subscriptions: vec![subscription],
         }
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    fn read_open_at_login() -> Option<bool> {
+        crate::background::login_item::is_enabled()
+            .map_err(|e| tracing::warn!("Could not read the login item: {}", e))
+            .ok()
+    }
+
+    /// Add or remove the login item. The switch shows what the OS reports
+    /// afterwards, so a refusal leaves it where it was.
+    #[cfg(not(target_family = "wasm"))]
+    fn set_open_at_login(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.save_status = None;
+        self.status_generation += 1;
+        cx.spawn(async move |this, cx| {
+            let result = smol::unblock(move || {
+                crate::background::login_item::set_enabled(enabled)?;
+                crate::background::login_item::is_enabled()
+            })
+            .await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(now) => this.open_at_login = Some(now),
+                    Err(e) => {
+                        tracing::error!("Could not change the login item: {}", e);
+                        this.save_status = Some(StatusMessage::Error(format!(
+                            "Could not change Open at login: {e}"
+                        )));
+                        this.status_generation += 1;
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    fn set_background_refresh(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.save_status = None;
+        self.status_generation += 1;
+        self.config.background_refresh = enabled;
+        self.save_config(cx);
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    fn set_alert_notifications(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.save_status = None;
+        self.status_generation += 1;
+        self.config.alert_notifications = enabled;
+        self.save_config(cx);
+    }
+
+    /// The Background section: what keeps running once the window is
+    /// closed. Desktop only — a browser tab stops with its page.
+    #[cfg(not(target_family = "wasm"))]
+    fn render_background(&self, cx: &Context<Self>) -> impl IntoElement {
+        let open_at_login_description = if crate::background::RUNS_WINDOWLESS {
+            "Starts CloudBridge in the menu bar when you log in, without its \
+             window, so alerts keep arriving after a restart."
+        } else {
+            "Starts CloudBridge when you log in, so alerts keep arriving \
+             after a restart."
+        };
+        let refresh_description = if crate::background::RUNS_WINDOWLESS {
+            "While CloudBridge runs, window open or closed, accounts are \
+             checked every 15 minutes and the alert rules run. A period is \
+             only fetched again once the refresh interval has passed."
+        } else {
+            "While CloudBridge is open, accounts are checked every 15 minutes \
+             and the alert rules run. A period is only fetched again once \
+             the refresh interval has passed."
+        };
+
+        div()
+            .v_flex()
+            .gap_4()
+            .child(Self::setting_row(
+                "Open at login",
+                open_at_login_description,
+                Switch::new("open-at-login")
+                    .checked(self.open_at_login.unwrap_or(false))
+                    .disabled(self.open_at_login.is_none())
+                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                        this.set_open_at_login(*checked, cx);
+                    })),
+                cx,
+            ))
+            .child(Self::setting_row(
+                "Refresh in the background",
+                refresh_description,
+                Switch::new("background-refresh")
+                    .checked(self.config.background_refresh)
+                    .disabled(self.saving)
+                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                        this.set_background_refresh(*checked, cx);
+                    })),
+                cx,
+            ))
+            .child(Self::setting_row(
+                "Alert notifications",
+                "Posts a system notification when an alert fires, once per \
+                 alert.",
+                Switch::new("alert-notifications")
+                    .checked(self.config.alert_notifications)
+                    .disabled(self.saving)
+                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                        this.set_alert_notifications(*checked, cx);
+                    })),
+                cx,
+            ))
     }
 
     /// Apply a theme picked in the selector and remember it.
@@ -466,6 +587,13 @@ impl Render for SettingsView {
                     cx,
                 ),
             )
+            // Background
+            .map(|el| {
+                #[cfg(not(target_family = "wasm"))]
+                let el =
+                    el.child(self.render_section("Background", self.render_background(cx), cx));
+                el
+            })
             // Demo data
             .child(
                 self.render_section(

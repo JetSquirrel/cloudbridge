@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **CloudBridge keeps watching with its window closed.** On macOS and
+  Windows it stays in the menu bar (notification area) once the window is
+  closed; the icon's title is the month's spend, with the open-alert count
+  beside it when there are any. Its panel shows the month to date, the
+  month-end forecast, the open alerts and the biggest movers, with Refresh
+  and Open CloudBridge; Quit is in the panel and the icon's menu. Every 15
+  minutes a background schedule fetches the accounts that are due — still
+  waiting out the refresh interval, so it costs what a daily Refresh would —
+  runs the alert rules, and posts a system notification for each alert that
+  fires. **Open at login** (Settings → Background) starts it in the menu bar
+  after a restart, without its window. Linux builds have no tray icon and
+  still quit with their window; the schedule and notifications run while it
+  is open.
 - **Service categories that mean the same thing on every cloud.** Each
   source's products are placed in FOCUS `ServiceCategory` and
   `ServiceSubcategory` on the way into the ledger: Alibaba Cloud's `ecs`,
