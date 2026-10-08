@@ -6,9 +6,12 @@
 //! the menu, which is where Quit lives, since closing the window no longer
 //! quits.
 //!
-//! Icon and menu clicks arrive on callbacks the platform runs; they are
-//! passed over a channel to a GPUI task, which is the only place that
-//! touches the app.
+//! The icon can be taken down and put back while the app runs (Settings →
+//! Background → Keep running in the menu bar). Icon and menu clicks arrive
+//! on callbacks the platform runs, which tray-icon lets a process set only
+//! once; so the callbacks, and the GPUI task they feed over a channel, are
+//! set up on first install and outlive the icon, and act only while one is
+//! installed.
 
 use gpui_kit::component::Root;
 use gpui_kit::*;
@@ -38,7 +41,17 @@ pub(super) struct MenuBar {
 
 impl Global for MenuBar {}
 
-pub(super) fn install(status: Entity<Status>, cx: &mut App) {
+/// Marks that the platform callbacks and the task reading them are set up.
+struct EventPump;
+
+impl Global for EventPump {}
+
+/// Put the icon in the menu bar, unless it is there already. Returns
+/// whether there is one afterwards.
+pub(super) fn install(status: Entity<Status>, cx: &mut App) -> bool {
+    if cx.has_global::<MenuBar>() {
+        return true;
+    }
     let menu = Menu::new();
     let items = [
         MenuItem::with_id(MENU_OPEN, "Open CloudBridge", true, None),
@@ -64,13 +77,61 @@ pub(super) fn install(status: Entity<Status>, cx: &mut App) {
     {
         Ok(icon) => icon,
         Err(e) => {
-            // Without an icon there is no way back to a closed window, nor
-            // a Quit to reach: fall back to quitting with the window.
             tracing::error!("Could not add the menu bar icon: {}", e);
-            cx.set_quit_mode(QuitMode::LastWindowClosed);
-            return;
+            return false;
         }
     };
+
+    ensure_event_pump(cx);
+
+    let observer = cx.observe(&status, |status, cx| show_status(&status, cx));
+
+    cx.set_global(MenuBar {
+        icon,
+        panel: None,
+        _status_observer: observer,
+    });
+    // The observer fires on the next change; the title should not wait.
+    show_status(&status, cx);
+    true
+}
+
+/// Take the icon out of the menu bar, and close its panel if it is open.
+/// A no-op when there is none.
+pub(super) fn uninstall(cx: &mut App) {
+    if !cx.has_global::<MenuBar>() {
+        return;
+    }
+    let bar = cx.remove_global::<MenuBar>();
+    if let Some(open) = bar.panel {
+        let _ = open.update(cx, |_, window, _| window.remove_window());
+    }
+    // Dropping the icon removes it from the menu bar.
+    drop(bar.icon);
+}
+
+/// The month's spend as the icon's title, and the tooltip.
+fn show_status(status: &Entity<Status>, cx: &mut App) {
+    let Some(summary) = &status.read(cx).summary else {
+        return;
+    };
+    let (title, tooltip) = (summary.title(), summary.tooltip());
+    tracing::debug!("Menu bar title: {title}");
+    let Some(bar) = cx.try_global::<MenuBar>() else {
+        return;
+    };
+    bar.icon.set_title(Some(format!(" {title}")));
+    if let Err(e) = bar.icon.set_tooltip(Some(tooltip)) {
+        tracing::warn!("Could not set the menu bar tooltip: {}", e);
+    }
+}
+
+/// Route icon and menu clicks to the app, once per process.
+fn ensure_event_pump(cx: &mut App) {
+    if cx.has_global::<EventPump>() {
+        return;
+    }
+    cx.set_global(EventPump);
 
     let (sender, receiver) = async_channel::unbounded();
     let icon_sender = sender.clone();
@@ -91,6 +152,8 @@ pub(super) fn install(status: Entity<Status>, cx: &mut App) {
     cx.spawn(async move |cx| {
         while let Ok(input) = receiver.recv().await {
             cx.update(|cx| match input {
+                // A click that raced the icon's removal.
+                _ if !cx.has_global::<MenuBar>() => {}
                 Input::IconClicked => toggle_panel(cx),
                 Input::Menu(id) => match id.as_str() {
                     MENU_OPEN => crate::desktop::show_main_window(None, cx),
@@ -102,26 +165,6 @@ pub(super) fn install(status: Entity<Status>, cx: &mut App) {
         }
     })
     .detach();
-
-    let observer = cx.observe(&status, |status, cx| {
-        let status = status.read(cx);
-        let Some(summary) = &status.summary else {
-            return;
-        };
-        let (title, tooltip) = (summary.title(), summary.tooltip());
-        tracing::debug!("Menu bar title: {title}");
-        let bar = cx.global::<MenuBar>();
-        bar.icon.set_title(Some(format!(" {title}")));
-        if let Err(e) = bar.icon.set_tooltip(Some(tooltip)) {
-            tracing::warn!("Could not set the menu bar tooltip: {}", e);
-        }
-    });
-
-    cx.set_global(MenuBar {
-        icon,
-        panel: None,
-        _status_observer: observer,
-    });
 }
 
 fn toggle_panel(cx: &mut App) {

@@ -129,9 +129,11 @@ pub fn run() {
 
     tracing::info!("Starting CloudBridge...");
 
-    // Closing the window leaves the app in the menu bar where there is one;
-    // the menu's Quit is what ends it. Elsewhere it quits with the window.
-    let quit_mode = if crate::background::RUNS_WINDOWLESS {
+    // Closing the window leaves the app in the menu bar where there is one
+    // and it is wanted; the menu's Quit is what ends it. Elsewhere it quits
+    // with the window. `background::set_menu_bar` keeps this in step when
+    // the setting changes or the icon cannot be added.
+    let quit_mode = if crate::background::menu_bar_enabled() {
         QuitMode::Explicit
     } else {
         QuitMode::LastWindowClosed
@@ -178,7 +180,9 @@ pub fn run() {
             {
                 main.handle = None;
                 #[cfg(target_os = "macos")]
-                crate::background::macos::set_dock_icon_visible(false);
+                if crate::background::in_menu_bar(cx) {
+                    crate::background::macos::set_dock_icon_visible(false);
+                }
             }
         })
         .detach();

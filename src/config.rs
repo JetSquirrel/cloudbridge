@@ -68,6 +68,10 @@ pub struct AppConfig {
     /// Post a system notification when an alert fires.
     #[serde(default = "default_true")]
     pub alert_notifications: bool,
+    /// Keep running in the menu bar (notification area on Windows) once
+    /// the window closes. Off, closing the window quits, as on Linux.
+    #[serde(default = "default_true")]
+    pub keep_in_menu_bar: bool,
 }
 
 fn default_true() -> bool {
@@ -92,6 +96,7 @@ impl Default for AppConfig {
             scan_regions: None,
             background_refresh: true,
             alert_notifications: true,
+            keep_in_menu_bar: true,
         }
     }
 }

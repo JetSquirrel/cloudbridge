@@ -172,6 +172,15 @@ impl SettingsView {
     }
 
     #[cfg(not(target_family = "wasm"))]
+    fn set_keep_in_menu_bar(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.save_status = None;
+        self.status_generation += 1;
+        self.config.keep_in_menu_bar = enabled;
+        self.save_config(cx);
+        crate::background::set_menu_bar(enabled, cx);
+    }
+
+    #[cfg(not(target_family = "wasm"))]
     fn set_alert_notifications(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.save_status = None;
         self.status_generation += 1;
@@ -183,21 +192,24 @@ impl SettingsView {
     /// closed. Desktop only — a browser tab stops with its page.
     #[cfg(not(target_family = "wasm"))]
     fn render_background(&self, cx: &Context<Self>) -> impl IntoElement {
-        let open_at_login_description = if crate::background::RUNS_WINDOWLESS {
+        let windowless = crate::background::RUNS_WINDOWLESS;
+        let open_at_login_description = if windowless && self.config.keep_in_menu_bar {
             "Starts CloudBridge in the menu bar when you log in, without its \
              window, so alerts keep arriving after a restart."
         } else {
             "Starts CloudBridge when you log in, so alerts keep arriving \
              after a restart."
         };
-        let refresh_description = if crate::background::RUNS_WINDOWLESS {
-            "While CloudBridge runs, window open or closed, accounts are \
-             checked every 15 minutes and the alert rules run. A period is \
-             only fetched again once the refresh interval has passed."
+        let refresh_description = if windowless && self.config.keep_in_menu_bar {
+            "While CloudBridge runs, window open or closed, it fetches each \
+             account once its refresh interval has passed and runs the alert \
+             rules. It looks for a due account every 15 minutes, without \
+             contacting the provider."
         } else {
-            "While CloudBridge is open, accounts are checked every 15 minutes \
-             and the alert rules run. A period is only fetched again once \
-             the refresh interval has passed."
+            "While CloudBridge is open, it fetches each account once its \
+             refresh interval has passed and runs the alert rules. It looks \
+             for a due account every 15 minutes, without contacting the \
+             provider."
         };
 
         div()
@@ -214,6 +226,28 @@ impl SettingsView {
                     })),
                 cx,
             ))
+            .when(windowless, |el| {
+                el.child(Self::setting_row(
+                    "Keep running in the menu bar",
+                    if cfg!(target_os = "windows") {
+                        "Closing the window leaves CloudBridge in the \
+                         notification area, showing the month's spend, so \
+                         refreshes and alerts carry on. Off, closing the \
+                         window quits."
+                    } else {
+                        "Closing the window leaves CloudBridge in the menu \
+                         bar, showing the month's spend, so refreshes and \
+                         alerts carry on. Off, closing the window quits."
+                    },
+                    Switch::new("keep-in-menu-bar")
+                        .checked(self.config.keep_in_menu_bar)
+                        .disabled(self.saving)
+                        .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                            this.set_keep_in_menu_bar(*checked, cx);
+                        })),
+                    cx,
+                ))
+            })
             .child(Self::setting_row(
                 "Refresh in the background",
                 refresh_description,

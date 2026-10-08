@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Settings → Background → Keep running in the menu bar.** On by default,
+  as before. Off, the menu bar icon goes at once, closing the window quits,
+  and a login launch opens the window instead of starting hidden.
+
+### Changed
+- The background refresh's description says what the 15 minutes is: a
+  local check for accounts whose refresh interval has passed, which sends
+  nothing to a provider. Each account is still fetched once per interval.
+
+### Fixed
+- The app icon had a white square behind it, visible as a rim in the Dock
+  and Finder. It is now transparent outside the artwork and sized to
+  macOS's icon grid.
+
 ## [0.5.0] - 2026-10-08
 
 CloudBridge keeps watching after its window closes: it lives in the menu
