@@ -11,7 +11,7 @@
 //! share (every Amplify branch called `main`) is settled by region, and
 //! left unmatched rather than guessed when that does not settle it.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde_json::Value;
 
@@ -36,6 +36,77 @@ pub const OWNER_TAG_KEYS: &[&str] = &[
 /// would list every one of them; its resources are matched against the
 /// bill, and judged by nothing else.
 const TAGGED_SOURCES: &[&str] = &["AWS"];
+
+/// The sources the findings are written for: stopped instances, idle
+/// addresses and owner tags are AWS's notions. Another source's scan is
+/// still matched against the bill, and is listed by
+/// [`inventory_by_source`] so it does not vanish from the page.
+pub const JUDGED_SOURCES: &[&str] = &["AWS"];
+
+/// One source's resources, counted by type.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceInventory {
+    pub source: String,
+    pub total: usize,
+    /// Most numerous first.
+    pub types: Vec<TypeCount>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeCount {
+    pub resource_type: String,
+    pub count: usize,
+    /// Up to [`SAMPLE_NAMES`] of them, by name, to say which.
+    pub names: Vec<String>,
+}
+
+/// How many names a type is illustrated with.
+pub const SAMPLE_NAMES: usize = 3;
+
+/// The inventory by source, then by type: what a scan found, whether or
+/// not anything on it is a finding.
+pub fn inventory_by_source(resources: &[InventoryResource]) -> Vec<SourceInventory> {
+    let mut by_source: BTreeMap<&str, BTreeMap<&str, Vec<&InventoryResource>>> = BTreeMap::new();
+    for resource in resources {
+        by_source
+            .entry(resource.provider.as_str())
+            .or_default()
+            .entry(resource.resource_type.as_str())
+            .or_default()
+            .push(resource);
+    }
+    by_source
+        .into_iter()
+        .map(|(source, types)| {
+            let mut types: Vec<TypeCount> = types
+                .into_iter()
+                .map(|(resource_type, of_type)| {
+                    let mut names: Vec<String> = of_type
+                        .iter()
+                        .map(|r| r.name.clone().unwrap_or_else(|| r.resource_id.clone()))
+                        .collect();
+                    names.sort();
+                    names.truncate(SAMPLE_NAMES);
+                    TypeCount {
+                        resource_type: resource_type.to_string(),
+                        count: of_type.len(),
+                        names,
+                    }
+                })
+                .collect();
+            types.sort_by(|a, b| {
+                b.count
+                    .cmp(&a.count)
+                    .then_with(|| a.resource_type.cmp(&b.resource_type))
+            });
+            SourceInventory {
+                source: source.to_string(),
+                total: types.iter().map(|t| t.count).sum(),
+                types,
+            }
+        })
+        .collect()
+}
 
 /// Tags a stack, app or cluster puts on what it manages: such a resource
 /// has an owner even without an owner tag — whoever owns the stack.
@@ -559,6 +630,37 @@ mod tests {
         assert!(!report.priced);
         assert_eq!(report.findings.len(), 2);
         assert_eq!(report.unclaimed_free, 0);
+    }
+
+    #[test]
+    fn the_inventory_is_counted_by_source_and_type() {
+        let cloudflare = |id: &str, kind: &str, name: &str| {
+            let mut r = resource(id, kind, "global");
+            r.provider = "Cloudflare".to_string();
+            r.name = Some(name.to_string());
+            r
+        };
+        let inventory = inventory_by_source(&[
+            cloudflare("w1", "worker_script", "ticker"),
+            cloudflare("w2", "worker_script", "api"),
+            cloudflare("w3", "worker_script", "cron"),
+            cloudflare("w4", "worker_script", "auth"),
+            cloudflare("b1", "r2_bucket", "assets"),
+            resource("arn:aws:s3:::logs", "s3:bucket", "global"),
+        ]);
+        assert_eq!(
+            inventory
+                .iter()
+                .map(|s| (s.source.as_str(), s.total))
+                .collect::<Vec<_>>(),
+            [("AWS", 1), ("Cloudflare", 5)]
+        );
+        let workers = &inventory[1].types[0];
+        assert_eq!(workers.resource_type, "worker_script");
+        assert_eq!(workers.count, 4);
+        assert_eq!(workers.names, ["api", "auth", "cron"]);
+        // A resource with no name is named by its id.
+        assert_eq!(inventory[0].types[0].names, ["arn:aws:s3:::logs"]);
     }
 
     /// A Cloudflare resource has no owner tags to miss, so it is never

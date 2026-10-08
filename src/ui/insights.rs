@@ -21,7 +21,9 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use super::{data, fmt, theme};
-use crate::analytics::insights::{insights, resource_key, OWNER_TAG_KEYS};
+use crate::analytics::insights::{
+    insights, inventory_by_source, resource_key, SourceInventory, JUDGED_SOURCES, OWNER_TAG_KEYS,
+};
 use crate::cloud::BillingPeriod;
 use crate::ingest;
 use crate::ledger::query;
@@ -48,6 +50,8 @@ pub struct InsightsData {
     pub period_label: String,
     pub report: InsightsReport,
     pub scope: Option<InventoryScope>,
+    /// What the scan found, by source and type.
+    pub inventory: Vec<SourceInventory>,
 }
 
 /// Read the inventory and the period's resource costs, and judge them.
@@ -63,6 +67,7 @@ pub fn load_insights() -> Result<InsightsData> {
         period_label: period,
         report,
         scope,
+        inventory: inventory_by_source(&resources),
     })
 }
 
@@ -411,14 +416,36 @@ impl InsightsView {
             let all = crate::model::AWS_DEFAULT_REGIONS
                 .iter()
                 .all(|r| scope.regions.iter().any(|s| s == r));
+            // Regions are AWS's; a source scanned whole has none to name.
+            let regions: Vec<&str> = scope
+                .regions
+                .iter()
+                .map(String::as_str)
+                .filter(|r| *r != "global")
+                .collect();
+            let by_source: Vec<String> = d
+                .inventory
+                .iter()
+                .map(|source| {
+                    if source.source == "AWS" {
+                        format!(
+                            "{} AWS in {}",
+                            source.total,
+                            if all {
+                                "all regions".to_string()
+                            } else {
+                                regions.join(", ")
+                            }
+                        )
+                    } else {
+                        format!("{} {}", source.total, source.source)
+                    }
+                })
+                .collect();
             parts.push(format!(
-                "{} resources in {}",
+                "{} resources: {}",
                 report.resources,
-                if all {
-                    "all regions".to_string()
-                } else {
-                    scope.regions.join(", ")
-                }
+                by_source.join(", ")
             ));
             if report.described < report.resources {
                 // Stopped instances can only be told from configuration.
@@ -523,6 +550,83 @@ impl InsightsView {
             )
             .when_some(footnote, |el, note| el.child(theme::caption(cx, note)))
             .into_any_element()
+    }
+
+    /// A source the findings are not written for, listed by type, so its
+    /// scan shows on the page rather than only in a resource count.
+    fn render_inventory(&self, source: &SourceInventory, cx: &Context<Self>) -> impl IntoElement {
+        theme::card(cx)
+            .w_full()
+            .p_5()
+            .v_flex()
+            .gap_4()
+            .child(
+                div()
+                    .v_flex()
+                    .gap_1()
+                    // `section_title` takes a fixed string; this one
+                    // names the source, so it is set the same way by hand.
+                    .child(
+                        div()
+                            .text_base()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme::text_primary(cx))
+                            .child(inventory_title(&source.source)),
+                    )
+                    .child(theme::caption(
+                        cx,
+                        format!(
+                            "{} resources from the last scan, by type. No findings are \
+                             written for {} yet; its spend is on the Overview and its \
+                             account's page.",
+                            source.total, source.source
+                        ),
+                    )),
+            )
+            .child(
+                div()
+                    .v_flex()
+                    .child(
+                        div()
+                            .h_flex()
+                            .items_center()
+                            .gap_4()
+                            .pb_2()
+                            .child(theme::header_cell(cx, "TYPE").w_56())
+                            .child(theme::header_cell(cx, "COUNT").w_16().text_right())
+                            .child(theme::header_cell(cx, "INCLUDING").flex_1().min_w_0()),
+                    )
+                    .children(source.types.iter().map(|kind| {
+                        let more = kind.count.saturating_sub(kind.names.len());
+                        let mut names = kind.names.join(", ");
+                        if more > 0 {
+                            names.push_str(&format!(" and {more} more"));
+                        }
+                        div()
+                            .h_flex()
+                            .items_center()
+                            .gap_4()
+                            .py_2()
+                            .border_t_1()
+                            .border_color(theme::card_border(cx))
+                            .child(
+                                div()
+                                    .w_56()
+                                    .child(type_label(&source.source, &kind.resource_type)),
+                            )
+                            .child(div().w_16().text_right().child(kind.count.to_string()))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .text_sm()
+                                    .text_color(theme::text_muted(cx))
+                                    .child(names),
+                            )
+                    })),
+            )
     }
 
     /// Said once, above the findings, when the bill names no resources:
@@ -939,6 +1043,35 @@ fn render_row(finding: &InsightFinding, priced: bool, currency: &str, cx: &App) 
         )
 }
 
+/// The inventory card's title for a source.
+fn inventory_title(source: &str) -> String {
+    format!("{source} resources")
+}
+
+/// A resource type as a person calls it: Cloudflare's plugin names its
+/// types in snake case (`worker_script`), the product names them Workers.
+/// Anything not listed keeps the scanner's own name.
+fn type_label(source: &str, resource_type: &str) -> String {
+    let named = match (source, resource_type) {
+        ("Cloudflare", "account") => "Accounts",
+        ("Cloudflare", "zone") => "Zones",
+        ("Cloudflare", "dns_record") => "DNS records",
+        ("Cloudflare", "worker_script") => "Workers",
+        ("Cloudflare", "worker_route") => "Worker routes",
+        ("Cloudflare", "worker_domain") => "Worker custom domains",
+        ("Cloudflare", "durable_object_namespace") => "Durable Object namespaces",
+        ("Cloudflare", "durable_object") => "Durable Objects",
+        ("Cloudflare", "r2_bucket") => "R2 buckets",
+        ("Cloudflare", "kv_namespace") => "KV namespaces",
+        ("Cloudflare", "queue") => "Queues",
+        ("Cloudflare", "d1_database") => "D1 databases",
+        ("Cloudflare", "secret_store") => "Secrets Stores",
+        ("Cloudflare", "secret_store_secret") => "Secrets",
+        _ => return resource_type.to_string(),
+    };
+    named.to_string()
+}
+
 fn stat_label(kind: InsightKind) -> &'static str {
     match kind {
         InsightKind::StoppedInstance => "STOPPED INSTANCES",
@@ -1016,6 +1149,12 @@ impl Render for InsightsView {
                         .children(KINDS.iter().map(|kind| self.render_kind(d, *kind, cx)))
                     }
                 })
+                .children(
+                    d.inventory
+                        .iter()
+                        .filter(|source| !JUDGED_SOURCES.contains(&source.source.as_str()))
+                        .map(|source| self.render_inventory(source, cx)),
+                )
                 .into_any_element()
         } else if let Some(error) = &self.error {
             div()
