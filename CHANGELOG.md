@@ -85,6 +85,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rows are now kept when anything was consumed, with the consumed quantity
   beside a cost of zero. Replay normalization on the Accounts page rebuilds
   months already fetched, without fetching them again.
+- **A Cloudflare bill split by resource.** With Account Analytics · Read on
+  the token, each day's bill row — R2 Class A and B operations and
+  storage, Workers, D1 rows and storage, Durable Object requests,
+  duration, rows and storage — is divided across the buckets, Workers,
+  databases and namespaces that used it, in proportion to the GraphQL
+  Analytics API's per-resource usage that day. The split rows add up to
+  the bill and are marked as estimates; a meter the analytics cannot
+  split, or a token without the permission, keeps its row whole at the
+  account. Insights' Cloudflare card shows each type's and each
+  resource's cost and usage this period, costliest first — the namespace
+  behind a runaway, not just "Durable Objects". Only R2's service names
+  are checked against a real bill so far; the others follow Cloudflare's
+  pricing pages, and a name that does not match is left unsplit.
 - **Insights opens by type, then by resource.** Each kind of finding, and
   each source's inventory, is a list of types with their counts and cost;
   a type lists its resources only when opened, fifty at a time. An AWS

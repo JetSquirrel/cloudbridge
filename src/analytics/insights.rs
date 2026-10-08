@@ -212,7 +212,9 @@ pub fn insights(
 
     // Without a resource-level bill nothing has a price, so "costs
     // nothing" cannot be told from "not priced": list them all.
-    let priced = !costs.is_empty();
+    let priced = costs
+        .iter()
+        .any(|cost| JUDGED_SOURCES.contains(&cost.provider.as_str()));
     let mut findings = Vec::new();
     let mut unclaimed_free = 0;
     for (i, resource) in resources.iter().enumerate() {
@@ -320,6 +322,7 @@ pub fn insights(
         priced,
         matched_cost,
         billed_cost,
+        resource_cost: cost_of,
     }
 }
 
@@ -765,6 +768,28 @@ mod tests {
         assert!(report.findings.is_empty(), "{:?}", kinds(&report));
         assert_eq!(report.unclaimed_free, 0);
         assert_eq!(report.matched_cost, 0.75);
+    }
+
+    /// A split Cloudflare bill names Cloudflare's resources; it says
+    /// nothing about what AWS's cost, whose findings stay unpriced — and
+    /// so listed — and the bucket still carries its share.
+    #[test]
+    fn another_source_s_resource_bill_does_not_price_aws() {
+        let mut bucket = resource("acct/r2/aiops", "r2_bucket", "global");
+        bucket.provider = "Cloudflare".to_string();
+        let mut bucket_cost = cost("acct/r2/aiops", "global", 0.36);
+        bucket_cost.provider = "Cloudflare".to_string();
+        bucket_cost.region = None;
+
+        let report = insights(
+            &[resource("arn:aws:s3:::logs", "s3:bucket", "global"), bucket],
+            &[bucket_cost],
+            None,
+            OWNER_TAG_KEYS,
+        );
+        assert!(!report.priced);
+        assert_eq!(kinds(&report), [(InsightKind::Unclaimed, "logs", 0.0)]);
+        assert_eq!(report.resource_cost, [0.0, 0.36]);
     }
 
     #[test]

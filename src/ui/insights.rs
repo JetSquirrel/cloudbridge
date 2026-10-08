@@ -31,7 +31,7 @@ use crate::cloud::BillingPeriod;
 use crate::ingest;
 use crate::ledger::query;
 use crate::model::{
-    InsightFinding, InsightKind, InsightsReport, InventoryResource, InventoryScope,
+    InsightFinding, InsightKind, InsightsReport, InventoryResource, InventoryScope, ResourceUsage,
 };
 use crate::ui::theme::CardOutline as _;
 
@@ -62,6 +62,9 @@ pub struct InsightsData {
     /// Each kind's findings by resource type, what a card lists until a
     /// type is opened.
     pub finding_groups: Vec<(InsightKind, Vec<FindingGroup>)>,
+    /// This period's usage by resource, keyed as the inventory meets the
+    /// bill: `(provider, resource_key)`.
+    pub usage: HashMap<(String, String), Vec<ResourceUsage>>,
 }
 
 /// Read the inventory and the period's resource costs, and judge them.
@@ -72,6 +75,16 @@ pub fn load_insights() -> Result<InsightsData> {
     let scope = query::inventory_scope()?;
     let costs = query::resource_usage_costs(&period)?;
     let report = insights(&resources, &costs, scope.as_ref(), OWNER_TAG_KEYS);
+    let mut usage: HashMap<(String, String), Vec<ResourceUsage>> = HashMap::new();
+    for row in query::resource_usage_quantities(&period)? {
+        usage
+            .entry((
+                row.provider.clone(),
+                resource_key(&row.resource_id).to_string(),
+            ))
+            .or_default()
+            .push(row);
+    }
     let finding_groups = KINDS
         .iter()
         .map(|kind| (*kind, findings_by_type(&report.findings, *kind)))
@@ -84,6 +97,7 @@ pub fn load_insights() -> Result<InsightsData> {
         inventory: inventory_by_source(&resources),
         resources,
         finding_groups,
+        usage,
     })
 }
 
@@ -722,8 +736,9 @@ impl InsightsView {
                         cx,
                         format!(
                             "{} resources from the last scan, by type; open a type to list \
-                             them. No findings are written for {} yet; its spend is on the \
-                             Overview and its account's page.",
+                             them. This period's cost is the bill split by each resource's \
+                             share of the usage — an estimate, adding up to the bill. No \
+                             findings are written for {} yet.",
                             source.total, source.source
                         ),
                     )),
@@ -739,50 +754,96 @@ impl InsightsView {
                             .pb_2()
                             .child(theme::header_cell(cx, "TYPE").flex_1().min_w_0())
                             .child(theme::header_cell(cx, "RESOURCES").w_24().text_right())
+                            .child(theme::header_cell(cx, "THIS PERIOD").w_24().text_right())
                             .child(theme::header_cell(cx, "INCLUDING").w_96()),
                     )
-                    .children(source.types.iter().map(|kind| {
-                        let key = group_key(&scope, &kind.resource_type);
-                        let shown = self.expanded.get(&key).copied();
-                        let more = kind.count.saturating_sub(kind.names.len());
-                        let mut names = kind.names.join(", ");
-                        if more > 0 {
-                            names.push_str(&format!(" and {more} more"));
-                        }
-                        div()
-                            .v_flex()
-                            .child(
-                                self.render_group_row(
-                                    &key,
-                                    type_label(&source.source, &kind.resource_type),
-                                    kind.count,
-                                    div()
-                                        .w_96()
-                                        .whitespace_nowrap()
-                                        .text_ellipsis()
-                                        .text_sm()
-                                        .text_color(theme::text_muted(cx))
-                                        .child(names),
-                                    shown.is_some(),
-                                    cx,
-                                ),
-                            )
-                            .when_some(shown, |el, shown| {
-                                el.child(
-                                    div()
-                                        .pl_6()
-                                        .v_flex()
-                                        .children(
-                                            kind.members
-                                                .iter()
-                                                .take(shown)
-                                                .map(|&i| render_resource_row(&d.resources[i], cx)),
-                                        )
-                                        .child(self.render_more(&key, kind.count, shown, cx)),
+                    .children(self.costed_types(d, source).into_iter().map(
+                        |(kind, cost, members)| {
+                            let key = group_key(&scope, &kind.resource_type);
+                            let shown = self.expanded.get(&key).copied();
+                            let more = kind.count.saturating_sub(kind.names.len());
+                            let mut names = kind.names.join(", ");
+                            if more > 0 {
+                                names.push_str(&format!(" and {more} more"));
+                            }
+                            div()
+                                .v_flex()
+                                .child(
+                                    self.render_group_row(
+                                        &key,
+                                        type_label(&source.source, &kind.resource_type),
+                                        kind.count,
+                                        div()
+                                            .h_flex()
+                                            .gap_4()
+                                            .child(
+                                                div()
+                                                    .w_24()
+                                                    .text_right()
+                                                    .child(fmt::amount(cost, &d.currency)),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w_96()
+                                                    .whitespace_nowrap()
+                                                    .text_ellipsis()
+                                                    .text_sm()
+                                                    .text_color(theme::text_muted(cx))
+                                                    .child(names),
+                                            ),
+                                        shown.is_some(),
+                                        cx,
+                                    ),
                                 )
-                            })
-                    })),
+                                .when_some(shown, |el, shown| {
+                                    el.child(
+                                        div()
+                                            .pl_6()
+                                            .v_flex()
+                                            .children(members.iter().take(shown).map(|&i| {
+                                                let resource = &d.resources[i];
+                                                let key = (
+                                                    resource.provider.clone(),
+                                                    resource_key(&resource.resource_id).to_string(),
+                                                );
+                                                render_resource_row(
+                                                    resource,
+                                                    d.usage.get(&key),
+                                                    d.report.resource_cost.get(i).copied(),
+                                                    &d.currency,
+                                                    cx,
+                                                )
+                                            }))
+                                            .child(self.render_more(&key, kind.count, shown, cx)),
+                                    )
+                                })
+                        },
+                    )),
             )
+    }
+
+    /// A source's types with what the bill charged each this period, and
+    /// their resources in the order to list them: costliest first, so the
+    /// bucket or namespace behind a spike heads its type, and the type
+    /// heads the card. Unpriced, they keep the scan's order.
+    fn costed_types<'a>(
+        &self,
+        d: &InsightsData,
+        source: &'a SourceInventory,
+    ) -> Vec<(&'a crate::analytics::insights::TypeCount, f64, Vec<usize>)> {
+        let cost_of = |i: usize| d.report.resource_cost.get(i).copied().unwrap_or(0.0);
+        let mut types: Vec<_> = source
+            .types
+            .iter()
+            .map(|kind| {
+                let mut members = kind.members.clone();
+                members.sort_by(|&a, &b| cost_of(b).total_cmp(&cost_of(a)));
+                let cost = members.iter().map(|&i| cost_of(i)).sum::<f64>();
+                (kind, cost, members)
+            })
+            .collect();
+        types.sort_by(|a, b| b.1.total_cmp(&a.1));
+        types
     }
 
     /// Said once, above the findings, when the bill names no resources:
@@ -1192,9 +1253,16 @@ fn render_row(finding: &InsightFinding, priced: bool, currency: &str, cx: &App) 
         )
 }
 
-/// One scanned resource under an opened inventory type: its name, the
-/// scan's id for it, and where it is.
-fn render_resource_row(resource: &InventoryResource, cx: &App) -> Div {
+/// One scanned resource under an opened inventory type: its name, what it
+/// used this period (or, with no usage on the bill, the scan's id for it),
+/// where it is, and what the bill charged it.
+fn render_resource_row(
+    resource: &InventoryResource,
+    usage: Option<&Vec<ResourceUsage>>,
+    cost: Option<f64>,
+    currency: &str,
+    cx: &App,
+) -> Div {
     let label = resource
         .name
         .clone()
@@ -1226,7 +1294,10 @@ fn render_resource_row(resource: &InventoryResource, cx: &App) -> Div {
                         .text_color(theme::text_muted(cx))
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .child(resource.resource_id.clone()),
+                        .child(match usage {
+                            Some(usage) => usage_line(usage),
+                            None => resource.resource_id.clone(),
+                        }),
                 ),
         )
         .child(
@@ -1236,6 +1307,44 @@ fn render_resource_row(resource: &InventoryResource, cx: &App) -> Div {
                 .text_color(theme::text_muted(cx))
                 .child(resource.region.clone().unwrap_or_else(|| "—".to_string())),
         )
+        .child(
+            div()
+                .w_24()
+                .text_right()
+                .text_sm()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(fmt::amount(cost.unwrap_or(0.0), currency)),
+        )
+}
+
+/// A resource's usage this period in one line: each service the bill
+/// split onto it, without the allowance note in its name, and how much.
+fn usage_line(usage: &[ResourceUsage]) -> String {
+    usage
+        .iter()
+        .map(|row| {
+            let service = row
+                .service
+                .split(" (")
+                .next()
+                .unwrap_or(&row.service)
+                .trim();
+            let amount = if row.quantity < 1.0 {
+                format!("{:.2}", row.quantity)
+            } else {
+                fmt::quantity(row.quantity)
+            };
+            match row
+                .unit
+                .as_deref()
+                .filter(|unit| !unit.is_empty() && *unit != "Count")
+            {
+                Some(unit) => format!("{service} {amount} {unit}"),
+                None => format!("{service} {amount}"),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// The inventory card's title for a source.

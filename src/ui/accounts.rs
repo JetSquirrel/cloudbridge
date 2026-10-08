@@ -57,8 +57,9 @@ fn setup_hint(source_id: &str) -> Option<(&'static str, &'static str)> {
             "alibaba-cloud",
         )),
         "Cloudflare" => Some((
-            "An API token with Account · Billing · Read, and the account ID from \
-             the dashboard. Pay-as-you-go accounts only; usage arrives per day.",
+            "An API token with Account · Billing · Read — and Account Analytics · \
+             Read to split the bill by bucket, Worker, D1 database and Durable \
+             Object — and the account ID. Pay-as-you-go accounts only.",
             "cloudflare",
         )),
         "DeepSeek" => Some((

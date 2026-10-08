@@ -19,6 +19,7 @@ use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use serde::Deserialize;
 use std::collections::{BTreeSet, HashSet};
 
+use super::cloudflare_analytics::{self as analytics, Meter, PART_ANALYTICS_PREFIX};
 use super::raw::RawPart;
 use super::{BillingPeriod, BillingSource, Fetched, Normalized, RawBatch};
 use crate::ledger::Charge;
@@ -99,6 +100,55 @@ impl CloudflareService {
         Ok(body)
     }
 
+    /// POST one GraphQL Analytics request and return the body unchanged.
+    /// GraphQL reports a refused field or a missing permission in the
+    /// body's `errors`, not the status, so the body is kept either way.
+    fn graphql(&self, body: &str) -> Result<String> {
+        let agent = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .timeout_global(Some(std::time::Duration::from_secs(30)))
+            .build()
+            .new_agent();
+        agent
+            .post(&format!("{API_BASE}/graphql"))
+            .header("Content-Type", "application/json")
+            .header("Authorization", &format!("Bearer {}", self.api_token))
+            .send(body)
+            .map_err(|e| anyhow!("Cloudflare GraphQL request failed: {}", e))?
+            .into_body()
+            .read_to_string()
+            .map_err(|e| anyhow!("Failed to read Cloudflare GraphQL response: {}", e))
+    }
+
+    /// The per-resource usage behind the meters the bill names, over the
+    /// period's days so far: one request per dataset, each stored as it
+    /// came back. Never fails the fetch — a bill whose split cannot be
+    /// read is still the bill, kept whole at the account.
+    fn analytics_parts(&self, period: &BillingPeriod, usage_parts: &[RawPart]) -> Vec<RawPart> {
+        let meters = meters_in(usage_parts);
+        let start = period.start();
+        let tomorrow = Utc::now().date_naive().succ_opt().expect("a next day");
+        let end = period.end_exclusive().min(tomorrow);
+        if meters.is_empty() || start >= end {
+            return Vec::new();
+        }
+        analytics::datasets_for(&meters)
+            .into_iter()
+            .map(|dataset| {
+                let request = analytics::request_body(dataset, &self.account_id, start, end);
+                let body = self.graphql(&request).unwrap_or_else(|e| {
+                    serde_json::json!({ "data": null, "errors": [{ "message": e.to_string() }] })
+                        .to_string()
+                });
+                RawPart::new(
+                    format!("{PART_ANALYTICS_PREFIX}{}", dataset.key),
+                    request,
+                    body,
+                )
+            })
+            .collect()
+    }
+
     fn info_raw(&self) -> Result<String> {
         self.get("/billable-usage/info")
     }
@@ -165,6 +215,8 @@ impl BillingSource for CloudflareService {
             ));
         }
 
+        let analytics = self.analytics_parts(period, &parts);
+        parts.extend(analytics);
         Ok(Fetched::parts_only(parts))
     }
 
@@ -318,10 +370,39 @@ pub fn normalize(batch: &RawBatch) -> Result<Normalized> {
         }
     }
 
+    // Split each day-row across the resources that ran it, where the
+    // batch carries the analytics to go by.
+    let charges = analytics::allocate(charges, &analytics::usage_from(&batch.parts));
+
     Ok(Normalized {
         charges,
         balances: Vec::new(),
     })
+}
+
+/// The splittable meters a fetch's bill payloads name with usage on them:
+/// what decides which analytics are worth asking for.
+fn meters_in(parts: &[RawPart]) -> BTreeSet<Meter> {
+    parts
+        .iter()
+        .filter(|part| part.name.starts_with(PART_USAGE_PREFIX))
+        .filter_map(|part| serde_json::from_str::<UsageResponse>(&part.body).ok())
+        .flat_map(|response| response.result.unwrap_or_default())
+        .filter(|row| {
+            row.billed_cost.unwrap_or(0.0) != 0.0
+                || row
+                    .consumed_quantity
+                    .or(row.pricing_quantity)
+                    .unwrap_or(0.0)
+                    != 0.0
+        })
+        .filter_map(|row| {
+            analytics::meter_of(
+                row.service_family_name.as_deref(),
+                row.service_name.as_deref(),
+            )
+        })
+        .collect()
 }
 
 fn parse_time(value: &Option<String>, field: &str) -> Result<DateTime<Utc>> {
