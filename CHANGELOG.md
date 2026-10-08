@@ -78,6 +78,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `service_category` for models should read `x_model`
 
 ### Fixed
+- **Cloudflare usage inside the free allowance reaches the ledger.** A row
+  that billed nothing and priced nothing was dropped, and a month inside
+  the allowance prices nothing at all — so an account's whole Cloudflare
+  bill read as empty. It is usage still, and the first sign of a runaway:
+  rows are now kept when anything was consumed, with the consumed quantity
+  beside a cost of zero. Replay normalization on the Accounts page rebuilds
+  months already fetched, without fetching them again.
+- **Insights shows what a Cloudflare scan found.** The resource count is
+  split by source, and a source no findings are written for yet gets a
+  card of its resources by type — Workers, Durable Objects, R2 buckets, D1
+  databases, KV namespaces, zones — rather than only adding to a total.
 - **A failing refresh no longer buys the same bill again and again.** A
   period was counted as fetched only once it reached the ledger, so a
   fetch the provider answered but the app could not store — a full disk, a

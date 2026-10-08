@@ -263,9 +263,16 @@ pub fn normalize(batch: &RawBatch) -> Result<Normalized> {
             }
 
             let cost = row.billed_cost.unwrap_or(0.0);
-            let quantity = row.pricing_quantity.unwrap_or(0.0);
+            // What was used, free allowance included. `PricingQuantity` is
+            // only the part past the allowance — zero for the whole of a
+            // month inside it, which is exactly when a runaway starts:
+            // usage climbs for days before the first cent is billed.
+            let consumed = row
+                .consumed_quantity
+                .or(row.pricing_quantity)
+                .unwrap_or(0.0);
             // A service listed with nothing used and nothing charged.
-            if cost == 0.0 && quantity == 0.0 {
+            if cost == 0.0 && consumed == 0.0 {
                 continue;
             }
 
@@ -294,8 +301,14 @@ pub fn normalize(batch: &RawBatch) -> Result<Normalized> {
                 billed_cost: Some(cost),
                 effective_cost: row.effective_cost.or(Some(cost)),
                 list_cost: row.list_cost,
-                pricing_quantity: row.pricing_quantity,
-                pricing_unit: row.pricing_unit,
+                // The ledger's one quantity column holds what was consumed,
+                // as a usage export's rows do; `billed_cost` says what of
+                // it was charged for.
+                pricing_quantity: Some(consumed),
+                pricing_unit: row
+                    .consumed_unit
+                    .filter(|unit| !unit.trim().is_empty())
+                    .or(row.pricing_unit),
                 ..Charge::new(
                     charge_start,
                     charge_end,
@@ -422,6 +435,8 @@ struct UsageRow {
     charge_period_end: Option<String>,
     pricing_quantity: Option<f64>,
     pricing_unit: Option<String>,
+    consumed_quantity: Option<f64>,
+    consumed_unit: Option<String>,
     service_name: Option<String>,
     service_family_name: Option<String>,
     subscription_id: Option<String>,
@@ -533,6 +548,32 @@ mod tests {
             .find(|c| c.resource_id.is_some())
             .expect("the fixture has a zone-level row");
         assert_eq!(zoned.resource_name.as_deref(), Some("example.com"));
+    }
+
+    /// A month inside the free allowance bills nothing and prices nothing
+    /// — every `PricingQuantity` is zero — but it was used, and the usage
+    /// is what a runaway shows first. Shaped after a real response.
+    #[test]
+    fn usage_inside_the_free_allowance_is_kept() {
+        let normalized = normalize(&batch(
+            2026,
+            10,
+            &[r#"{"success":true,"result":[{
+                "BilledCost":0,"ListCost":0,"EffectiveCost":0,"BillingCurrency":"USD",
+                "ChargePeriodStart":"2026-10-03T00:00:00Z",
+                "ChargePeriodEnd":"2026-10-04T00:00:00Z",
+                "ServiceName":"R2 Storage Class B Operations (First 10M included)",
+                "ServiceFamilyName":"R2",
+                "ConsumedQuantity":734,"ConsumedUnit":"",
+                "PricingQuantity":0,"PricingUnit":"Count"}]}"#],
+        ))
+        .unwrap();
+        assert_eq!(normalized.charges.len(), 1);
+        let row = &normalized.charges[0];
+        assert_eq!(row.billed_cost, Some(0.0));
+        assert_eq!(row.pricing_quantity, Some(734.0));
+        // An empty consumed unit falls back to the pricing unit.
+        assert_eq!(row.pricing_unit.as_deref(), Some("Count"));
     }
 
     #[test]
