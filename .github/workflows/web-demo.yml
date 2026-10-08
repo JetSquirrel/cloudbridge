@@ -1,0 +1,57 @@
+name: Publish web demo
+
+# The browser demo for the website. cloudbridge.jetsquirrel.cloud is built by
+# Cloudflare from JetSquirrel/cloudbridge-site, whose build cannot install the
+# pinned Rust nightly the wasm build needs; it downloads the demo this
+# workflow builds instead, from the asset of a rolling `web-demo` release.
+# The release is a prerelease, so it never shows up as "latest".
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: web-demo
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-07-28
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm-release
+      - name: Install the wasm-bindgen CLI the lock file names
+        run: |
+          version="$(./scripts/locked-version.py wasm-bindgen)"
+          cargo install wasm-bindgen-cli --version "$version" --locked
+      - name: Build the web demo
+        run: ./scripts/build-web.sh --release
+
+      # `web/site/` is self-contained and references everything relative to
+      # the page it is served from, so it unpacks under /demo/ as it is.
+      - name: Package the demo
+        run: tar -czf cloudbridge-web-demo.tar.gz -C web/site .
+
+      - name: Publish to the web-demo release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view web-demo >/dev/null 2>&1; then
+            gh release create web-demo --prerelease --target "$GITHUB_SHA" \
+              --title "Web demo (rolling)" \
+              --notes "The browser demo built from main, for the website's build. Replaced on every push to main; not a release of the app."
+          fi
+          gh release upload web-demo cloudbridge-web-demo.tar.gz --clobber
