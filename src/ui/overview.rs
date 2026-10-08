@@ -186,9 +186,9 @@ impl OverviewView {
         let selected = self.range;
         let refreshing = self.refreshing;
         let caption = match &self.data {
-            Some(d) => format!("{} · reported in {}", d.window_caption, d.currency),
+            Some(d) => format!("{}, reported in {}", d.window_caption, d.currency),
             None => format!(
-                "{} · reported in {}",
+                "{}, reported in {}",
                 self.range.header_caption(self.opened_at),
                 self.reporting_currency
             ),
@@ -854,7 +854,7 @@ fn render_stats(cx: &App, d: &data::OverviewData) -> impl IntoElement {
                 // Net stays the big number; the split shows why it differs
                 // from the real burn.
                 .child(div().text_color(theme::text_muted(cx)).child(format!(
-                    "usage {} · credits {}",
+                    "usage {}, credits {}",
                     fmt::amount(stats.usage, currency),
                     fmt::amount(stats.credits, currency)
                 )))

@@ -111,7 +111,7 @@ impl ModelsView {
                         el.child(theme::caption(
                             cx,
                             format!(
-                                "{} · reported in {}",
+                                "{}, reported in {}",
                                 self.range.header_caption(Utc::now()),
                                 d.currency
                             ),

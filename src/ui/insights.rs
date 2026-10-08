@@ -505,7 +505,7 @@ impl InsightsView {
                 100.0 * report.matched_cost / report.billed_cost
             ));
         }
-        theme::caption(cx, parts.join(" · "))
+        theme::caption(cx, parts.join("; "))
     }
 
     fn render_stats(&self, d: &InsightsData, cx: &Context<Self>) -> impl IntoElement {
@@ -1227,7 +1227,7 @@ fn render_row(finding: &InsightFinding, priced: bool, currency: &str, cx: &App) 
                         .text_color(theme::text_muted(cx))
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .child(format!("{} · {}", finding.evidence, finding.resource_id)),
+                        .child(format!("{} — {}", finding.resource_id, finding.evidence)),
                 ),
         )
         // No type column: the row sits under its type's group.
@@ -1344,7 +1344,7 @@ fn usage_line(usage: &[ResourceUsage]) -> String {
             }
         })
         .collect::<Vec<_>>()
-        .join(" · ")
+        .join(", ")
 }
 
 /// The inventory card's title for a source.

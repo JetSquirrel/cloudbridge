@@ -139,7 +139,7 @@ impl MenuBarPanel {
             .gap_1()
             .child(theme::caption(
                 cx,
-                format!("{}, month to date · {}", now.format("%B"), summary.currency),
+                format!("{} to date, in {}", now.format("%B"), summary.currency),
             ))
             .child(
                 div()

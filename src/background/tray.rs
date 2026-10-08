@@ -1,14 +1,17 @@
 //! The menu bar icon (macOS) or notification-area icon (Windows).
 //!
-//! Its title is the month's spend, and it carries the open-alert count when
-//! there are any — enough to notice a runaway bill without opening
-//! anything. A left click opens the panel ([`super::panel`]); a right click
+//! Its title is the month's spend, and the cloud carries an exclamation
+//! mark while an alert is open — enough to notice a runaway bill without
+//! opening anything. A left click opens the panel ([`super::panel`]); a right click
 //! the menu, which is where Quit lives, since closing the window no longer
 //! quits.
 //!
-//! Icon and menu clicks arrive on callbacks the platform runs; they are
-//! passed over a channel to a GPUI task, which is the only place that
-//! touches the app.
+//! The icon can be taken down and put back while the app runs (Settings →
+//! Background → Keep running in the menu bar). Icon and menu clicks arrive
+//! on callbacks the platform runs, which tray-icon lets a process set only
+//! once; so the callbacks, and the GPUI task they feed over a channel, are
+//! set up on first install and outlive the icon, and act only while one is
+//! installed.
 
 use gpui_kit::component::Root;
 use gpui_kit::*;
@@ -32,13 +35,25 @@ enum Input {
 /// is open.
 pub(super) struct MenuBar {
     icon: TrayIcon,
+    /// Whether the icon shows the alert mark now.
+    alerting: bool,
     pub(super) panel: Option<WindowHandle<Root>>,
     _status_observer: Subscription,
 }
 
 impl Global for MenuBar {}
 
-pub(super) fn install(status: Entity<Status>, cx: &mut App) {
+/// Marks that the platform callbacks and the task reading them are set up.
+struct EventPump;
+
+impl Global for EventPump {}
+
+/// Put the icon in the menu bar, unless it is there already. Returns
+/// whether there is one afterwards.
+pub(super) fn install(status: Entity<Status>, cx: &mut App) -> bool {
+    if cx.has_global::<MenuBar>() {
+        return true;
+    }
     let menu = Menu::new();
     let items = [
         MenuItem::with_id(MENU_OPEN, "Open CloudBridge", true, None),
@@ -55,7 +70,7 @@ pub(super) fn install(status: Entity<Status>, cx: &mut App) {
     }
 
     let icon = match TrayIconBuilder::new()
-        .with_icon(cloud_icon())
+        .with_icon(cloud_icon(false))
         .with_icon_as_template(true)
         .with_tooltip("CloudBridge")
         .with_menu(Box::new(menu))
@@ -64,13 +79,73 @@ pub(super) fn install(status: Entity<Status>, cx: &mut App) {
     {
         Ok(icon) => icon,
         Err(e) => {
-            // Without an icon there is no way back to a closed window, nor
-            // a Quit to reach: fall back to quitting with the window.
             tracing::error!("Could not add the menu bar icon: {}", e);
-            cx.set_quit_mode(QuitMode::LastWindowClosed);
-            return;
+            return false;
         }
     };
+
+    ensure_event_pump(cx);
+
+    let observer = cx.observe(&status, |status, cx| show_status(&status, cx));
+
+    cx.set_global(MenuBar {
+        icon,
+        alerting: false,
+        panel: None,
+        _status_observer: observer,
+    });
+    // The observer fires on the next change; the title should not wait.
+    show_status(&status, cx);
+    true
+}
+
+/// Take the icon out of the menu bar, and close its panel if it is open.
+/// A no-op when there is none.
+pub(super) fn uninstall(cx: &mut App) {
+    if !cx.has_global::<MenuBar>() {
+        return;
+    }
+    let bar = cx.remove_global::<MenuBar>();
+    if let Some(open) = bar.panel {
+        let _ = open.update(cx, |_, window, _| window.remove_window());
+    }
+    // Dropping the icon removes it from the menu bar.
+    drop(bar.icon);
+}
+
+/// The month's spend as the icon's title, and the tooltip.
+fn show_status(status: &Entity<Status>, cx: &mut App) {
+    let Some(summary) = &status.read(cx).summary else {
+        return;
+    };
+    let (title, tooltip, alerting) = (summary.title(), summary.tooltip(), summary.alerting());
+    tracing::debug!("Menu bar title: {title}");
+    if !cx.has_global::<MenuBar>() {
+        return;
+    }
+    let bar = cx.global_mut::<MenuBar>();
+    if bar.alerting != alerting {
+        // A plain set_icon drops the template flag on macOS.
+        if let Err(e) = bar
+            .icon
+            .set_icon_with_as_template(Some(cloud_icon(alerting)), cfg!(target_os = "macos"))
+        {
+            tracing::warn!("Could not change the menu bar icon: {}", e);
+        }
+        bar.alerting = alerting;
+    }
+    bar.icon.set_title(Some(format!(" {title}")));
+    if let Err(e) = bar.icon.set_tooltip(Some(tooltip)) {
+        tracing::warn!("Could not set the menu bar tooltip: {}", e);
+    }
+}
+
+/// Route icon and menu clicks to the app, once per process.
+fn ensure_event_pump(cx: &mut App) {
+    if cx.has_global::<EventPump>() {
+        return;
+    }
+    cx.set_global(EventPump);
 
     let (sender, receiver) = async_channel::unbounded();
     let icon_sender = sender.clone();
@@ -91,6 +166,8 @@ pub(super) fn install(status: Entity<Status>, cx: &mut App) {
     cx.spawn(async move |cx| {
         while let Ok(input) = receiver.recv().await {
             cx.update(|cx| match input {
+                // A click that raced the icon's removal.
+                _ if !cx.has_global::<MenuBar>() => {}
                 Input::IconClicked => toggle_panel(cx),
                 Input::Menu(id) => match id.as_str() {
                     MENU_OPEN => crate::desktop::show_main_window(None, cx),
@@ -102,26 +179,6 @@ pub(super) fn install(status: Entity<Status>, cx: &mut App) {
         }
     })
     .detach();
-
-    let observer = cx.observe(&status, |status, cx| {
-        let status = status.read(cx);
-        let Some(summary) = &status.summary else {
-            return;
-        };
-        let (title, tooltip) = (summary.title(), summary.tooltip());
-        tracing::debug!("Menu bar title: {title}");
-        let bar = cx.global::<MenuBar>();
-        bar.icon.set_title(Some(format!(" {title}")));
-        if let Err(e) = bar.icon.set_tooltip(Some(tooltip)) {
-            tracing::warn!("Could not set the menu bar tooltip: {}", e);
-        }
-    });
-
-    cx.set_global(MenuBar {
-        icon,
-        panel: None,
-        _status_observer: observer,
-    });
 }
 
 fn toggle_panel(cx: &mut App) {
@@ -165,11 +222,13 @@ fn anchor(cx: &App) -> panel::Anchor {
     panel::Anchor::Corner { work_area }
 }
 
-/// The icon: a cloud, drawn here rather than shipped as an image so it
-/// needs no asset. On macOS it is black on transparent, a template the menu
+/// The icon: a cloud, with an exclamation mark cut out of it when
+/// `alerting`, drawn here rather than shipped as an image so it needs no
+/// asset. The mark is a hole rather than a colour, so it survives the
+/// template tinting. On macOS it is black on transparent, a template the menu
 /// bar tints for light and dark; Windows draws an icon as it is, on a
 /// taskbar that may be either, so there it is a grey that reads on both.
-fn cloud_icon() -> Icon {
+fn cloud_icon(alerting: bool) -> Icon {
     const INK: [u8; 3] = if cfg!(target_os = "macos") {
         [0, 0, 0]
     } else {
@@ -182,12 +241,23 @@ fn cloud_icon() -> Icon {
         [(0.32, 0.58, 0.17), (0.52, 0.44, 0.23), (0.72, 0.58, 0.15)];
     const BASE: (f32, f32, f32, f32) = (0.16, 0.57, 0.86, 0.75);
 
-    let inside = |x: f32, y: f32| {
+    // The exclamation mark: a bar with rounded ends, and a dot.
+    const BAR: (f32, f32, f32, f32) = (0.52, 0.35, 0.50, 0.042);
+    const DOT: (f32, f32, f32) = (0.52, 0.635, 0.047);
+
+    let cloud = |x: f32, y: f32| {
         CIRCLES
             .iter()
             .any(|(cx, cy, r)| (x - cx).powi(2) + (y - cy).powi(2) <= r * r)
             || (x >= BASE.0 && x <= BASE.2 && y >= BASE.1 && y <= BASE.3)
     };
+    let mark = |x: f32, y: f32| {
+        let (bx, top, bottom, half) = BAR;
+        let along = y.clamp(top, bottom);
+        (x - bx).powi(2) + (y - along).powi(2) <= half * half
+            || (x - DOT.0).powi(2) + (y - DOT.1).powi(2) <= DOT.2 * DOT.2
+    };
+    let inside = |x: f32, y: f32| cloud(x, y) && !(alerting && mark(x, y));
 
     let mut rgba = Vec::with_capacity((SIZE * SIZE * 4) as usize);
     for row in 0..SIZE {

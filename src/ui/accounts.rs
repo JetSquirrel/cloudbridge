@@ -57,8 +57,8 @@ fn setup_hint(source_id: &str) -> Option<(&'static str, &'static str)> {
             "alibaba-cloud",
         )),
         "Cloudflare" => Some((
-            "An API token with Account · Billing · Read — and Account Analytics · \
-             Read to split the bill by bucket, Worker, D1 database and Durable \
+            "An API token with Account → Billing → Read — and Account → Account \
+             Analytics → Read to split the bill by bucket, Worker, D1 database and Durable \
              Object — and the account ID. Pay-as-you-go accounts only.",
             "cloudflare",
         )),
@@ -1110,7 +1110,7 @@ impl AccountsView {
                     .child(theme::caption(
                         cx,
                         format!(
-                            "{} accounts · credentials in the OS keyring, never in the database",
+                            "{} accounts. Credentials stay in the OS keyring, never in the database",
                             account_count
                         ),
                     )),
@@ -2330,7 +2330,7 @@ fn load_health() -> anyhow::Result<AccountsHealth> {
                     .into_iter()
                     .map(|row| {
                         let service = row.service.unwrap_or_else(|| "Other".to_string());
-                        (format!("{} · {}", row.provider, service), row.amount)
+                        (format!("{} {}", row.provider, service), row.amount)
                     }),
             );
         }
