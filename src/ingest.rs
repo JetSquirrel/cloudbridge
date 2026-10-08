@@ -17,7 +17,9 @@
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Duration, Utc};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 
 use crate::cloud::billfile::BillFileFormat;
 use crate::cloud::raw::{self, RawBatch, RawPart};
@@ -82,7 +84,12 @@ pub struct RefreshOutcome {
 ///
 /// "Recently enough" is the `refresh_interval_hours` setting: a provider's
 /// bill does not move faster than that in any way worth paying for (Cost
-/// Explorer bills per request).
+/// Explorer bills per request). It also bounds a fetch that was answered
+/// but never recorded — see [`PAID_FETCHES`].
+///
+/// One period failing does not stop the other: last month's trouble must
+/// not leave this month, where a runaway shows up, unfetched. The failures
+/// are returned together once both have been tried.
 pub fn refresh_account(account: &CloudAccount, force: bool) -> Result<RefreshOutcome> {
     // Demo accounts carry fake data and no credentials; fetching them
     // would only produce a keyring error.
@@ -108,23 +115,45 @@ pub fn refresh_account(account: &CloudAccount, force: bool) -> Result<RefreshOut
         vec![current.previous(), current]
     };
 
+    let window = refresh_interval();
     let mut outcome = RefreshOutcome::default();
+    let mut confirmed = false;
+    let mut failures = Vec::new();
     let mut attempted = 0;
     let mut not_ready = 0;
     for period in periods {
-        if !force && is_fresh(account, &period, now)? {
-            tracing::debug!(
-                "Skipping {} {}: ingested within the freshness window",
-                account.name,
-                period.label()
-            );
-            outcome.skipped_fresh.push(period.label());
-            continue;
+        let key = period_key(account, &period);
+        if !force {
+            if is_fresh(&key, now, window)? {
+                tracing::debug!(
+                    "Skipping {} {}: ingested within the freshness window",
+                    account.name,
+                    period.label()
+                );
+                outcome.skipped_fresh.push(period.label());
+                continue;
+            }
+            if let Some(paid) = unrecorded_paid_fetch(&key, now, window) {
+                failures.push(anyhow!(
+                    "{}: fetched {} but not recorded ({}). It is not fetched again \
+                     before {} so the same data is not paid for twice; Force Refresh \
+                     retries now",
+                    period.label(),
+                    paid.at.format("%H:%M UTC"),
+                    paid.failure,
+                    (paid.at + window).format("%Y-%m-%d %H:%M UTC"),
+                ));
+                continue;
+            }
         }
 
         attempted += 1;
         match ingest_period(account, &period) {
-            Ok(ingested) => outcome.ingested.push((period.label(), ingested)),
+            Ok(Some(ingested)) => outcome.ingested.push((period.label(), ingested)),
+            Ok(None) => {
+                confirmed = true;
+                outcome.skipped_fresh.push(period.label());
+            }
             // An export that has not delivered the period yet is a skip,
             // not a failure — and must never write an empty batch over a
             // month's rows. It is a failure when every period asked for is
@@ -135,7 +164,7 @@ pub fn refresh_account(account: &CloudAccount, force: bool) -> Result<RefreshOut
                 tracing::info!("{}", e);
                 outcome.skipped_fresh.push(period.label());
             }
-            Err(e) => return Err(e),
+            Err(e) => failures.push(anyhow!("{}: {}", period.label(), e)),
         }
     }
 
@@ -147,53 +176,160 @@ pub fn refresh_account(account: &CloudAccount, force: bool) -> Result<RefreshOut
         ));
     }
 
-    if !outcome.ingested.is_empty() {
+    if !outcome.ingested.is_empty() || confirmed {
         if let Err(e) = crate::db::mark_account_synced(&account.id, now) {
             tracing::warn!("Could not record the sync time for {}: {}", account.name, e);
         }
+    }
+    if !outcome.ingested.is_empty() {
         evaluate_alerts();
     }
 
-    Ok(outcome)
+    match failures.len() {
+        0 => Ok(outcome),
+        1 => Err(failures.remove(0)),
+        _ => Err(anyhow!(
+            "{}",
+            failures
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ")
+        )),
+    }
 }
 
-/// Whether a period was ingested recently enough to leave alone.
-fn is_fresh(account: &CloudAccount, period: &BillingPeriod, now: DateTime<Utc>) -> Result<bool> {
-    let hours = i64::from(
+/// How long a fetched period stays fresh: the `refresh_interval_hours`
+/// setting.
+fn refresh_interval() -> Duration {
+    Duration::hours(i64::from(
         crate::config::load_config()
             .map(|settings| settings.refresh_interval_hours)
             .unwrap_or(crate::config::DEFAULT_REFRESH_INTERVAL_HOURS),
-    );
+    ))
+}
 
-    Ok(query::last_ingest(&period_key(account, period))?
-        .is_some_and(|ingested_at| now - ingested_at < Duration::hours(hours)))
+/// Whether a period was ingested recently enough to leave alone.
+fn is_fresh(key: &PeriodKey, now: DateTime<Utc>, window: Duration) -> Result<bool> {
+    Ok(query::last_ingest(key)?.is_some_and(|ingested_at| now - ingested_at < window))
+}
+
+/// A fetch the provider answered — and so, for Cost Explorer or an S3
+/// export, one that was paid for — whose ingest then failed.
+#[derive(Debug, Clone)]
+struct PaidFetch {
+    at: DateTime<Utc>,
+    failure: String,
+}
+
+/// Fetches answered but not recorded, by period, for the life of the
+/// process.
+///
+/// Freshness is read from the ledger's complete batches, so a fetch whose
+/// payload could not be stored, normalized or written — a full disk, a
+/// mapping bug — left no trace, and the background schedule would buy the
+/// same data again every tick, for as long as the fault lasted. A period
+/// here waits out the refresh interval like a recorded one; only Force
+/// Refresh, which a person presses, goes around it.
+static PAID_FETCHES: LazyLock<Mutex<HashMap<PeriodKey, PaidFetch>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn unrecorded_paid_fetch(
+    key: &PeriodKey,
+    now: DateTime<Utc>,
+    window: Duration,
+) -> Option<PaidFetch> {
+    let fetches = PAID_FETCHES.lock().unwrap_or_else(|e| e.into_inner());
+    fetches
+        .get(key)
+        .filter(|paid| now - paid.at < window)
+        .cloned()
+}
+
+fn remember_paid_fetch(key: &PeriodKey, at: DateTime<Utc>, outcome: Result<(), String>) {
+    let mut fetches = PAID_FETCHES.lock().unwrap_or_else(|e| e.into_inner());
+    match outcome {
+        Ok(()) => {
+            fetches.remove(key);
+        }
+        Err(failure) => {
+            fetches.insert(key.clone(), PaidFetch { at, failure });
+        }
+    }
+}
+
+/// The raw parts of a period's last complete API fetch, for a source to
+/// check the provider's data against before downloading it again. Empty
+/// when there is none, or it cannot be read: then the fetch just happens.
+fn previous_fetch(key: &PeriodKey) -> Vec<RawPart> {
+    let source = match query::api_batch_source(key) {
+        Ok(Some(source)) => source,
+        Ok(None) => return Vec::new(),
+        Err(e) => {
+            tracing::debug!("No previous batch for {:?}: {}", key, e);
+            return Vec::new();
+        }
+    };
+    match raw::read(Path::new(&source)) {
+        Ok((parts, _)) => parts,
+        Err(e) => {
+            tracing::debug!("Could not read the previous batch at {}: {}", source, e);
+            Vec::new()
+        }
+    }
 }
 
 /// Fetch one account's billing period and land it in the ledger.
-pub fn ingest_period(account: &CloudAccount, period: &BillingPeriod) -> Result<IngestOutcome> {
+///
+/// `None` when the source found the provider's data unchanged since the
+/// period's last complete fetch: nothing was downloaded, and that batch is
+/// confirmed as current instead of being written again.
+pub fn ingest_period(
+    account: &CloudAccount,
+    period: &BillingPeriod,
+) -> Result<Option<IngestOutcome>> {
     let descriptor = account.descriptor().ok_or_else(|| {
         anyhow!(
             "No billing source registered under '{}'",
             account.source_id.as_str()
         )
     })?;
+    let key = period_key(account, period);
 
     let source = descriptor.client(crate::db::account_context(account, descriptor)?)?;
-    let fetched = source.fetch(period)?;
-
-    let batch = RawBatch {
-        provider: descriptor.id.to_string(),
-        account_id: account.id.clone(),
-        period: *period,
-        batch_id: ledger::new_batch_id(),
-        fetched_at: Utc::now(),
-        parts: fetched.parts,
-        payload_files: fetched.payload_files,
+    let Some(fetched) = source.fetch_changed(period, &previous_fetch(&key))? else {
+        ledger::confirm_period(&key)?;
+        tracing::info!(
+            "{} {}: unchanged since its last fetch; not downloaded again",
+            account.name,
+            period.label()
+        );
+        return Ok(None);
     };
 
-    let raw_path = persist(&batch)?;
-    let normalized = source.normalize(&batch)?;
-    record(&batch, &normalized, &raw_path, Channel::Api)
+    // The provider has answered: from here this fetch has been paid for,
+    // whatever happens to it next.
+    let fetched_at = Utc::now();
+    let landed = (|| {
+        let batch = RawBatch {
+            provider: descriptor.id.to_string(),
+            account_id: account.id.clone(),
+            period: *period,
+            batch_id: ledger::new_batch_id(),
+            fetched_at,
+            parts: fetched.parts,
+            payload_files: fetched.payload_files,
+        };
+        let raw_path = persist(&batch)?;
+        let normalized = source.normalize(&batch)?;
+        record(&batch, &normalized, &raw_path, Channel::Api)
+    })();
+    remember_paid_fetch(
+        &key,
+        fetched_at,
+        landed.as_ref().map(|_| ()).map_err(|e| e.to_string()),
+    );
+    landed.map(Some)
 }
 
 /// Run the alert rules over what was just ingested. A failure here must
@@ -711,6 +847,34 @@ pub fn import_scans(paths: &[PathBuf]) -> Result<crate::model::InventoryScope> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn paid_key(account: &str) -> PeriodKey {
+        PeriodKey::new("AWS", account, "2026-10")
+    }
+
+    /// A fetch the provider answered and the ingest then lost is not
+    /// bought again inside the refresh interval — the bill-safety half of
+    /// a failed ingest.
+    #[test]
+    fn a_paid_fetch_that_failed_to_land_waits_out_the_interval() {
+        let key = paid_key("paid-fails");
+        let at = Utc::now();
+        let window = Duration::hours(24);
+        remember_paid_fetch(&key, at, Err("No space left on device".to_string()));
+
+        let paid = unrecorded_paid_fetch(&key, at + Duration::minutes(15), window).unwrap();
+        assert!(paid.failure.contains("No space left"));
+        assert!(unrecorded_paid_fetch(&key, at + Duration::hours(25), window).is_none());
+    }
+
+    #[test]
+    fn a_paid_fetch_that_landed_leaves_nothing_behind() {
+        let key = paid_key("paid-lands");
+        let at = Utc::now();
+        remember_paid_fetch(&key, at, Err("transient".to_string()));
+        remember_paid_fetch(&key, at, Ok(()));
+        assert!(unrecorded_paid_fetch(&key, at, Duration::hours(24)).is_none());
+    }
 
     /// Landing a period touches the ledger's global connection and the real
     /// raw directory, so the pipeline itself is exercised through each

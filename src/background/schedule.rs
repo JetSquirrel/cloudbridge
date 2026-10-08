@@ -5,8 +5,10 @@
 //! interval — then reloads the menu bar's summary and announces the alerts
 //! that fired. The tick only decides how soon a due account is noticed;
 //! what a provider is asked for, and so what it costs, is still the
-//! refresh interval's to decide.
+//! refresh interval's to decide. An account that keeps failing is backed
+//! off ([`super::backoff`]), and its first failure is announced.
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use chrono::Utc;
@@ -30,7 +32,7 @@ pub(super) fn start(status: Entity<Status>, cx: &mut App) {
             let fetch = crate::config::load_config()
                 .map(|config| config.background_refresh)
                 .unwrap_or(true);
-            cx.update(|cx| run_once(status.clone(), fetch, cx));
+            cx.update(|cx| run_once(status.clone(), fetch, false, cx));
             cx.background_executor().timer(TICK).await;
         }
     })
@@ -38,13 +40,21 @@ pub(super) fn start(status: Entity<Status>, cx: &mut App) {
 }
 
 /// One pass: fetch what is due (when `fetch`), reload the summary, announce
-/// new alerts, and have the window reload if it is open. A pass already
-/// running makes this a no-op.
-pub(super) fn run_once(status: Entity<Status>, fetch: bool, cx: &mut App) {
+/// new alerts and newly failing accounts, and have the window reload if it
+/// is open. A `manual` pass — someone pressed Refresh — also tries the
+/// accounts that are backing off. A pass already running makes this a
+/// no-op.
+pub(super) fn run_once(status: Entity<Status>, fetch: bool, manual: bool, cx: &mut App) {
     if status.read(cx).refreshing {
         return;
     }
-    tracing::debug!("Background refresh (fetch: {fetch})");
+    tracing::debug!("Background refresh (fetch: {fetch}, manual: {manual})");
+    let now = Utc::now();
+    let waiting: HashSet<String> = if manual {
+        HashSet::new()
+    } else {
+        status.read(cx).backoff.waiting(now)
+    };
     status.update(cx, |status, cx| {
         status.refreshing = true;
         cx.notify();
@@ -53,7 +63,7 @@ pub(super) fn run_once(status: Entity<Status>, fetch: bool, cx: &mut App) {
     cx.spawn(async move |cx| {
         let (fetched, summary) = smol::unblock(move || {
             let fetched = if fetch {
-                fetch_due_accounts()
+                fetch_due_accounts(&waiting)
             } else {
                 Fetched::default()
             };
@@ -62,10 +72,34 @@ pub(super) fn run_once(status: Entity<Status>, fetch: bool, cx: &mut App) {
         .await;
 
         cx.update(|cx| {
-            let announce = status.update(cx, |status, cx| {
+            let cap = chrono::Duration::hours(i64::from(
+                crate::config::load_config()
+                    .map(|config| config.refresh_interval_hours)
+                    .unwrap_or(crate::config::DEFAULT_REFRESH_INTERVAL_HOURS),
+            ));
+            let (announce, newly_failing) = status.update(cx, |status, cx| {
+                let now = Utc::now();
+                let mut newly_failing = Vec::new();
+                for tried in fetched.accounts {
+                    match tried.error {
+                        None => status.backoff.succeeded(&tried.id),
+                        Some(error) => {
+                            if status.backoff.failed(
+                                &tried.id,
+                                &tried.name,
+                                error.clone(),
+                                now,
+                                cap,
+                            ) {
+                                newly_failing.push((tried.name, error));
+                            }
+                        }
+                    }
+                }
                 status.refreshing = false;
-                status.last_run = Some(Utc::now());
-                status.failures = fetched.failures;
+                status.last_run = Some(now);
+                status.failures = status.backoff.failures();
+                status.failures.extend(fetched.failures);
                 let announce = match summary {
                     Ok(summary) => {
                         let fresh: Vec<AlertLine> = status
@@ -83,7 +117,7 @@ pub(super) fn run_once(status: Entity<Status>, fetch: bool, cx: &mut App) {
                     }
                 };
                 cx.notify();
-                announce
+                (announce, newly_failing)
             });
 
             let notifications = crate::config::load_config()
@@ -92,6 +126,11 @@ pub(super) fn run_once(status: Entity<Status>, fetch: bool, cx: &mut App) {
             if notifications {
                 for alert in &announce {
                     notify::post(alert);
+                }
+                // An account that stopped refreshing has stopped being
+                // watched; that is worth a notification of its own.
+                for (name, error) in &newly_failing {
+                    notify::post_refresh_failure(name, error);
                 }
             }
 
@@ -111,12 +150,21 @@ pub(super) fn run_once(status: Entity<Status>, fetch: bool, cx: &mut App) {
 struct Fetched {
     /// Some period landed in the ledger.
     ingested: bool,
-    /// The accounts that could not be fetched, as `name: reason`.
+    /// Each account tried, and how it went.
+    accounts: Vec<Tried>,
+    /// Failures that belong to no account, as `what: reason`.
     failures: Vec<String>,
 }
 
-/// Fetch every account with an API channel, as Refresh does. Blocking.
-fn fetch_due_accounts() -> Fetched {
+struct Tried {
+    id: String,
+    name: String,
+    error: Option<String>,
+}
+
+/// Fetch every account with an API channel, as Refresh does, except the
+/// ones `waiting` out a backoff. Blocking.
+fn fetch_due_accounts(waiting: &HashSet<String>) -> Fetched {
     let mut fetched = Fetched::default();
     let accounts = match crate::db::get_all_accounts() {
         Ok(accounts) => accounts,
@@ -127,15 +175,24 @@ fn fetch_due_accounts() -> Fetched {
     };
     let due = accounts.iter().filter(|account| {
         account.enabled
+            && !waiting.contains(&account.id)
             && account
                 .descriptor()
                 .is_some_and(|source| source.fetches_from_api())
     });
     for account in due {
-        match crate::ingest::refresh_account(account, false) {
-            Ok(outcome) => fetched.ingested |= !outcome.ingested.is_empty(),
-            Err(e) => fetched.failures.push(format!("{}: {}", account.name, e)),
-        }
+        let error = match crate::ingest::refresh_account(account, false) {
+            Ok(outcome) => {
+                fetched.ingested |= !outcome.ingested.is_empty();
+                None
+            }
+            Err(e) => Some(e.to_string()),
+        };
+        fetched.accounts.push(Tried {
+            id: account.id.clone(),
+            name: account.name.clone(),
+            error,
+        });
     }
     fetched
 }

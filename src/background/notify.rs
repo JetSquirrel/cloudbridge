@@ -55,6 +55,20 @@ pub fn post(alert: &AlertLine) {
     }
 }
 
+/// Tell someone an account has stopped refreshing — which means its spend
+/// has stopped being watched. Posted once per run of failures; see
+/// `backoff`.
+pub fn post_refresh_failure(account: &str, error: &str) {
+    let result = notify_rust::Notification::new()
+        .appname("CloudBridge")
+        .summary(&format!("CloudBridge could not refresh {account}"))
+        .body(error)
+        .show();
+    if let Err(e) = result {
+        tracing::warn!("Could not post a notification for {}: {}", account, e);
+    }
+}
+
 /// Tell the notification centre which app is speaking, so the banner
 /// carries CloudBridge's name and icon. Only a bundled build has an
 /// identity to give; an unbundled one keeps the default.
