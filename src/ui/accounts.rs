@@ -56,6 +56,11 @@ fn setup_hint(source_id: &str) -> Option<(&'static str, &'static str)> {
              primary account's key.",
             "alibaba-cloud",
         )),
+        "Cloudflare" => Some((
+            "An API token with Account · Billing · Read, and the account ID from \
+             the dashboard. Pay-as-you-go accounts only; usage arrives per day.",
+            "cloudflare",
+        )),
         "DeepSeek" => Some((
             "A platform key reads the balance only; import the cost export for \
              spend detail. The key can also spend, so keep it private.",

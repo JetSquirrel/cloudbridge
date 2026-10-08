@@ -94,6 +94,17 @@ policy; review its scope against your requirements.
 Do not use the primary account's AccessKey. A local bill-file import does
 not require an API credential, including for Alibaba Cloud.
 
+## Cloudflare
+
+Create a custom API token with the single permission **Account → Billing →
+Read**, scoped under **Account Resources** to the one account CloudBridge
+should read. CloudBridge calls `GET /accounts/{id}/billable-usage/info` and
+`GET /accounts/{id}/billable-usage` with it and nothing else. Do not use the
+Global API Key: it carries every permission of the user.
+
+The account ID is not a secret; it is part of the request path. The token
+is, and is kept in the OS keyring like any other credential.
+
 ## DeepSeek
 
 CloudBridge's API integration uses a platform key from

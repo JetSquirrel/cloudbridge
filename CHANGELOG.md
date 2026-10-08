@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Cloudflare as a billing source.** An account ID and an API token with
+  Account · Billing · Read read the billable usage API, which reports spend
+  per service per day — so a Worker or Durable Object that starts looping
+  is in the ledger a day later, not on the month's invoice. Cloudflare's
+  billing cycle is anchored at the subscription's start; each calendar
+  month holds the days inside it. Workers, Durable Objects, R2, D1, KV and
+  Workers AI are placed in their FOCUS categories. Pay-as-you-go accounts
+  only: the endpoint does not cover Enterprise contracts.
 - **Service categories that mean the same thing on every cloud.** Each
   source's products are placed in FOCUS `ServiceCategory` and
   `ServiceSubcategory` on the way into the ledger: Alibaba Cloud's `ecs`,

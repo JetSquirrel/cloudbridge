@@ -16,7 +16,10 @@ use directories::BaseDirs;
 use std::path::{Path, PathBuf};
 
 use super::billfile::{self, BillFileFormat};
-use super::{aliyun::AliyunCloudService, aws::AwsCloudService, deepseek::DeepSeekService};
+use super::{
+    aliyun::AliyunCloudService, aws::AwsCloudService, cloudflare::CloudflareService,
+    deepseek::DeepSeekService,
+};
 use super::{BillingSource, SourceContext};
 
 pub use crate::model::Reporting;
@@ -468,6 +471,37 @@ static SOURCES: &[SourceDescriptor] = &[
         // The finer of Alibaba Cloud's two channels, and the only one that
         // reports Model Studio (百炼) per model.
         bill_file: Some(&billfile::aliyun::FORMAT),
+    },
+    SourceDescriptor {
+        id: "Cloudflare",
+        display_name: "Cloudflare",
+        short_name: "Cloudflare",
+        // The account is named in the request path rather than signed for,
+        // so the "public half" is its ID and the token is the secret.
+        access_key_label: "Account ID",
+        secret_key_label: Some("API Token"),
+        default_region: None,
+        reporting: Reporting::Periodic,
+        local_credentials: Some(LocalCredentials {
+            // The variables wrangler reads. Its own login is an OAuth
+            // session, not a token this client could reuse.
+            env: EnvCredentials {
+                access_key: &["CLOUDFLARE_ACCOUNT_ID"],
+                secret_key: &["CLOUDFLARE_API_TOKEN"],
+                region: &[],
+            },
+            files: &[],
+        }),
+        build: Some(|ctx| {
+            Box::new(CloudflareService::new(
+                ctx.access_key_id,
+                ctx.secret_access_key,
+                ctx.region,
+            ))
+        }),
+        // The dashboard's billing CSV is per invoice, not per day; the API
+        // is the finer channel and the only one read.
+        bill_file: None,
     },
     SourceDescriptor {
         id: "DeepSeek",

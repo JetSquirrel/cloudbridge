@@ -458,6 +458,7 @@
                         <li><a href="#aws-cost-explorer" data-i18n="policies.side.aws">AWS Cost Explorer</a></li>
                         <li><a href="#aws-s3" data-i18n="policies.side.s3">AWS exports from S3</a></li>
                         <li><a href="#aliyun" data-i18n="policies.side.aliyun">Alibaba Cloud</a></li>
+                        <li><a href="#cloudflare" data-i18n="policies.side.cloudflare">Cloudflare</a></li>
                         <li><a href="#deepseek" data-i18n="policies.side.deepseek">DeepSeek</a></li>
                         <li><a href="#file-sources" data-i18n="policies.side.files">File-only sources</a></li>
                         <li><a href="/docs.html" data-i18n="policies.side.docs">Back to docs</a></li>
@@ -515,6 +516,12 @@
                             <li>Create an AccessKey and enter it in CloudBridge locally.</li>
                         </ol>
                         <p data-i18n="policies.aliyun.p2">Do not use the primary account's AccessKey. A local bill-file import does not require an API credential, including for Alibaba Cloud.</p>
+                    </section>
+
+                    <section id="cloudflare">
+                        <h2 data-i18n="policies.cloudflare.title">Cloudflare</h2>
+                        <p data-i18n-html="policies.cloudflare.p1">Create a custom API token with the single permission <strong>Account → Billing → Read</strong>, scoped under <strong>Account Resources</strong> to the one account CloudBridge should read. CloudBridge calls <code>GET /accounts/{id}/billable-usage/info</code> and <code>GET /accounts/{id}/billable-usage</code> with it and nothing else. Do not use the Global API Key: it carries every permission of the user.</p>
+                        <p data-i18n-html="policies.cloudflare.p2">The account ID is not a secret; it is part of the request path. The token is, and is kept in the OS keyring like any other credential.</p>
                     </section>
 
                     <section id="deepseek">
