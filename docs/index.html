@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="CloudBridge - A local-first desktop app for cloud and AI cost management. Read AWS and Alibaba Cloud billing APIs, import the bill export from Volcengine, OpenAI, Anthropic or DeepSeek, and keep every charge in one ledger named after FOCUS columns, on your machine.">
-    <meta name="keywords" content="cloud cost management, multi-cloud, AWS cost explorer, Alibaba Cloud billing, bill file import, 账单明细, OpenAI cost export, Anthropic cost export, DeepSeek, LLM token cost, FinOps, FOCUS, cost optimization">
+    <meta name="description" content="CloudBridge - A local-first desktop app for cloud and AI cost management. Read AWS, Alibaba Cloud and Cloudflare billing APIs, import the bill export from Volcengine, OpenAI, Anthropic or DeepSeek, and keep every charge in one ledger named after FOCUS columns, on your machine.">
+    <meta name="keywords" content="cloud cost management, multi-cloud, AWS cost explorer, Alibaba Cloud billing, Cloudflare billing, bill file import, 账单明细, OpenAI cost export, Anthropic cost export, DeepSeek, LLM token cost, FinOps, FOCUS, cost optimization">
     <meta name="theme-color" content="#0E1420">
     <link rel="canonical" href="https://cloudbridge.jetsquirrel.cloud/">
     <meta property="og:title" content="CloudBridge - Multi-Cloud Cost Management">
@@ -31,7 +31,7 @@
         "downloadUrl": "https://github.com/JetSquirrel/cloudbridge/releases",
         "operatingSystem": "Windows, macOS",
         "applicationCategory": "FinanceApplication",
-        "description": "A local-first desktop app for cloud and AI cost management. Read AWS and Alibaba Cloud billing APIs, import the bill export from Volcengine, OpenAI, Anthropic or DeepSeek, and keep every charge in one ledger shaped after FOCUS columns on your machine.",
+        "description": "A local-first desktop app for cloud and AI cost management. Read AWS, Alibaba Cloud and Cloudflare billing APIs, import the bill export from Volcengine, OpenAI, Anthropic or DeepSeek, and keep every charge in one ledger shaped after FOCUS columns on your machine.",
         "license": "https://opensource.org/licenses/MIT",
         "offers": {
             "@type": "Offer",
@@ -465,6 +465,65 @@
             color: var(--fg-faint);
         }
 
+        /* Supported platforms */
+        .platforms {
+            margin-top: 2.5rem;
+            display: grid;
+            gap: 2rem;
+        }
+
+        .platform-group-label {
+            font-family: var(--font-mono);
+            font-size: 0.6875rem;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--fg-faint);
+            margin-bottom: 0.75rem;
+        }
+
+        .platform-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.75rem;
+        }
+
+        .platform {
+            display: flex;
+            align-items: center;
+            gap: 0.875rem;
+            padding: 1rem 1.125rem;
+            border: 1px solid var(--hairline);
+            border-radius: var(--radius);
+            background: #fff;
+            min-width: 0;
+        }
+
+        .platform img {
+            width: 2rem;
+            height: 2rem;
+            flex: none;
+        }
+
+        .platform-name {
+            font-family: var(--font-display);
+            font-weight: 600;
+            color: var(--fg-strong);
+            line-height: 1.25;
+        }
+
+        .platform-channel {
+            font-family: var(--font-mono);
+            font-size: 0.6875rem;
+            color: var(--fg-faint);
+            line-height: 1.4;
+            margin-top: 0.15rem;
+        }
+
+        .platforms-note {
+            font-size: 0.8125rem;
+            color: var(--fg-faint);
+        }
+
         /* Diagram */
         .diagram-frame {
             margin-top: 3rem;
@@ -857,6 +916,10 @@
                 grid-template-columns: 1fr 1fr;
             }
 
+            .platform-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+
             .ledger-cell {
                 padding: 1.25rem 1rem;
             }
@@ -1013,7 +1076,7 @@
             <div class="container">
                 <div class="row">
                     <div class="ledger-cell">
-                        <div class="value">06</div>
+                        <div class="value">07</div>
                         <div class="label" data-i18n="stats.providers">Billing Sources</div>
                     </div>
                     <div class="ledger-cell">
@@ -1028,6 +1091,61 @@
                         <div class="value">FOCUS</div>
                         <div class="label" data-i18n="stats.focus">Column Vocabulary</div>
                     </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Supported platforms -->
+        <section id="platforms" class="section section--flush-b">
+            <div class="container">
+                <div class="section-head">
+                    <h2 data-i18n="platforms.title">Supported platforms</h2>
+                    <span class="eyebrow" data-i18n="platforms.eyebrow">bills it reads</span>
+                </div>
+                <div class="platforms">
+                    <div>
+                        <div class="platform-group-label" data-i18n="platforms.clouds">Clouds</div>
+                        <div class="platform-grid">
+                            <div class="platform">
+                                <img src="logos/aws.svg" alt="" width="32" height="32">
+                                <div><div class="platform-name">AWS</div><div class="platform-channel" data-i18n="platforms.aws">Cost Explorer API · Data Exports</div></div>
+                            </div>
+                            <div class="platform">
+                                <img src="logos/alibaba-cloud.svg" alt="" width="32" height="32">
+                                <div><div class="platform-name">Alibaba Cloud</div><div class="platform-channel" data-i18n="platforms.aliyun">Billing API · bill import</div></div>
+                            </div>
+                            <div class="platform">
+                                <img src="logos/cloudflare.svg" alt="" width="32" height="32">
+                                <div><div class="platform-name">Cloudflare</div><div class="platform-channel" data-i18n="platforms.cloudflare">Billable usage API · per resource</div></div>
+                            </div>
+                            <div class="platform">
+                                <img src="logos/volcengine.svg" alt="" width="32" height="32">
+                                <div><div class="platform-name">Volcengine</div><div class="platform-channel" data-i18n="platforms.volcengine">Bill import · Ark endpoints</div></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="platform-group-label" data-i18n="platforms.models">Model platforms</div>
+                        <div class="platform-grid">
+                            <div class="platform">
+                                <img src="logos/openai.svg" alt="" width="32" height="32">
+                                <div><div class="platform-name">OpenAI</div><div class="platform-channel" data-i18n="platforms.openai">Cost or usage export</div></div>
+                            </div>
+                            <div class="platform">
+                                <img src="logos/anthropic.svg" alt="" width="32" height="32">
+                                <div><div class="platform-name">Anthropic</div><div class="platform-channel" data-i18n="platforms.anthropic">Cost or usage export</div></div>
+                            </div>
+                            <div class="platform">
+                                <img src="logos/deepseek.svg" alt="" width="32" height="32">
+                                <div><div class="platform-name">DeepSeek</div><div class="platform-channel" data-i18n="platforms.deepseek">Balance API · bill import</div></div>
+                            </div>
+                            <div class="platform">
+                                <img src="logos/model-studio.svg" alt="" width="32" height="32">
+                                <div><div class="platform-name">Model Studio</div><div class="platform-channel" data-i18n="platforms.bailian">Per model, in the Alibaba Cloud bill</div></div>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="platforms-note" data-i18n="platforms.note">Azure and Google Cloud are not supported yet. Logos are trademarks of their owners, shown to say which bills CloudBridge reads.</p>
                 </div>
             </div>
         </section>
@@ -1073,8 +1191,8 @@
                 </div>
                 <div class="ledger">
                     <div class="ledger-row">
-                        <div><span class="tag" data-i18n="features.multicloud.tag">Multi-cloud</span><h3 data-i18n="features.multicloud.title">Six sources, one place</h3></div>
-                        <p data-i18n="features.multicloud.desc">AWS and Alibaba Cloud provide billing APIs; DeepSeek provides a balance API. Import bill exports from Alibaba Cloud, Volcengine, OpenAI, Anthropic and DeepSeek for spending detail. Azure and Google Cloud are not currently supported.</p>
+                        <div><span class="tag" data-i18n="features.multicloud.tag">Multi-cloud</span><h3 data-i18n="features.multicloud.title">Seven sources, one place</h3></div>
+                        <p data-i18n="features.multicloud.desc">AWS, Alibaba Cloud and Cloudflare provide billing APIs; DeepSeek provides a balance API. Import bill exports from Alibaba Cloud, Volcengine, OpenAI, Anthropic and DeepSeek for spending detail. Azure and Google Cloud are not currently supported.</p>
                     </div>
                     <div class="ledger-row">
                         <div><span class="tag" data-i18n="features.import.tag">Import</span><h3 data-i18n="features.import.title">Bring your own bill</h3></div>
@@ -1192,7 +1310,7 @@
                     </details>
                     <details class="faq-item">
                         <summary data-i18n="faq.providers.q">Which cloud providers are supported?</summary>
-                        <div class="faq-answer" data-i18n-html="faq.providers.a">AWS and Alibaba Cloud provide billing APIs. DeepSeek provides a balance API and file imports for spending detail. Alibaba Cloud, Volcengine, OpenAI and Anthropic also support bill imports. Azure and Google Cloud are not currently supported. AWS accounts can also read AWS Data Exports (FOCUS 1.2) from S3.</div>
+                        <div class="faq-answer" data-i18n-html="faq.providers.a">AWS, Alibaba Cloud and Cloudflare provide billing APIs; Cloudflare's daily usage can be split by bucket, Worker, D1 database and Durable Object. DeepSeek provides a balance API and file imports for spending detail. Alibaba Cloud, Volcengine, OpenAI and Anthropic also support bill imports. Azure and Google Cloud are not currently supported. AWS accounts can also read AWS Data Exports (FOCUS 1.2) from S3.</div>
                     </details>
                     <details class="faq-item">
                         <summary data-i18n="faq.import.q">Can I use a bill I downloaded instead of an API key?</summary>
@@ -1262,7 +1380,7 @@
             </div>
             <div class="footer-bottom">
                 <span data-i18n="footer.copy">&copy; 2024-2026 CloudBridge. Released under MIT License.</span>
-                <span>AWS · Alibaba Cloud · Volcengine · OpenAI · Anthropic · DeepSeek</span>
+                <span>AWS · Alibaba Cloud · Cloudflare · Volcengine · OpenAI · Anthropic · DeepSeek</span>
             </div>
         </div>
     </footer>
