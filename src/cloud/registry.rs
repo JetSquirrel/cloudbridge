@@ -508,10 +508,9 @@ static SOURCES: &[SourceDescriptor] = &[
         // The dashboard's billing CSV is per invoice, not per day; the API
         // is the finer channel and the only one read.
         bill_file: None,
-        // corkscrew::CLOUDFLARE is ready for the fork's `cloudflare`
-        // plugin, but the pinned release does not carry it; this becomes
-        // `Some(&corkscrew::CLOUDFLARE)` with the release that does.
-        inventory: None,
+        // Workers, Durable Objects, R2, KV, Queues, D1 and zones, with the
+        // same token — which then needs their Read permissions too.
+        inventory: Some(&corkscrew::CLOUDFLARE),
     },
     SourceDescriptor {
         id: "DeepSeek",

@@ -37,7 +37,7 @@ use super::SourceContext;
 use crate::config::get_app_data_dir;
 
 /// The release CloudBridge installs.
-pub const RELEASE: &str = "cloudbridge-r2";
+pub const RELEASE: &str = "cloudbridge-r3";
 const DOWNLOAD_BASE: &str = "https://github.com/JetSquirrel/corkscrew/releases/download";
 
 /// (archive, SHA-256) for this platform's build, or `None` where there is
@@ -46,12 +46,12 @@ fn archive() -> Option<(&'static str, &'static str)> {
     if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
         Some((
             "corkscrew-cloudbridge_darwin_arm64.tar.gz",
-            "b4467e32c2b554b237a8d33fff44acd826bcf6c370b1e54758256437f7f14601",
+            "4de928e9c526f130236bbd6c9969fcf96728c34ad51efa77c61deb0caf73c772",
         ))
     } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
         Some((
             "corkscrew-cloudbridge_windows_amd64.zip",
-            "e934753f23954cc9402276e41808dc73d8175aeb21a864abdf38ce15de0c8614",
+            "753144533062c97c202eae0870b0ca5daef1bfa5296cdf4ccc518200188b0e16",
         ))
     } else {
         None
@@ -81,8 +81,17 @@ pub struct ScanProvider {
     /// Settings handed to the plugin when it starts: the `config:` map of
     /// its entry in the config file.
     pub settings: fn(&SourceContext) -> Vec<(&'static str, String)>,
-    /// A failure worth saying in the user's terms, from the scanner's log.
-    pub explain_failure: fn(&str) -> Option<String>,
+    /// A failure worth saying in the user's terms, from what the scanner
+    /// wrote.
+    pub explain_failure: fn(&ScanOutput) -> Option<String>,
+}
+
+/// What a scan wrote: its log on stderr, and its report on stdout — the
+/// JSON summary that carries each scope's per-service errors, which is
+/// where a provider's refusals end up when the scan itself carries on.
+pub struct ScanOutput {
+    pub log: String,
+    pub report: String,
 }
 
 /// Every plugin CloudBridge knows how to run and import.
@@ -104,13 +113,11 @@ pub static AWS: ScanProvider = ScanProvider {
     regional: true,
     configure: configure_aws,
     settings: |_| Vec::new(),
-    explain_failure: aws_scan_failure,
+    explain_failure: |output| aws_scan_failure(&output.log),
 };
 
-/// Cloudflare, over the account API: the fork's `cloudflare` plugin.
-///
-/// Not in the pinned release yet, so no source names it; the Cloudflare
-/// descriptor switches to it with the release that ships the plugin.
+/// Cloudflare, over the account API: the fork's `cloudflare` plugin, in
+/// the pinned release from `cloudbridge-r3` on.
 pub static CLOUDFLARE: ScanProvider = ScanProvider {
     plugin: "cloudflare",
     source: "Cloudflare",
@@ -310,21 +317,24 @@ pub fn scan(
         .env("HOME", &sandbox)
         .env("USERPROFILE", &sandbox)
         .env("CORKSCREW_CONFIG_FILE", &config)
-        .stdout(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     (provider.configure)(&mut command, credentials, regions, &sandbox);
 
     let mut child = command
         .spawn()
         .map_err(|e| anyhow!("Could not start the scanner: {e}"))?;
-    let mut stderr = child.stderr.take().expect("stderr is piped");
-    // Read stderr on its own thread: a scan logs a lot, and a full pipe
-    // would stall it.
-    let log = std::thread::spawn(move || {
-        let mut text = String::new();
-        let _ = std::io::Read::read_to_string(&mut stderr, &mut text);
-        text
-    });
+    // Read both pipes on threads of their own: a scan writes a lot, and a
+    // full pipe would stall it.
+    fn drain(mut pipe: impl std::io::Read + Send + 'static) -> std::thread::JoinHandle<String> {
+        std::thread::spawn(move || {
+            let mut text = String::new();
+            let _ = pipe.read_to_string(&mut text);
+            text
+        })
+    }
+    let log = drain(child.stderr.take().expect("stderr is piped"));
+    let report = drain(child.stdout.take().expect("stdout is piped"));
 
     let started = Instant::now();
     let status = loop {
@@ -340,13 +350,19 @@ pub fn scan(
         }
         std::thread::sleep(Duration::from_millis(250));
     };
-    let log = log.join().unwrap_or_default();
+    let output = ScanOutput {
+        log: log.join().unwrap_or_default(),
+        report: report.join().unwrap_or_default(),
+    };
 
-    if let Some(message) = (provider.explain_failure)(&log) {
+    if let Some(message) = (provider.explain_failure)(&output) {
         return Err(anyhow!(message));
     }
     if !status.success() {
-        tracing::warn!("Scanner exited with {status}; last output: {}", tail(&log));
+        tracing::warn!(
+            "Scanner exited with {status}; last output: {}",
+            tail(&output.log)
+        );
         return Err(anyhow!("The scan did not finish ({status})"));
     }
     Ok(())
@@ -399,21 +415,88 @@ fn cloudflare_settings(credentials: &SourceContext) -> Vec<(&'static str, String
     ]
 }
 
-/// A failure of a Cloudflare scan worth saying in the user's terms: the
-/// plugin refusing to start is the token, and says why.
-fn cloudflare_scan_failure(log: &str) -> Option<String> {
-    let start = log
+/// A failure of a Cloudflare scan worth saying in the user's terms.
+///
+/// The plugin starts whatever the token, and each service then reports
+/// what Cloudflare said to it in the scan's report. Two refusals matter:
+/// a token Cloudflare does not accept at all, and one that is valid but
+/// lacks a service's Read permission — likely, since the bill needs only
+/// Billing · Read. Either fails the scan, which is then not imported.
+fn cloudflare_scan_failure(output: &ScanOutput) -> Option<String> {
+    if let Some(line) = output
+        .log
         .lines()
-        .find(|line| line.contains("initialize provider \"cloudflare\""))?;
-    let reason = start
-        .split_once("initialize provider \"cloudflare\":")
-        .map(|(_, reason)| reason.trim())
-        .filter(|reason| !reason.is_empty())
-        .unwrap_or("no reason given");
-    Some(format!(
-        "Cloudflare did not let the scan start ({reason}). Check that the account's \
-         API token can read Workers, R2, KV, Queues, D1 and zones."
-    ))
+        .find(|line| line.contains("initialize provider \"cloudflare\""))
+    {
+        let reason = line
+            .split_once("initialize provider \"cloudflare\":")
+            .map(|(_, reason)| reason.trim())
+            .filter(|reason| !reason.is_empty())
+            .unwrap_or("no reason given");
+        return Some(format!("Cloudflare did not let the scan start ({reason})."));
+    }
+
+    let errors = report_errors(&output.report);
+    // Cloudflare's codes for a token it cannot read or does not know:
+    // a malformed Authorization header (6003, 6111), an invalid or
+    // expired token (1000, 9106, 9109).
+    let rejected = [
+        "\"code\":6111",
+        "\"code\":6003",
+        "\"code\":9109",
+        "\"code\":9106",
+        "\"code\":1000,",
+    ];
+    if errors
+        .iter()
+        .any(|error| rejected.iter().any(|code| error.contains(code)))
+    {
+        return Some(
+            "Cloudflare did not accept this account's API token. Check it on the Accounts page."
+                .to_string(),
+        );
+    }
+
+    // A valid token refused one service: Authentication error (10000), or
+    // a bare 403.
+    let mut refused: Vec<&str> = errors
+        .iter()
+        .filter(|error| error.contains("\"code\":10000") || error.contains("403 Forbidden"))
+        .filter_map(|error| {
+            error
+                .strip_prefix("service ")
+                .and_then(|rest| rest.split_once(':'))
+                .map(|(service, _)| service)
+        })
+        .collect();
+    refused.sort_unstable();
+    refused.dedup();
+    if !refused.is_empty() {
+        return Some(format!(
+            "This account's API token cannot read {}. Add Read permissions for Account \
+             Settings, Zone, Workers Scripts, Workers R2 Storage, Workers KV Storage, Queues \
+             and D1 to the token to scan it.",
+            refused.join(", ")
+        ));
+    }
+    None
+}
+
+/// The per-service errors in a scan's JSON report, across its scopes.
+/// Empty when the report is not that JSON — a scan that wrote nothing.
+fn report_errors(report: &str) -> Vec<String> {
+    let Ok(report) = serde_json::from_str::<serde_json::Value>(report) else {
+        return Vec::new();
+    };
+    report
+        .get("Scopes")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|scope| scope.get("Errors").and_then(serde_json::Value::as_array))
+        .flatten()
+        .filter_map(|error| error.as_str().map(str::to_string))
+        .collect()
 }
 
 /// YAML's double-quoted form of `value`.
@@ -516,6 +599,8 @@ mod tests {
         assert!(executable(&dir).exists());
         let plugin = dir.join("build/bin/plugins/official/aws");
         assert!(plugin.join("plugin.json").exists());
+        let cloudflare = dir.join("build/bin/plugins/official/cloudflare");
+        assert!(cloudflare.join("plugin.json").exists());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -529,8 +614,48 @@ mod tests {
                 .permissions()
                 .mode();
             assert!(mode & 0o111 != 0, "the plugin must stay executable");
+            let mode = std::fs::metadata(cloudflare.join("cloudflare-provider"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert!(
+                mode & 0o111 != 0,
+                "the Cloudflare plugin must stay executable"
+            );
         }
         let _ = std::fs::remove_dir_all(dir.parent().unwrap());
+    }
+
+    /// The whole path a Cloudflare scan takes — the pinned install, the
+    /// config written for it, the plugin, the report read back — with a
+    /// token Cloudflare will refuse. Downloads the release and calls the
+    /// API: run with `--ignored`.
+    #[test]
+    #[ignore]
+    fn a_cloudflare_scan_with_a_refused_token_says_so() {
+        let install = ensure_installed().unwrap();
+        let out = std::env::temp_dir()
+            .join(format!("cloudbridge-cf-{}", uuid::Uuid::new_v4()))
+            .join("scan.duckdb");
+        let error = scan(
+            &install,
+            &CLOUDFLARE,
+            &SourceContext {
+                access_key_id: "023e105f4ecef8ad9ca31a8372d0c353".to_string(),
+                secret_access_key: "0".repeat(40),
+                region: None,
+                export_uri: None,
+            },
+            &[],
+            &out,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("did not accept this account's API token"),
+            "{error}"
+        );
+        let _ = std::fs::remove_dir_all(out.parent().unwrap());
     }
 
     #[test]
@@ -618,16 +743,62 @@ mod tests {
         assert!(provider_for_plugin("gcp").is_none());
     }
 
+    fn cloudflare_output(report: &str) -> ScanOutput {
+        ScanOutput {
+            log: "Scan failed: scan completed with 1 failed scope(s): global".to_string(),
+            report: report.to_string(),
+        }
+    }
+
+    /// The report of a scan run with a token Cloudflare did not accept, as
+    /// the r3 plugin wrote it.
+    #[test]
+    fn a_rejected_cloudflare_token_is_reported_in_the_users_terms() {
+        let report = include_str!("testdata/corkscrew_cloudflare_bad_token.json");
+        let message = cloudflare_scan_failure(&cloudflare_output(report)).unwrap();
+        assert!(message.contains("did not accept"), "{message}");
+    }
+
+    /// An unknown token draws both "invalid access token" and
+    /// "authentication error"; it is the token, not its permissions.
+    #[test]
+    fn an_unknown_cloudflare_token_is_not_mistaken_for_missing_permissions() {
+        let report = include_str!("testdata/corkscrew_cloudflare_unknown_token.json");
+        let message = cloudflare_scan_failure(&cloudflare_output(report)).unwrap();
+        assert!(message.contains("did not accept"), "{message}");
+    }
+
+    /// A billing-only token is the likely one: it reads the bill and is
+    /// refused everything the scan asks for.
+    #[test]
+    fn a_token_without_read_permissions_names_what_it_could_not_read() {
+        let report = r#"{"Provider":"cloudflare","Status":"failed","Scopes":[{"Scope":"global",
+            "Errors":[
+              "service workers: workers scripts list failed for account a: GET \"https://api.cloudflare.com/client/v4/accounts/a/workers/scripts\": 403 Forbidden {\"success\":false,\"errors\":[{\"code\":10000,\"message\":\"Authentication error\"}]}",
+              "service data: d1 list failed: 403 Forbidden {\"success\":false,\"errors\":[{\"code\":10000,\"message\":\"Authentication error\"}]}",
+              "service workers: durable objects namespaces list failed: 403 Forbidden {\"errors\":[{\"code\":10000}]}"
+            ]}]}"#;
+        let message = cloudflare_scan_failure(&cloudflare_output(report)).unwrap();
+        assert!(message.contains("cannot read data, workers."), "{message}");
+        assert!(message.contains("Workers R2 Storage"), "{message}");
+    }
+
     #[test]
     fn a_cloudflare_scan_that_cannot_start_says_why() {
-        let log = "Error: initialize provider \"cloudflare\": cloudflare token validation failed: Invalid API Token";
-        let message = cloudflare_scan_failure(log).unwrap();
-        assert!(message.contains("Invalid API Token"), "{message}");
-        assert!(message.contains("API token can read"), "{message}");
-        assert_eq!(
-            cloudflare_scan_failure("Batch scan scan_1: 12 resources"),
-            None
-        );
+        let output = ScanOutput {
+            log: "Error: initialize provider \"cloudflare\": unsupported auth method \"x\""
+                .to_string(),
+            report: String::new(),
+        };
+        let message = cloudflare_scan_failure(&output).unwrap();
+        assert!(message.contains("unsupported auth method"), "{message}");
+    }
+
+    #[test]
+    fn a_clean_cloudflare_scan_explains_nothing() {
+        let report = r#"{"Provider":"cloudflare","Status":"completed","Scopes":[{"Scope":"global","Errors":null}]}"#;
+        assert_eq!(cloudflare_scan_failure(&cloudflare_output(report)), None);
+        assert_eq!(cloudflare_scan_failure(&cloudflare_output("")), None);
     }
 
     #[test]

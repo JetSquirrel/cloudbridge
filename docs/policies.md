@@ -102,6 +102,13 @@ should read. CloudBridge calls `GET /accounts/{id}/billable-usage/info` and
 `GET /accounts/{id}/billable-usage` with it and nothing else. Do not use the
 Global API Key: it carries every permission of the user.
 
+Insights scans a Cloudflare account with the same token, through the
+corkscrew plugin, and only reads. For that, add these **Read** permissions
+on the same account: **Account Settings**, **Zone**, **Workers Scripts**,
+**Workers R2 Storage**, **Workers KV Storage**, **Queues** and **D1**. A
+token without them still reads the bill; the scan reports what it was
+refused.
+
 The account ID is not a secret; it is part of the request path. The token
 is, and is kept in the OS keyring like any other credential.
 

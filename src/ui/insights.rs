@@ -5,7 +5,8 @@
 //! nothing, a resource no one owns — and the bill then says what each of
 //! those costs. One button gets the inventory: CloudBridge installs its
 //! resource scanner on first use (after saying what it is), scans each AWS
-//! account with the key saved for it, and reads the results in; the
+//! and Cloudflare account with the credential saved for it, and reads the
+//! results in; the
 //! arithmetic is [`crate::analytics::insights`], shared by both targets.
 //! Nothing here changes a resource: the page says what to look at, and the
 //! people who own the account act on it.
@@ -273,19 +274,27 @@ impl InsightsView {
                     .await
                     .map_err(|e| e.to_string())?;
                 if targets.is_empty() {
-                    return Err("Add an AWS account on the Accounts page to scan it.".to_string());
+                    return Err(
+                        "Add an AWS or Cloudflare account on the Accounts page to scan it."
+                            .to_string(),
+                    );
                 }
 
                 let mut scans = Vec::new();
                 let mut failures = Vec::new();
                 for target in targets {
+                    // A provider scanned whole has no regions to name.
+                    let place = if target.regions.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({})", target.regions.join(", "))
+                    };
                     Self::step(
                         &this,
                         cx,
                         format!(
-                            "Scanning {} ({})… this usually takes a minute or two",
+                            "Scanning {}{place}… this usually takes a minute or two",
                             target.account.name,
-                            target.regions.join(", ")
                         ),
                     );
                     let name = target.account.name.clone();
@@ -568,12 +577,12 @@ impl InsightsView {
             (
                 "Find resources to cut",
                 if ingest::scanner_supported() {
-                    "Insights scans your AWS accounts for stopped instances, idle addresses and \
-                     resources nobody owns, then prices each from your bill. CloudBridge installs \
+                    "Insights scans your AWS and Cloudflare accounts for stopped instances, idle \
+                     addresses and resources nobody owns, then prices each from your bill. CloudBridge installs \
                      and runs the scanner for you; the scan only reads."
                 } else {
-                    "Insights scans your AWS accounts for stopped instances, idle addresses and \
-                     resources nobody owns, then prices each from your bill. Scanning needs the \
+                    "Insights scans your AWS and Cloudflare accounts for stopped instances, idle \
+                     addresses and resources nobody owns, then prices each from your bill. Scanning needs the \
                      desktop app on macOS (Apple Silicon) or Windows."
                 },
             )
@@ -783,12 +792,14 @@ impl InsightsView {
                                      (MIT licence, about 30 MB), and keeps it in its own data folder.",
                                 ))
                                 .child(point(
-                                    "Each AWS account is scanned with the access key saved for it. \
-                                     The scan only reads: it lists resources and changes nothing.",
+                                    "Each AWS or Cloudflare account is scanned with the credential \
+                                     saved for it. The scan only reads: it lists resources and \
+                                     changes nothing.",
                                 ))
                                 .child(point(
-                                    "The key needs read access to resources, such as the AWS \
-                                     ReadOnlyAccess policy.",
+                                    "An AWS key needs read access to resources, such as the \
+                                     ReadOnlyAccess policy. A Cloudflare token needs Read on \
+                                     Workers, R2, KV, Queues, D1 and zones, beside Billing.",
                                 )),
                         )
                     })

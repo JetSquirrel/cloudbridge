@@ -1,0 +1,20 @@
+{
+  "ID": "e19d85ad-bea0-4c1b-a849-6fc4ad588aaa",
+  "Provider": "cloudflare",
+  "Status": "failed",
+  "Resources": [],
+  "Scopes": [
+    {
+      "Scope": "global",
+      "Resources": null,
+      "Stats": {
+        "failed_resources": 11
+      },
+      "Errors": [
+        "service accounts: accounts list failed: GET \"https://api.cloudflare.com/client/v4/accounts\": 400 Bad Request {\"success\":false,\"errors\":[{\"code\":6003,\"message\":\"Invalid request headers\",\"error_chain\":[{\"code\":6111,\"message\":\"Invalid format for Authorization header\"}]}],\"messages\":[],\"result\":null}",
+        "service zones: zones list failed: GET \"https://api.cloudflare.com/client/v4/zones?account.id=023e105f4ecef8ad9ca31a8372d0c353\": 400 Bad Request {\"success\":false,\"errors\":[{\"code\":6003,\"message\":\"Invalid request headers\",\"error_chain\":[{\"code\":6111,\"message\":\"Invalid format for Authorization header\"}]}],\"messages\":[],\"result\":null}",
+        "service workers: zones list failed: GET \"https://api.cloudflare.com/client/v4/zones?account.id=023e105f4ecef8ad9ca31a8372d0c353\": 400 Bad Request {\"success\":false,\"errors\":[{\"code\":6003,\"message\":\"Invalid request headers\",\"error_chain\":[{\"code\":6111,\"message\":\"Invalid format for Authorization header\"}]}],\"messages\":[],\"result\":null}"
+      ]
+    }
+  ]
+}

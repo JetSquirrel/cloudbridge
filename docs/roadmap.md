@@ -425,7 +425,7 @@ to which, and which ones nothing uses any more.
   stopped instances (with their volumes), idle public IPv4 addresses,
   unclaimed resources and billed resources missing from the scan. It is
   off until the user asks: **Set up and scan** asks first, then downloads
-  the fork's pinned `cloudbridge-r2` build (CLI and AWS plugin), checks it
+  the fork's pinned `cloudbridge-rN` build (CLI and provider plugins), checks it
   against a SHA-256 compiled into the app, and scans every AWS account.
   This replaces "detect it on `PATH`" above: a file the app downloads
   itself carries no quarantine flag, and a pinned, checksummed release
@@ -448,17 +448,16 @@ to which, and which ones nothing uses any more.
   zones, workers, storage, data` groups of the account the token was
   saved for, the import files `provider = 'cloudflare'` scans under the
   Cloudflare source, and Insights does not call untagged Cloudflare
-  resources unclaimed. The fork's `cloudbridge-dist` now carries the
-  plugin, the fix that expands service groups only for AWS (`storage` and
-  `data` were becoming AWS's `s3, ebs, …` for every provider), and
-  packaging under `build/bin/plugins/official/cloudflare`. Still owed:
-  1. In the fork: a `cloudbridge-r3` tag, so the release carries both
-     plugins with checksums.
-  2. Here: `RELEASE` and the archive checksums bumped to it, `inventory:
-     Some(&corkscrew::CLOUDFLARE)` on the descriptor, and the token's
-     extra read permissions (Account Settings, Zone, Workers Scripts,
-     Workers R2 Storage, Workers KV Storage, Queues, D1) on the
-     permissions page.
+  resources unclaimed. *Landed* (unreleased) with the fork's
+  `cloudbridge-r3` — the plugin, packaging under
+  `build/bin/plugins/official/cloudflare`, and the fix that expands
+  service groups only for AWS (`storage` and `data` had become AWS's
+  `s3, ebs, …` for every provider). A refused scan is explained from the
+  scan's JSON report, where the plugin puts each service's errors: an
+  invalid token, or a valid one without a service's Read permission.
+  Still owed: findings of Cloudflare's own — a Durable Object namespace
+  whose objects keep alarms set, a Worker with no route — once there is a
+  scan of a real account to judge them by.
 - **Relationship questions, not a topology picture.** Computed in
   `analytics.rs` from the two tables, and shared by both targets:
   - *Cost rolled up along ownership* — a volume's cost counted to the

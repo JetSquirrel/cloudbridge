@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   month holds the days inside it. Workers, Durable Objects, R2, D1, KV and
   Workers AI are placed in their FOCUS categories. Pay-as-you-go accounts
   only: the endpoint does not cover Enterprise contracts.
+- **Insights scans Cloudflare accounts.** The scanner moves to the fork's
+  `cloudbridge-r3`, which adds a Cloudflare plugin: with the account's
+  token, a scan lists its zones, Workers, R2 buckets, KV namespaces,
+  queues, D1 databases and Durable Object namespaces and objects. The
+  token then needs Read on those besides Billing; a scan it is refused
+  says whether the token was rejected or which services it could not
+  read. Cloudflare resources carry no owner tags, so Insights never calls
+  them unclaimed.
 - **Service categories that mean the same thing on every cloud.** Each
   source's products are placed in FOCUS `ServiceCategory` and
   `ServiceSubcategory` on the way into the ledger: Alibaba Cloud's `ecs`,
