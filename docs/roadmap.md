@@ -59,6 +59,15 @@ OpenAI and Anthropic accounts with per-model token rows so the page
 renders in the browser demo. Model names embedded in Alibaba/Volcengine
 billing-item text are not extracted yet.
 
+0.5.0 keeps the app running once its window closes — a menu bar icon, a
+15-minute refresh schedule bounded by the refresh interval, and system
+notifications for new alerts — and adds Cloudflare as a seventh source:
+its billable usage per service per day, split across buckets, Workers,
+D1 databases and Durable Object namespaces by the GraphQL Analytics
+API's per-resource usage. Insights, the first resource-inventory plugin,
+shipped in the same release for AWS and Cloudflare (see "Next —
+resources" below).
+
 A source is a `SourceDescriptor` registry entry rather than an enum
 variant. API-backed sources implement `BillingSource`; file-only sources
 provide a bill parser without an API client. The ingest pipeline persists
@@ -421,7 +430,7 @@ to which, and which ones nothing uses any more.
     here.
   - The web demo seeds an inventory from `demo_data.rs`, so the pages keep
     compiling and rendering for wasm32.
-- *First slice landed* (unreleased): the Insights page, the first
+- *First slice landed* (0.5.0): the Insights page, the first
   enrichment plugin. An import copies the newest complete corkscrew scan
   into `dim_resource` and `inventory_scan` (ledger schema v6, which also
   records the scanner and its release); `analytics::insights` prices
@@ -451,7 +460,7 @@ to which, and which ones nothing uses any more.
   zones, workers, storage, data` groups of the account the token was
   saved for, the import files `provider = 'cloudflare'` scans under the
   Cloudflare source, and Insights does not call untagged Cloudflare
-  resources unclaimed. *Landed* (unreleased) with the fork's
+  resources unclaimed. *Landed* (0.5.0) with the fork's
   `cloudbridge-r3` — the plugin, packaging under
   `build/bin/plugins/official/cloudflare`, and the fix that expands
   service groups only for AWS (`storage` and `data` had become AWS's
