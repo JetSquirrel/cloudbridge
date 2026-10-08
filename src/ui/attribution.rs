@@ -695,9 +695,9 @@ impl AttributionView {
                         .service
                         .clone()
                         .unwrap_or_else(|| "untagged charge".to_string());
-                    let mut label = format!("{} · {}", item.provider, what);
+                    let mut label = format!("{} {}", item.provider, what);
                     if let Some(description) = &item.description {
-                        label.push_str(&format!(" · {description}"));
+                        label.push_str(&format!(": {description}"));
                     }
                     div()
                         .w_full()
@@ -733,7 +733,7 @@ impl AttributionView {
                     .font_weight(FontWeight::BOLD)
                     .text_color(theme::text_primary(cx))
                     .child(format!(
-                        "Unallocated · {} ({:.1}%)",
+                        "Unallocated: {} ({:.1}%)",
                         fmt::amount(card.amount, currency),
                         card.pct
                     )),

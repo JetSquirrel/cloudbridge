@@ -101,14 +101,15 @@ impl Summary {
     }
 
     /// The text beside the menu bar icon: the month's spend, short enough
-    /// to sit among other menu bar items, marked when something is wrong.
+    /// to sit among other menu bar items. Open alerts are shown by the
+    /// icon ([`Self::alerting`]), and counted in the tooltip and panel.
     pub fn title(&self) -> String {
-        let spend = compact_amount(self.month_to_date, &self.currency);
-        if self.alerts.is_empty() {
-            spend
-        } else {
-            format!("{spend} · {}", self.alerts.len())
-        }
+        compact_amount(self.month_to_date, &self.currency)
+    }
+
+    /// Whether any alert is open, which the menu bar icon marks.
+    pub fn alerting(&self) -> bool {
+        !self.alerts.is_empty()
     }
 
     /// The icon's tooltip, which is all Windows shows of it.
@@ -209,12 +210,13 @@ mod tests {
     }
 
     #[test]
-    fn the_title_counts_open_alerts_only_when_there_are_some() {
-        assert_eq!(summary(842.0, vec![]).title(), "$842");
-        assert_eq!(
-            summary(10_811.41, vec![Severity::Critical, Severity::Warning]).title(),
-            "$10.8k · 2"
-        );
+    fn the_title_is_the_spend_and_the_icon_marks_alerts() {
+        let quiet = summary(842.0, vec![]);
+        assert_eq!(quiet.title(), "$842");
+        assert!(!quiet.alerting());
+        let alerting = summary(10_811.41, vec![Severity::Critical, Severity::Warning]);
+        assert_eq!(alerting.title(), "$10.8k");
+        assert!(alerting.alerting());
     }
 
     #[test]

@@ -446,14 +446,14 @@ impl QueryView {
             QueryStatus::Running => Some(("Running…".to_string(), theme::text_muted(cx))),
             QueryStatus::Rows(result) if result.truncated => Some((
                 format!(
-                    "Showing first {} rows — result truncated · {} ms",
+                    "Showing first {} rows — result truncated, {} ms",
                     result.rows.len(),
                     result.elapsed_ms
                 ),
                 theme::warning_text(cx),
             )),
             QueryStatus::Rows(result) => Some((
-                format!("{} rows · {} ms", result.rows.len(), result.elapsed_ms),
+                format!("{} rows in {} ms", result.rows.len(), result.elapsed_ms),
                 theme::text_muted(cx),
             )),
             _ => None,

@@ -480,7 +480,7 @@ impl CloudBridgeApp {
                     )
                     .child(theme::caption(
                         cx,
-                        format!("LOCAL LEDGER · V{}", env!("CARGO_PKG_VERSION")),
+                        format!("LOCAL LEDGER, V{}", env!("CARGO_PKG_VERSION")),
                     )),
             )
             .child(self.nav_item(
@@ -642,14 +642,14 @@ impl CloudBridgeApp {
                     Some(at) => format!("Synced {}", fmt::relative_time(at)),
                     None => "Never synced".to_string(),
                 };
-                // sync_detail carries "N sources · current for …".
+                // sync_detail carries "N sources, current for …".
                 // The dot follows the same due-now cutoff as that line.
                 let dot_color = match sync.next_fetch_at {
                     Some(at) if at > Utc::now() => theme::olive(cx),
                     Some(_) => theme::warning_text(cx),
                     None => theme::grey(cx),
                 };
-                (format!("{synced} · {}", sync_detail(sync)), dot_color)
+                (format!("{synced}. {}", sync_detail(sync)), dot_color)
             }
             None => ("Syncing…".to_string(), theme::grey(cx)),
         };
@@ -784,21 +784,21 @@ fn sync_detail(sync: &SyncStatus) -> String {
     );
 
     match sync.next_fetch_at {
-        None => format!("{} · not fetched yet", sources),
+        None => format!("{}, not fetched yet", sources),
         Some(at) => {
             let remaining = at - Utc::now();
             if remaining.num_seconds() <= 0 {
-                format!("{} · due for a refresh", sources)
+                format!("{}, due for a refresh", sources)
             } else if remaining.num_hours() >= 1 {
                 format!(
-                    "{} · current for {}h {}m",
+                    "{}, current for {}h {}m",
                     sources,
                     remaining.num_hours(),
                     remaining.num_minutes() % 60
                 )
             } else {
                 format!(
-                    "{} · current for {} min",
+                    "{}, current for {} min",
                     sources,
                     remaining.num_minutes().max(1)
                 )

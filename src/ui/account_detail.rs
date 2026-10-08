@@ -155,7 +155,7 @@ impl AccountDetailView {
                     .child(theme::caption(
                         cx,
                         format!(
-                            "{} · {} · reported in {}",
+                            "{}, {}, reported in {}",
                             d.provider, d.window_caption, d.currency
                         ),
                     )),
@@ -520,7 +520,7 @@ fn render_stats(d: &AccountDetailData, cx: &App) -> impl IntoElement {
             "SPEND",
             fmt::amount(d.spend, currency),
             div().text_color(theme::text_muted(cx)).child(format!(
-                "usage {} · credits {}",
+                "usage {}, credits {}",
                 fmt::amount(d.usage, currency),
                 fmt::amount(d.credits, currency)
             )),
