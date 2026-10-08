@@ -104,7 +104,7 @@ impl Channel {
 }
 
 /// The unit of replacement: one account's charges for one billing period.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PeriodKey {
     /// Registry `SourceId`, stored verbatim.
     pub provider: String,

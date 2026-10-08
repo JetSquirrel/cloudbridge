@@ -77,6 +77,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bill that names no model, so it reads as it did. SQL written against
   `service_category` for models should read `x_model`
 
+### Fixed
+- **A failing refresh no longer buys the same bill again and again.** A
+  period was counted as fetched only once it reached the ledger, so a
+  fetch the provider answered but the app could not store — a full disk, a
+  mapping bug — was repeated by the background schedule every 15 minutes:
+  up to 96 Cost Explorer requests a day per period, or a whole month of
+  S3 export downloads each time. Such a fetch now waits out the refresh
+  interval like a recorded one, and says why it is waiting; Force Refresh
+  still retries at once. An account whose refresh fails for any other
+  reason is retried after 15 minutes, then 30, doubling up to the refresh
+  interval, and a notification says it has stopped refreshing. One period
+  failing no longer stops the other from being fetched.
+- **An AWS Data Export month that has not changed is not downloaded
+  again.** Its files' keys, sizes and ETags are compared with the last
+  fetch's first; a month AWS finished delivering costs one listing and a
+  manifest read per refresh, not the whole export.
+- **Cost Explorer months are read whole.** A month too large for one
+  response comes back in pages, and only the first was read, so the rest
+  of the month's spend was missing. Every page is now followed — each is a
+  billed request — up to 20; a month that runs past that is kept on disk
+  and reported, not recorded as complete.
+
 ## [0.4.0] - 2026-10-05
 
 The bill arrives more ways and is read more ways: AWS Data Exports straight

@@ -88,6 +88,28 @@ pub fn channel_of(key: &PeriodKey) -> Result<Channel> {
     })
 }
 
+/// Where the raw payload of a period's complete batch is, when that batch
+/// was fetched from the provider's API — what a fetch can compare the
+/// provider's current data with before downloading it again. `None` for a
+/// period never fetched, or last filled from an imported file.
+pub fn api_batch_source(key: &PeriodKey) -> Result<Option<String>> {
+    with_connection_ref(|conn| api_batch_source_of(conn, key))
+}
+
+fn api_batch_source_of(conn: &Connection, key: &PeriodKey) -> Result<Option<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT source_ref FROM ingest_batch
+         WHERE provider = ? AND account_id = ? AND billing_period = ? AND status = 'complete'
+           AND coalesce(channel, 'api') = 'api'
+         LIMIT 1",
+    )?;
+    let mut rows = stmt.query(params![key.provider, key.account_id, key.billing_period])?;
+    Ok(match rows.next()? {
+        Some(row) => row.get::<_, Option<String>>(0)?,
+        None => None,
+    })
+}
+
 /// Daily charge totals across every provider and account since an instant,
 /// oldest first.
 pub fn daily_totals_all(since: DateTime<Utc>) -> Result<Vec<DailyTotal>> {
@@ -2642,6 +2664,56 @@ mod tests {
     fn write_through(conn: &mut Connection, key: &PeriodKey, charges: &[Charge], channel: Channel) {
         let batch_id = crate::ledger::new_batch_id();
         crate::ledger::write_period(conn, key, &batch_id, charges, None, channel).unwrap();
+    }
+
+    /// Only an API fetch is something a later fetch can compare against;
+    /// an imported month names no listing of the provider's.
+    #[test]
+    fn only_an_api_batch_is_offered_for_comparison() {
+        let mut conn = conn("USD");
+        let batch_id = crate::ledger::new_batch_id();
+        crate::ledger::write_period(
+            &mut conn,
+            &aws(),
+            &batch_id,
+            &[charge("EC2", 1.0, "USD", 1)],
+            Some("/raw/aws/part-0.parquet"),
+            Channel::Api,
+        )
+        .unwrap();
+        write_through(
+            &mut conn,
+            &aliyun(),
+            &[charge("ECS", 1.0, "CNY", 1)],
+            Channel::File,
+        );
+
+        assert_eq!(
+            api_batch_source_of(&conn, &aws()).unwrap().as_deref(),
+            Some("/raw/aws/part-0.parquet")
+        );
+        assert_eq!(api_batch_source_of(&conn, &aliyun()).unwrap(), None);
+    }
+
+    /// A period found unchanged counts as fetched now, without its rows
+    /// being written again.
+    #[test]
+    fn confirming_a_period_restarts_its_freshness() {
+        let mut conn = conn("USD");
+        write(&mut conn, &aws(), &[charge("EC2", 12.5, "USD", 1)]);
+        conn.execute(
+            "UPDATE ingest_batch SET completed_at = TIMESTAMP '2026-01-01 00:00:00'",
+            [],
+        )
+        .unwrap();
+
+        crate::ledger::confirm_period_of(&mut conn, &aws()).unwrap();
+        let confirmed = last_ingest_of(&conn, &aws()).unwrap().unwrap();
+        assert!(Utc::now() - confirmed < chrono::Duration::minutes(1));
+        let rows: i64 = conn
+            .query_row("SELECT count(*) FROM fct_charge", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 1);
     }
 
     /// A refresh has to be able to tell that a month was imported by hand,
