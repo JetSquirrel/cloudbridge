@@ -28,6 +28,10 @@ required.
   low prepaid balances, and unallocated costs. Rules run when the app opens
   and after each refresh; opening the Alerts page re-checks whether open
   alerts have resolved.
+- **Find what to cut.** Insights compares the bill with a read-only resource
+  scan of AWS and Cloudflare accounts: stopped instances, idle addresses,
+  unclaimed resources and billed resources missing from the scan, each priced
+  from the bill, summarized by type and opened down to the resource.
 - **Keep watching with the window closed.** On macOS and Windows, CloudBridge
   stays in the menu bar (notification area) with the month's spend as the
   icon's title. Every 15 minutes it fetches the accounts that are due, runs
@@ -50,7 +54,7 @@ required.
 | Volcengine (火山引擎) | Bill import | Ark (火山方舟) endpoints and token types |
 | OpenAI | Cost or usage export | Project and model costs or token usage |
 | Anthropic (Claude) | Cost or usage export | Workspace and model costs or token usage |
-| Cloudflare | Billable usage API | Daily spend per service and zone (pay-as-you-go accounts) |
+| Cloudflare | Billable usage API | Daily spend per service, split by bucket, Worker, D1 database and Durable Object (pay-as-you-go accounts) |
 | DeepSeek | Balance API or bill import | Prepaid balance; imported daily, per-model spend |
 
 File imports need no provider credentials. DeepSeek's API reports a balance,

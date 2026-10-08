@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-08
+
+CloudBridge keeps watching after its window closes: it lives in the menu
+bar, refreshes on a schedule and notifies when an alert fires. Cloudflare
+joins as a billing source, split per day down to the bucket, Worker,
+database and Durable Object behind it; Insights compares the bill with a
+resource scan of AWS and Cloudflare; and a refresh that fails no longer
+pays for the same bill again and again.
+
 ### Added
 - **CloudBridge keeps watching with its window closed.** On macOS and
   Windows it stays in the menu bar (notification area) once the window is
@@ -29,26 +38,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   month holds the days inside it. Workers, Durable Objects, R2, D1, KV and
   Workers AI are placed in their FOCUS categories. Pay-as-you-go accounts
   only: the endpoint does not cover Enterprise contracts.
-- **Insights scans Cloudflare accounts.** The scanner moves to the fork's
-  `cloudbridge-r3`, which adds a Cloudflare plugin: with the account's
-  token, a scan lists its zones, Workers, R2 buckets, KV namespaces,
-  queues, D1 databases and Durable Object namespaces and objects. The
-  token then needs Read on those besides Billing; a scan it is refused
-  says whether the token was rejected or which services it could not
-  read. Cloudflare resources carry no owner tags, so Insights never calls
-  them unclaimed.
-- **Service categories that mean the same thing on every cloud.** Each
-  source's products are placed in FOCUS `ServiceCategory` and
-  `ServiceSubcategory` on the way into the ledger: Alibaba Cloud's `ecs`,
-  Volcengine's `ecs` and AWS's EC2 are all Compute / Virtual Machines, OSS,
-  TOS and S3 are Storage / Object Storage, and Model Studio, Ark and the
-  model providers are AI and Machine Learning / Generative AI. AWS's Data
-  Exports keep the categories they carry; Cost Explorer rows are placed by
-  service name. The Attribution page's Category dimension, and the Query
-  page's category template, now compare clouds. A product no mapping knows
-  stays uncategorized — read as *Uncategorized*, since *Other* is a FOCUS
-  category of its own — and is reported as a data-quality finding naming
-  the largest such products
+  Usage inside the free allowance is kept, with the consumed quantity
+  beside a cost of zero: it is the first sign of a runaway, days before
+  the first cent is billed.
+- **A Cloudflare bill split by resource.** With Account Analytics · Read on
+  the token, each day's bill row — R2 Class A and B operations and
+  storage, Workers, D1 rows and storage, Durable Object requests,
+  duration, rows and storage — is divided across the buckets, Workers,
+  databases and namespaces that used it, in proportion to the GraphQL
+  Analytics API's per-resource usage that day. The split rows add up to
+  the bill and are marked as estimates; a meter the analytics cannot
+  split, or a token without the permission, keeps its row whole at the
+  account. Insights' Cloudflare card shows each type's and each
+  resource's cost and usage this period, costliest first — the namespace
+  behind a runaway, not just "Durable Objects". Only R2's service names
+  are checked against a real bill so far; the others follow Cloudflare's
+  pricing pages, and a name that does not match is left unsplit.
 - **Insights: what to cut, priced from the bill — an optional
   resource-inventory plugin.** A new page compares the bill with a
   resource inventory and lists stopped instances whose volumes still bill,
@@ -64,7 +69,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   database afterwards. Without a scan the page says what it would show.
   Matching a bill row to a resource by its own id covered 99.9% of
   resource-level usage on a real account. ⌘0 / Ctrl+0 opens it, and the
-  demo carries a small inventory, so it shows in the browser demo too
+  demo carries a small inventory, so it shows in the browser demo too.
+- **Insights scans Cloudflare accounts.** The scanner moves to the fork's
+  `cloudbridge-r3`, which adds a Cloudflare plugin: with the account's
+  token, a scan lists its zones, Workers, R2 buckets, KV namespaces,
+  queues, D1 databases and Durable Object namespaces and objects. The
+  token then needs Read on those besides Billing; a scan it is refused
+  says whether the token was rejected or which services it could not
+  read. Cloudflare resources carry no owner tags, so Insights never calls
+  them unclaimed.
+- **Insights shows what a Cloudflare scan found.** The resource count is
+  split by source, and a source no findings are written for yet gets a
+  card of its resources by type — Workers, Durable Objects, R2 buckets, D1
+  databases, KV namespaces, zones — rather than only adding to a total.
+- **Insights opens by type, then by resource.** Each kind of finding, and
+  each source's inventory, is a list of types with their counts and cost;
+  a type lists its resources only when opened, fifty at a time. An AWS
+  account with 400 unclaimed stacks was 400 two-line rows on one page,
+  slow to scroll and hard to read; it is now one row per type.
+- **Service categories that mean the same thing on every cloud.** Each
+  source's products are placed in FOCUS `ServiceCategory` and
+  `ServiceSubcategory` on the way into the ledger: Alibaba Cloud's `ecs`,
+  Volcengine's `ecs` and AWS's EC2 are all Compute / Virtual Machines, OSS,
+  TOS and S3 are Storage / Object Storage, and Model Studio, Ark and the
+  model providers are AI and Machine Learning / Generative AI. AWS's Data
+  Exports keep the categories they carry; Cost Explorer rows are placed by
+  service name. The Attribution page's Category dimension, and the Query
+  page's category template, now compare clouds. A product no mapping knows
+  stays uncategorized — read as *Uncategorized*, since *Other* is a FOCUS
+  category of its own — and is reported as a data-quality finding naming
+  the largest such products.
 
 ### Changed
 - **`service_category` has one meaning (ledger schema v5).** It used to
@@ -75,38 +109,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   migrated in place on first open, from the columns it already has. The
   Models page groups by `x_model`, falling back to the product code for a
   bill that names no model, so it reads as it did. SQL written against
-  `service_category` for models should read `x_model`
+  `service_category` for models should read `x_model`.
 
 ### Fixed
-- **Cloudflare usage inside the free allowance reaches the ledger.** A row
-  that billed nothing and priced nothing was dropped, and a month inside
-  the allowance prices nothing at all — so an account's whole Cloudflare
-  bill read as empty. It is usage still, and the first sign of a runaway:
-  rows are now kept when anything was consumed, with the consumed quantity
-  beside a cost of zero. Replay normalization on the Accounts page rebuilds
-  months already fetched, without fetching them again.
-- **A Cloudflare bill split by resource.** With Account Analytics · Read on
-  the token, each day's bill row — R2 Class A and B operations and
-  storage, Workers, D1 rows and storage, Durable Object requests,
-  duration, rows and storage — is divided across the buckets, Workers,
-  databases and namespaces that used it, in proportion to the GraphQL
-  Analytics API's per-resource usage that day. The split rows add up to
-  the bill and are marked as estimates; a meter the analytics cannot
-  split, or a token without the permission, keeps its row whole at the
-  account. Insights' Cloudflare card shows each type's and each
-  resource's cost and usage this period, costliest first — the namespace
-  behind a runaway, not just "Durable Objects". Only R2's service names
-  are checked against a real bill so far; the others follow Cloudflare's
-  pricing pages, and a name that does not match is left unsplit.
-- **Insights opens by type, then by resource.** Each kind of finding, and
-  each source's inventory, is a list of types with their counts and cost;
-  a type lists its resources only when opened, fifty at a time. An AWS
-  account with 400 unclaimed stacks was 400 two-line rows on one page,
-  slow to scroll and hard to read; it is now one row per type.
-- **Insights shows what a Cloudflare scan found.** The resource count is
-  split by source, and a source no findings are written for yet gets a
-  card of its resources by type — Workers, Durable Objects, R2 buckets, D1
-  databases, KV namespaces, zones — rather than only adding to a total.
 - **A failing refresh no longer buys the same bill again and again.** A
   period was counted as fetched only once it reached the ledger, so a
   fetch the provider answered but the app could not store — a full disk, a
@@ -647,6 +652,7 @@ next.
 
 ## Version History
 
+- **0.5.0** - Menu bar and background alerts, Cloudflare split by resource, and Insights for AWS and Cloudflare
 - **0.4.0** - AWS Data Exports from S3, a Models page, a SQL console, budgets, and a browser demo
 - **0.3.2** - DuckDB's json and parquet extensions compiled in, fixing signed and offline builds
 - **0.3.1** - One shared set of theme components, and a signed, notarized macOS build
