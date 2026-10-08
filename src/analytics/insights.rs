@@ -58,6 +58,54 @@ pub struct TypeCount {
     pub count: usize,
     /// Up to [`SAMPLE_NAMES`] of them, by name, to say which.
     pub names: Vec<String>,
+    /// Every one of them, as indices into the resources the inventory was
+    /// built from, in name order — what a drill-down lists.
+    pub members: Vec<usize>,
+}
+
+/// One kind of finding's resources of one type: the summary row a list of
+/// findings opens from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FindingGroup {
+    pub resource_type: String,
+    pub count: usize,
+    pub cost: f64,
+    /// Indices into the report's findings, costliest first.
+    pub members: Vec<usize>,
+}
+
+/// The findings of `kind`, grouped by resource type: costliest group
+/// first, then the largest. A page lists these, and a group's findings
+/// only when it is opened — 400 unclaimed stacks are one row until then.
+pub fn findings_by_type(findings: &[InsightFinding], kind: InsightKind) -> Vec<FindingGroup> {
+    let mut by_type: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (i, finding) in findings.iter().enumerate() {
+        if finding.kind == kind {
+            by_type
+                .entry(finding.resource_kind.as_str())
+                .or_default()
+                .push(i);
+        }
+    }
+    let mut groups: Vec<FindingGroup> = by_type
+        .into_iter()
+        .map(|(resource_type, mut members)| {
+            members.sort_by(|&a, &b| findings[b].cost.total_cmp(&findings[a].cost));
+            FindingGroup {
+                resource_type: resource_type.to_string(),
+                count: members.len(),
+                cost: members.iter().map(|&i| findings[i].cost).sum(),
+                members,
+            }
+        })
+        .collect();
+    groups.sort_by(|a, b| {
+        b.cost
+            .total_cmp(&a.cost)
+            .then(b.count.cmp(&a.count))
+            .then_with(|| a.resource_type.cmp(&b.resource_type))
+    });
+    groups
 }
 
 /// How many names a type is illustrated with.
@@ -66,31 +114,33 @@ pub const SAMPLE_NAMES: usize = 3;
 /// The inventory by source, then by type: what a scan found, whether or
 /// not anything on it is a finding.
 pub fn inventory_by_source(resources: &[InventoryResource]) -> Vec<SourceInventory> {
-    let mut by_source: BTreeMap<&str, BTreeMap<&str, Vec<&InventoryResource>>> = BTreeMap::new();
-    for resource in resources {
+    let mut by_source: BTreeMap<&str, BTreeMap<&str, Vec<usize>>> = BTreeMap::new();
+    for (i, resource) in resources.iter().enumerate() {
         by_source
             .entry(resource.provider.as_str())
             .or_default()
             .entry(resource.resource_type.as_str())
             .or_default()
-            .push(resource);
+            .push(i);
     }
+    let name = |i: &usize| {
+        resources[*i]
+            .name
+            .clone()
+            .unwrap_or_else(|| resources[*i].resource_id.clone())
+    };
     by_source
         .into_iter()
         .map(|(source, types)| {
             let mut types: Vec<TypeCount> = types
                 .into_iter()
-                .map(|(resource_type, of_type)| {
-                    let mut names: Vec<String> = of_type
-                        .iter()
-                        .map(|r| r.name.clone().unwrap_or_else(|| r.resource_id.clone()))
-                        .collect();
-                    names.sort();
-                    names.truncate(SAMPLE_NAMES);
+                .map(|(resource_type, mut members)| {
+                    members.sort_by_key(|i| name(i));
                     TypeCount {
                         resource_type: resource_type.to_string(),
-                        count: of_type.len(),
-                        names,
+                        count: members.len(),
+                        names: members.iter().take(SAMPLE_NAMES).map(&name).collect(),
+                        members,
                     }
                 })
                 .collect();
@@ -659,8 +709,44 @@ mod tests {
         assert_eq!(workers.resource_type, "worker_script");
         assert_eq!(workers.count, 4);
         assert_eq!(workers.names, ["api", "auth", "cron"]);
+        assert_eq!(workers.members, [1, 3, 2, 0], "every worker, by name");
         // A resource with no name is named by its id.
         assert_eq!(inventory[0].types[0].names, ["arn:aws:s3:::logs"]);
+    }
+
+    #[test]
+    fn findings_are_grouped_by_type_costliest_first() {
+        let unclaimed = |id: &str, kind: &str, cost: f64| InsightFinding {
+            kind: InsightKind::Unclaimed,
+            provider: "AWS".to_string(),
+            cloud_account_id: None,
+            resource_id: id.to_string(),
+            name: None,
+            resource_kind: kind.to_string(),
+            region: None,
+            cost,
+            evidence: String::new(),
+        };
+        let findings = [
+            unclaimed("s1", "cloudformation:stack", 0.0),
+            unclaimed("s2", "cloudformation:stack", 0.0),
+            unclaimed("t1", "dynamodb:table", 3.0),
+            unclaimed("t2", "dynamodb:table", 5.0),
+            InsightFinding {
+                kind: InsightKind::IdlePublicIp,
+                ..unclaimed("ip", "ec2:elastic-ip", 9.0)
+            },
+        ];
+        let groups = findings_by_type(&findings, InsightKind::Unclaimed);
+        let summary: Vec<_> = groups
+            .iter()
+            .map(|g| (g.resource_type.as_str(), g.count, g.cost))
+            .collect();
+        assert_eq!(
+            summary,
+            [("dynamodb:table", 2, 8.0), ("cloudformation:stack", 2, 0.0)]
+        );
+        assert_eq!(groups[0].members, [3, 2], "costliest table first");
     }
 
     /// A Cloudflare resource has no owner tags to miss, so it is never

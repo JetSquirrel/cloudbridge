@@ -85,6 +85,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rows are now kept when anything was consumed, with the consumed quantity
   beside a cost of zero. Replay normalization on the Accounts page rebuilds
   months already fetched, without fetching them again.
+- **Insights opens by type, then by resource.** Each kind of finding, and
+  each source's inventory, is a list of types with their counts and cost;
+  a type lists its resources only when opened, fifty at a time. An AWS
+  account with 400 unclaimed stacks was 400 two-line rows on one page,
+  slow to scroll and hard to read; it is now one row per type.
 - **Insights shows what a Cloudflare scan found.** The resource count is
   split by source, and a source no findings are written for yet gets a
   card of its resources by type — Workers, Durable Objects, R2 buckets, D1
