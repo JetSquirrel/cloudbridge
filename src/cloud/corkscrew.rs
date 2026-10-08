@@ -58,9 +58,42 @@ fn archive() -> Option<(&'static str, &'static str)> {
     }
 }
 
-/// The services a scan asks for: the ones that carry cost and that the
+/// One corkscrew provider plugin, and what CloudBridge has to tell it.
+///
+/// A source scans its resources when its descriptor names one of these
+/// (`SourceDescriptor::inventory`). Everything provider-specific about a
+/// scan is here; [`scan`] itself only runs the scanner. AWS is the only
+/// one so far. Cloudflare's — Workers, Durable Objects, R2 buckets, D1
+/// databases, zones — is to be written as a plugin in the fork and ship in
+/// a later `cloudbridge-rN` release; adding it means a second value of this
+/// type, and the release's checksums.
+pub struct ScanProvider {
+    /// The plugin's name: `--provider`, and its key in the config file.
+    pub plugin: &'static str,
+    /// The services a scan asks for.
+    pub services: &'static [&'static str],
+    /// Whether a scan covers a list of regions. A provider without regions
+    /// is scanned whole, and gets none.
+    pub regional: bool,
+    /// Hand the account's credentials to the plugin, and keep anything of
+    /// the user's own configuration for the same provider out of its way.
+    pub configure: fn(&mut Command, &SourceContext, &[String], &Path),
+    /// A failure worth saying in the user's terms, from the scanner's log.
+    pub explain_failure: fn(&str) -> Option<String>,
+}
+
+/// AWS, over Resource Explorer and Cloud Control.
+pub static AWS: ScanProvider = ScanProvider {
+    plugin: "aws",
+    services: AWS_SERVICES,
+    regional: true,
+    configure: configure_aws,
+    explain_failure: aws_scan_failure,
+};
+
+/// The services an AWS scan asks for: the ones that carry cost and that the
 /// Insights findings read. Resource Explorer's names.
-pub const SERVICES: &[&str] = &[
+pub const AWS_SERVICES: &[&str] = &[
     "ec2",
     "s3",
     "rds",
@@ -197,15 +230,16 @@ fn unpack(archive: &Path, into: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Scan one AWS account's `regions` into a fresh database at `out`.
-/// Blocking; `ensure_installed` first.
+/// Scan one account's `regions` into a fresh database at `out`, with the
+/// provider's plugin. Blocking; `ensure_installed` first.
 pub fn scan(
     install: &Path,
+    provider: &ScanProvider,
     credentials: &SourceContext,
     regions: &[String],
     out: &Path,
 ) -> Result<()> {
-    if regions.is_empty() {
+    if provider.regional && regions.is_empty() {
         return Err(anyhow!("No regions to scan"));
     }
     let sandbox = get_app_data_dir()?.join("tools").join("corkscrew-home");
@@ -217,33 +251,26 @@ pub fn scan(
         let _ = std::fs::remove_file(stale);
     }
     let config = sandbox.join("corkscrew.yaml");
-    std::fs::write(&config, config_yaml(regions, out))?;
+    std::fs::write(&config, config_yaml(provider, regions, out))?;
 
     let mut command = Command::new(executable(install));
     command
         .current_dir(install)
-        .args(["scan", "--provider", "aws", "--output", "json"])
-        .arg("--region")
-        .arg(regions.join(","))
+        .args(["scan", "--provider", provider.plugin, "--output", "json"]);
+    if provider.regional {
+        command.arg("--region").arg(regions.join(","));
+    }
+    command
         .arg("--services")
-        .arg(SERVICES.join(","))
+        .arg(provider.services.join(","))
         .arg("--database")
         .arg(out)
         .env("HOME", &sandbox)
         .env("USERPROFILE", &sandbox)
-        .env("AWS_ACCESS_KEY_ID", &credentials.access_key_id)
-        .env("AWS_SECRET_ACCESS_KEY", &credentials.secret_access_key)
-        .env("AWS_REGION", &regions[0])
-        .env(
-            "AWS_SHARED_CREDENTIALS_FILE",
-            sandbox.join("no-credentials"),
-        )
-        .env("AWS_CONFIG_FILE", sandbox.join("no-config"))
-        .env_remove("AWS_PROFILE")
-        .env_remove("AWS_SESSION_TOKEN")
         .env("CORKSCREW_CONFIG_FILE", &config)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped());
+    (provider.configure)(&mut command, credentials, regions, &sandbox);
 
     let mut child = command
         .spawn()
@@ -273,7 +300,7 @@ pub fn scan(
     };
     let log = log.join().unwrap_or_default();
 
-    if let Some(message) = scan_failure(&log) {
+    if let Some(message) = (provider.explain_failure)(&log) {
         return Err(anyhow!(message));
     }
     if !status.success() {
@@ -283,10 +310,32 @@ pub fn scan(
     Ok(())
 }
 
-/// The configuration a scan runs with: the AWS provider over `regions`
-/// and [`SERVICES`], writing to `out`. The flags say the same; corkscrew
-/// still wants the file.
-fn config_yaml(regions: &[String], out: &Path) -> String {
+/// The AWS plugin reads the standard SDK variables. The shared config
+/// files are pointed into the sandbox, where there are none, so no profile
+/// of the user's can stand in for the account's own key.
+fn configure_aws(
+    command: &mut Command,
+    credentials: &SourceContext,
+    regions: &[String],
+    sandbox: &Path,
+) {
+    command
+        .env("AWS_ACCESS_KEY_ID", &credentials.access_key_id)
+        .env("AWS_SECRET_ACCESS_KEY", &credentials.secret_access_key)
+        .env("AWS_REGION", &regions[0])
+        .env(
+            "AWS_SHARED_CREDENTIALS_FILE",
+            sandbox.join("no-credentials"),
+        )
+        .env("AWS_CONFIG_FILE", sandbox.join("no-config"))
+        .env_remove("AWS_PROFILE")
+        .env_remove("AWS_SESSION_TOKEN");
+}
+
+/// The configuration a scan runs with: the provider over `regions` and
+/// its services, writing to `out`. The flags say the same; corkscrew still
+/// wants the file.
+fn config_yaml(provider: &ScanProvider, regions: &[String], out: &Path) -> String {
     let quoted = |items: &mut dyn Iterator<Item = &str>| -> String {
         items
             .map(|item| {
@@ -297,10 +346,19 @@ fn config_yaml(regions: &[String], out: &Path) -> String {
             })
             .collect()
     };
+    let regions = if provider.regional {
+        format!(
+            "    regions:\n{}",
+            quoted(&mut regions.iter().map(String::as_str))
+        )
+    } else {
+        String::new()
+    };
     format!(
-        "version: \"2.0\"\nproviders:\n  aws:\n    enabled: true\n    regions:\n{}    services:\n{}database:\n  path: \"{}\"\n",
-        quoted(&mut regions.iter().map(String::as_str)),
-        quoted(&mut SERVICES.iter().copied()),
+        "version: \"2.0\"\nproviders:\n  {}:\n    enabled: true\n{}    services:\n{}database:\n  path: \"{}\"\n",
+        provider.plugin,
+        regions,
+        quoted(&mut provider.services.iter().copied()),
         out.display()
             .to_string()
             .replace('\\', "\\\\")
@@ -308,8 +366,8 @@ fn config_yaml(regions: &[String], out: &Path) -> String {
     )
 }
 
-/// A failure worth saying in the user's terms, from the scanner's log.
-fn scan_failure(log: &str) -> Option<String> {
+/// A failure of an AWS scan worth saying in the user's terms.
+fn aws_scan_failure(log: &str) -> Option<String> {
     let denied = [
         "AccessDenied",
         "UnauthorizedOperation",
@@ -382,6 +440,7 @@ mod tests {
     #[test]
     fn the_config_names_the_regions_services_and_database() {
         let yaml = config_yaml(
+            &AWS,
             &["ap-east-1".to_string(), "us-east-1".to_string()],
             Path::new("/data/inventory/scan-1.duckdb"),
         );
@@ -391,6 +450,7 @@ mod tests {
         assert!(yaml.ends_with("database:\n  path: \"/data/inventory/scan-1.duckdb\"\n"));
         // A Windows path's backslashes are escaped inside the quotes.
         let windows = config_yaml(
+            &AWS,
             &["us-east-1".to_string()],
             Path::new(r"C:\data\scan.duckdb"),
         );
@@ -400,27 +460,47 @@ mod tests {
         );
     }
 
+    /// A provider scanned whole names no regions, in the file as on the
+    /// command line.
+    #[test]
+    fn a_provider_without_regions_is_configured_without_them() {
+        static WHOLE: ScanProvider = ScanProvider {
+            plugin: "example",
+            services: &["things"],
+            regional: false,
+            configure: |_, _, _, _| {},
+            explain_failure: |_| None,
+        };
+        let yaml = config_yaml(&WHOLE, &[], Path::new("/data/scan.duckdb"));
+        assert!(yaml.starts_with(
+            "version: \"2.0\"\nproviders:\n  example:\n    enabled: true\n    services:\n"
+        ));
+        assert!(!yaml.contains("regions"));
+    }
+
     #[test]
     fn a_rejected_key_is_reported_in_the_users_terms() {
         let log = "operation error STS: GetCallerIdentity, api error InvalidClientTokenId: \
                    The security token included in the request is invalid";
-        assert!(scan_failure(log).unwrap().contains("access key"));
+        assert!(aws_scan_failure(log).unwrap().contains("access key"));
     }
 
     #[test]
     fn missing_read_permissions_are_reported_when_nothing_was_scanned() {
         let refused = "api error AccessDeniedException: User is not authorized to perform \
                        resource-explorer-2:Search";
-        assert!(scan_failure(refused).unwrap().contains("ReadOnlyAccess"));
+        assert!(aws_scan_failure(refused)
+            .unwrap()
+            .contains("ReadOnlyAccess"));
         // Per-resource refusals in a scan that went through are not fatal.
         let partial = format!("{refused}\nBatch scan scan_1: 485 resources across 17 services");
-        assert_eq!(scan_failure(&partial), None);
+        assert_eq!(aws_scan_failure(&partial), None);
     }
 
     #[test]
     fn the_scan_covers_the_services_insights_reads() {
         for service in ["ec2", "s3", "kms", "secretsmanager"] {
-            assert!(SERVICES.contains(&service), "{service}");
+            assert!(AWS_SERVICES.contains(&service), "{service}");
         }
     }
 }
