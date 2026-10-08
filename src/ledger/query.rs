@@ -17,8 +17,8 @@ pub use crate::model::{
     AdhocResult, Balance, BreakdownDim, CategoryDelta, CostChangeDecomposition, DailyModelTokens,
     DailyTotal, DataQualityIssue, DataQualityKind, ForecastBands, InventoryResource,
     InventoryScope, IssueSeverity, LedgerAccount, ModelTokenSummary, MovementKind, PeriodForecast,
-    PeriodOverPeriod, ResourceCost, ServiceDailyTotal, ServiceMovement, ServiceTagUsage,
-    TopResource, UntaggedCharge, UntaggedServiceUsage,
+    PeriodOverPeriod, ResourceCost, ResourceUsage, ServiceDailyTotal, ServiceMovement,
+    ServiceTagUsage, TopResource, UntaggedCharge, UntaggedServiceUsage,
 };
 
 /// Total charged in one billing period, in the reporting currency.
@@ -1812,6 +1812,40 @@ fn resource_usage_costs_of(conn: &Connection, billing_period: &str) -> Result<Ve
     Ok(rows)
 }
 
+/// Each resource's usage quantity of each service in a period, in the
+/// bill's unit, where the bill names resources and says how much.
+pub fn resource_usage_quantities(billing_period: &str) -> Result<Vec<ResourceUsage>> {
+    with_connection_ref(|conn| resource_usage_quantities_of(conn, billing_period))
+}
+
+fn resource_usage_quantities_of(
+    conn: &Connection,
+    billing_period: &str,
+) -> Result<Vec<ResourceUsage>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT provider, resource_id, coalesce(service_name, 'Other'), pricing_unit,
+                sum(pricing_quantity)
+         FROM {NORMALIZED_VIEW}
+         WHERE billing_period = ? AND resource_id IS NOT NULL
+           AND pricing_quantity IS NOT NULL AND charge_category = 'Usage'
+         GROUP BY ALL
+         HAVING sum(pricing_quantity) > 0
+         ORDER BY 1, 2, 3"
+    ))?;
+    let rows = stmt
+        .query_map(params![billing_period], |row| {
+            Ok(ResourceUsage {
+                provider: row.get(0)?,
+                resource_id: row.get(1)?,
+                service: row.get(2)?,
+                unit: row.get(3)?,
+                quantity: row.get(4)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /// Usage of one period grouped by `(provider, service, tag_value)` in a
 /// single round-trip, largest first — the attribution page's N+1 killer:
 /// filtering the rows of one `(provider, service)` gives exactly what
@@ -2664,6 +2698,33 @@ mod tests {
     fn write_through(conn: &mut Connection, key: &PeriodKey, charges: &[Charge], channel: Channel) {
         let batch_id = crate::ledger::new_batch_id();
         crate::ledger::write_period(conn, key, &batch_id, charges, None, channel).unwrap();
+    }
+
+    /// A split bill's usage reads back per resource and service, summed
+    /// over the days; rows naming no resource, or no quantity, stay out.
+    #[test]
+    fn usage_is_summed_per_resource_and_service() {
+        let mut conn = conn("USD");
+        let bucket = |day, quantity: f64| Charge {
+            resource_id: Some("acct/r2/aiops".to_string()),
+            pricing_quantity: Some(quantity),
+            pricing_unit: Some("Count".to_string()),
+            ..charge("R2 Class B", 0.0, "USD", day)
+        };
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                bucket(1, 600.0),
+                bucket(2, 134.0),
+                charge("R2 Class B", 0.0, "USD", 3),
+            ],
+        );
+        let usage = resource_usage_quantities_of(&conn, &aws().billing_period).unwrap();
+        assert_eq!(usage.len(), 1);
+        assert_eq!(usage[0].resource_id, "acct/r2/aiops");
+        assert_eq!(usage[0].quantity, 734.0);
+        assert_eq!(usage[0].unit.as_deref(), Some("Count"));
     }
 
     /// Only an API fetch is something a later fetch can compare against;

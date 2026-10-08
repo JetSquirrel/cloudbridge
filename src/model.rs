@@ -813,6 +813,18 @@ pub struct ResourceCost {
     pub idle_public_ip: bool,
 }
 
+/// How much of one service a resource used in a period, in the bill's
+/// own unit: what a split bill says per resource when the free allowance
+/// leaves nothing to price.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResourceUsage {
+    pub provider: String,
+    pub resource_id: String,
+    pub service: String,
+    pub unit: Option<String>,
+    pub quantity: f64,
+}
+
 /// What an Insights finding says about a resource.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum InsightKind {
@@ -859,10 +871,17 @@ pub struct InsightsReport {
     /// Unclaimed resources the bill charges nothing for this period:
     /// counted, not listed, so they do not bury the ones that cost.
     pub unclaimed_free: usize,
-    /// Whether the period's bill names resources at all. Without that, a
+    /// Whether the period's bill names the resources the findings are
+    /// about — those of a judged source (AWS) — at all. Without that, a
     /// finding has no price, and unclaimed resources are listed whatever
-    /// they cost rather than only when they cost something.
+    /// they cost rather than only when they cost something. Another
+    /// source's resource-level rows (a split Cloudflare bill) do not price
+    /// AWS's findings.
     pub priced: bool,
+    /// What the bill charges each inventory resource this period, by its
+    /// index in the resources the report was built from; 0 for one the
+    /// bill does not name.
+    pub resource_cost: Vec<f64>,
     /// Of the bill's resource-level usage cost, how much matched an
     /// inventory resource.
     pub matched_cost: f64,

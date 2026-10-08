@@ -102,6 +102,12 @@ should read. CloudBridge calls `GET /accounts/{id}/billable-usage/info` and
 `GET /accounts/{id}/billable-usage` with it and nothing else. Do not use the
 Global API Key: it carries every permission of the user.
 
+To split the bill by resource — R2 bucket, Worker, D1 database, Durable
+Object namespace — add **Account → Account Analytics → Read**. CloudBridge
+then asks the GraphQL Analytics API (`POST /graphql`) for each resource's
+daily usage of the meters the bill names, and divides each day's row by
+those shares. Without it the bill is read whole, at the account.
+
 Insights scans a Cloudflare account with the same token, through the
 corkscrew plugin, and only reads. For that, add these **Read** permissions
 on the same account: **Account Settings**, **Zone**, **Workers Scripts**,

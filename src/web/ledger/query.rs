@@ -28,8 +28,8 @@ pub use crate::model::{
     AdhocResult, Balance, BreakdownDim, CategoryDelta, CostChangeDecomposition, DailyModelTokens,
     DailyTotal, DataQualityIssue, DataQualityKind, ForecastBands, InventoryResource,
     InventoryScope, IssueSeverity, LedgerAccount, ModelTokenSummary, MovementKind, PeriodForecast,
-    PeriodOverPeriod, ResourceCost, ServiceDailyTotal, ServiceMovement, ServiceTagUsage,
-    TopResource, UntaggedCharge, UntaggedServiceUsage,
+    PeriodOverPeriod, ResourceCost, ResourceUsage, ServiceDailyTotal, ServiceMovement,
+    ServiceTagUsage, TopResource, UntaggedCharge, UntaggedServiceUsage,
 };
 
 /// The bucket a charge with no value for the tag key lands in, as the view's
@@ -360,6 +360,44 @@ pub fn inventory_scope() -> Result<Option<InventoryScope>> {
 /// in the reporting currency, across every account — the desktop's
 /// `GROUP BY provider, resource_id`, `any_value` for the descriptive
 /// columns and a usage-only sum.
+/// Each resource's usage quantity of each service in a period; the
+/// desktop's `resource_usage_quantities`, over the in-memory rows.
+pub fn resource_usage_quantities(billing_period: &str) -> Result<Vec<ResourceUsage>> {
+    read(|all| {
+        let mut grouped: BTreeMap<(String, String, String, Option<String>), f64> = BTreeMap::new();
+        for row in all.iter().filter(|row| {
+            row.billing_period == billing_period && row.charge_category == ChargeCategory::Usage
+        }) {
+            let (Some(resource_id), Some(quantity)) =
+                (row.resource_id.as_ref(), row.pricing_quantity)
+            else {
+                continue;
+            };
+            *grouped
+                .entry((
+                    row.provider.clone(),
+                    resource_id.clone(),
+                    service_of(row).to_string(),
+                    row.pricing_unit.clone(),
+                ))
+                .or_insert(0.0) += quantity;
+        }
+        grouped
+            .into_iter()
+            .filter(|(_, quantity)| *quantity > 0.0)
+            .map(
+                |((provider, resource_id, service, unit), quantity)| ResourceUsage {
+                    provider,
+                    resource_id,
+                    service,
+                    unit,
+                    quantity,
+                },
+            )
+            .collect()
+    })
+}
+
 pub fn resource_usage_costs(billing_period: &str) -> Result<Vec<ResourceCost>> {
     read(|all| {
         let mut grouped: BTreeMap<(String, String), ResourceCost> = BTreeMap::new();

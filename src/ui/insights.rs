@@ -11,6 +11,8 @@
 //! Nothing here changes a resource: the page says what to look at, and the
 //! people who own the account act on it.
 
+use std::collections::HashMap;
+
 use anyhow::Result;
 use chrono::Utc;
 use gpui_kit::component::{
@@ -22,12 +24,15 @@ use gpui_kit::*;
 
 use super::{data, fmt, theme};
 use crate::analytics::insights::{
-    insights, inventory_by_source, resource_key, SourceInventory, JUDGED_SOURCES, OWNER_TAG_KEYS,
+    findings_by_type, insights, inventory_by_source, resource_key, FindingGroup, SourceInventory,
+    JUDGED_SOURCES, OWNER_TAG_KEYS,
 };
 use crate::cloud::BillingPeriod;
 use crate::ingest;
 use crate::ledger::query;
-use crate::model::{InsightFinding, InsightKind, InsightsReport, InventoryScope};
+use crate::model::{
+    InsightFinding, InsightKind, InsightsReport, InventoryResource, InventoryScope, ResourceUsage,
+};
 use crate::ui::theme::CardOutline as _;
 
 actions!(insights, [CloseScanDialog]);
@@ -52,6 +57,14 @@ pub struct InsightsData {
     pub scope: Option<InventoryScope>,
     /// What the scan found, by source and type.
     pub inventory: Vec<SourceInventory>,
+    /// The resources `inventory` indexes into.
+    pub resources: Vec<InventoryResource>,
+    /// Each kind's findings by resource type, what a card lists until a
+    /// type is opened.
+    pub finding_groups: Vec<(InsightKind, Vec<FindingGroup>)>,
+    /// This period's usage by resource, keyed as the inventory meets the
+    /// bill: `(provider, resource_key)`.
+    pub usage: HashMap<(String, String), Vec<ResourceUsage>>,
 }
 
 /// Read the inventory and the period's resource costs, and judge them.
@@ -62,12 +75,29 @@ pub fn load_insights() -> Result<InsightsData> {
     let scope = query::inventory_scope()?;
     let costs = query::resource_usage_costs(&period)?;
     let report = insights(&resources, &costs, scope.as_ref(), OWNER_TAG_KEYS);
+    let mut usage: HashMap<(String, String), Vec<ResourceUsage>> = HashMap::new();
+    for row in query::resource_usage_quantities(&period)? {
+        usage
+            .entry((
+                row.provider.clone(),
+                resource_key(&row.resource_id).to_string(),
+            ))
+            .or_default()
+            .push(row);
+    }
+    let finding_groups = KINDS
+        .iter()
+        .map(|kind| (*kind, findings_by_type(&report.findings, *kind)))
+        .collect();
     Ok(InsightsData {
         currency: data::reporting_currency(),
         period_label: period,
         report,
         scope,
         inventory: inventory_by_source(&resources),
+        resources,
+        finding_groups,
+        usage,
     })
 }
 
@@ -130,6 +160,19 @@ pub struct InsightsView {
     scan_outcome: Option<Result<String, String>>,
     /// Focus anchor the install dialog tracks, so Escape reaches it.
     dialog_focus: FocusHandle,
+    /// The groups opened, by [`group_key`], each with how many of its rows
+    /// are shown. A list renders only what is open, so a scan of
+    /// thousands costs a page of rows, not thousands.
+    expanded: HashMap<String, usize>,
+}
+
+/// Rows an opened group shows at first, and adds per "Show more".
+const PAGE_ROWS: usize = 50;
+
+/// The key a group's open state is kept under: what it lists, and which
+/// type.
+fn group_key(scope: &str, resource_type: &str) -> String {
+    format!("{scope}|{resource_type}")
 }
 
 impl InsightsView {
@@ -149,6 +192,7 @@ impl InsightsView {
             load_generation: 0,
             scan: ScanState::Idle,
             scan_outcome: None,
+            expanded: HashMap::new(),
             dialog_focus: cx.focus_handle(),
         }
     }
@@ -494,15 +538,14 @@ impl InsightsView {
     }
 
     fn render_kind(&self, d: &InsightsData, kind: InsightKind, cx: &Context<Self>) -> AnyElement {
-        let findings: Vec<&InsightFinding> = d
-            .report
-            .findings
+        let Some((_, groups)) = d
+            .finding_groups
             .iter()
-            .filter(|f| f.kind == kind)
-            .collect();
-        if findings.is_empty() {
+            .find(|(of, groups)| *of == kind && !groups.is_empty())
+        else {
             return div().into_any_element();
-        }
+        };
+        let scope = format!("finding:{kind:?}");
         let footnote = match kind {
             InsightKind::Unclaimed if d.report.unclaimed_free > 0 => Some(format!(
                 "{} more unclaimed resource{} cost nothing this period",
@@ -537,24 +580,140 @@ impl InsightsView {
                             .items_center()
                             .gap_4()
                             .pb_2()
-                            .child(theme::header_cell(cx, "RESOURCE").flex_1().min_w_0())
-                            .child(theme::header_cell(cx, "TYPE").w_40())
-                            .child(theme::header_cell(cx, "REGION").w_32())
+                            .child(theme::header_cell(cx, "TYPE").flex_1().min_w_0())
+                            .child(theme::header_cell(cx, "RESOURCES").w_24().text_right())
                             .child(theme::header_cell(cx, "THIS PERIOD").w_24().text_right()),
                     )
-                    .children(
-                        findings
-                            .iter()
-                            .map(|finding| render_row(finding, d.report.priced, &d.currency, cx)),
-                    ),
+                    .children(groups.iter().map(|group| {
+                        let key = group_key(&scope, &group.resource_type);
+                        let shown = self.expanded.get(&key).copied();
+                        let cost = if d.report.priced {
+                            fmt::amount(group.cost, &d.currency)
+                        } else {
+                            "—".to_string()
+                        };
+                        div()
+                            .v_flex()
+                            .child(self.render_group_row(
+                                &key,
+                                group.resource_type.clone(),
+                                group.count,
+                                div().w_24().text_right().child(cost),
+                                shown.is_some(),
+                                cx,
+                            ))
+                            .when_some(shown, |el, shown| {
+                                el.child(
+                                    div()
+                                        .pl_6()
+                                        .v_flex()
+                                        .children(group.members.iter().take(shown).map(|&i| {
+                                            render_row(
+                                                &d.report.findings[i],
+                                                d.report.priced,
+                                                &d.currency,
+                                                cx,
+                                            )
+                                        }))
+                                        .child(self.render_more(&key, group.count, shown, cx)),
+                                )
+                            })
+                    })),
             )
             .when_some(footnote, |el, note| el.child(theme::caption(cx, note)))
             .into_any_element()
     }
 
+    /// A type's summary row: click to open its resources, again to close.
+    fn render_group_row(
+        &self,
+        key: &str,
+        label: String,
+        count: usize,
+        trailing: impl IntoElement,
+        open: bool,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let toggle_key = key.to_string();
+        div()
+            .id(SharedString::from(format!("group-{key}")))
+            .h_flex()
+            .items_center()
+            .gap_4()
+            .py_2()
+            .border_t_1()
+            .border_color(theme::card_border(cx))
+            .cursor_pointer()
+            .hover(|style| style.bg(theme::sidebar_bg(cx)))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        Icon::new(if open {
+                            IconName::ChevronDown
+                        } else {
+                            IconName::ChevronRight
+                        })
+                        .small()
+                        .text_color(theme::text_muted(cx)),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(label),
+                    ),
+            )
+            .child(div().w_24().text_right().child(count.to_string()))
+            .child(trailing)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if this.expanded.remove(&toggle_key).is_none() {
+                    this.expanded.insert(toggle_key.clone(), PAGE_ROWS);
+                }
+                cx.notify();
+            }))
+    }
+
+    /// Under an open group: how many of its rows show, and a button for
+    /// the next page of them while there are more.
+    fn render_more(&self, key: &str, total: usize, shown: usize, cx: &Context<Self>) -> Div {
+        let more_key = key.to_string();
+        div()
+            .h_flex()
+            .items_center()
+            .gap_3()
+            .py_2()
+            .when(total > shown, |el| {
+                el.child(theme::caption(cx, format!("Showing {shown} of {total}")))
+                    .child(
+                        Button::new(SharedString::from(format!("more-{key}")))
+                            .label(format!("Show {} more", (total - shown).min(PAGE_ROWS)))
+                            .ghost()
+                            .small()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if let Some(shown) = this.expanded.get_mut(&more_key) {
+                                    *shown += PAGE_ROWS;
+                                }
+                                cx.notify();
+                            })),
+                    )
+            })
+    }
+
     /// A source the findings are not written for, listed by type, so its
     /// scan shows on the page rather than only in a resource count.
-    fn render_inventory(&self, source: &SourceInventory, cx: &Context<Self>) -> impl IntoElement {
+    fn render_inventory(
+        &self,
+        d: &InsightsData,
+        source: &SourceInventory,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let scope = format!("inventory:{}", source.source);
         theme::card(cx)
             .w_full()
             .p_5()
@@ -576,9 +735,10 @@ impl InsightsView {
                     .child(theme::caption(
                         cx,
                         format!(
-                            "{} resources from the last scan, by type. No findings are \
-                             written for {} yet; its spend is on the Overview and its \
-                             account's page.",
+                            "{} resources from the last scan, by type; open a type to list \
+                             them. This period's cost is the bill split by each resource's \
+                             share of the usage — an estimate, adding up to the bill. No \
+                             findings are written for {} yet.",
                             source.total, source.source
                         ),
                     )),
@@ -592,41 +752,98 @@ impl InsightsView {
                             .items_center()
                             .gap_4()
                             .pb_2()
-                            .child(theme::header_cell(cx, "TYPE").w_56())
-                            .child(theme::header_cell(cx, "COUNT").w_16().text_right())
-                            .child(theme::header_cell(cx, "INCLUDING").flex_1().min_w_0()),
+                            .child(theme::header_cell(cx, "TYPE").flex_1().min_w_0())
+                            .child(theme::header_cell(cx, "RESOURCES").w_24().text_right())
+                            .child(theme::header_cell(cx, "THIS PERIOD").w_24().text_right())
+                            .child(theme::header_cell(cx, "INCLUDING").w_96()),
                     )
-                    .children(source.types.iter().map(|kind| {
-                        let more = kind.count.saturating_sub(kind.names.len());
-                        let mut names = kind.names.join(", ");
-                        if more > 0 {
-                            names.push_str(&format!(" and {more} more"));
-                        }
-                        div()
-                            .h_flex()
-                            .items_center()
-                            .gap_4()
-                            .py_2()
-                            .border_t_1()
-                            .border_color(theme::card_border(cx))
-                            .child(
-                                div()
-                                    .w_56()
-                                    .child(type_label(&source.source, &kind.resource_type)),
-                            )
-                            .child(div().w_16().text_right().child(kind.count.to_string()))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .text_sm()
-                                    .text_color(theme::text_muted(cx))
-                                    .child(names),
-                            )
-                    })),
+                    .children(self.costed_types(d, source).into_iter().map(
+                        |(kind, cost, members)| {
+                            let key = group_key(&scope, &kind.resource_type);
+                            let shown = self.expanded.get(&key).copied();
+                            let more = kind.count.saturating_sub(kind.names.len());
+                            let mut names = kind.names.join(", ");
+                            if more > 0 {
+                                names.push_str(&format!(" and {more} more"));
+                            }
+                            div()
+                                .v_flex()
+                                .child(
+                                    self.render_group_row(
+                                        &key,
+                                        type_label(&source.source, &kind.resource_type),
+                                        kind.count,
+                                        div()
+                                            .h_flex()
+                                            .gap_4()
+                                            .child(
+                                                div()
+                                                    .w_24()
+                                                    .text_right()
+                                                    .child(fmt::amount(cost, &d.currency)),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w_96()
+                                                    .whitespace_nowrap()
+                                                    .text_ellipsis()
+                                                    .text_sm()
+                                                    .text_color(theme::text_muted(cx))
+                                                    .child(names),
+                                            ),
+                                        shown.is_some(),
+                                        cx,
+                                    ),
+                                )
+                                .when_some(shown, |el, shown| {
+                                    el.child(
+                                        div()
+                                            .pl_6()
+                                            .v_flex()
+                                            .children(members.iter().take(shown).map(|&i| {
+                                                let resource = &d.resources[i];
+                                                let key = (
+                                                    resource.provider.clone(),
+                                                    resource_key(&resource.resource_id).to_string(),
+                                                );
+                                                render_resource_row(
+                                                    resource,
+                                                    d.usage.get(&key),
+                                                    d.report.resource_cost.get(i).copied(),
+                                                    &d.currency,
+                                                    cx,
+                                                )
+                                            }))
+                                            .child(self.render_more(&key, kind.count, shown, cx)),
+                                    )
+                                })
+                        },
+                    )),
             )
+    }
+
+    /// A source's types with what the bill charged each this period, and
+    /// their resources in the order to list them: costliest first, so the
+    /// bucket or namespace behind a spike heads its type, and the type
+    /// heads the card. Unpriced, they keep the scan's order.
+    fn costed_types<'a>(
+        &self,
+        d: &InsightsData,
+        source: &'a SourceInventory,
+    ) -> Vec<(&'a crate::analytics::insights::TypeCount, f64, Vec<usize>)> {
+        let cost_of = |i: usize| d.report.resource_cost.get(i).copied().unwrap_or(0.0);
+        let mut types: Vec<_> = source
+            .types
+            .iter()
+            .map(|kind| {
+                let mut members = kind.members.clone();
+                members.sort_by(|&a, &b| cost_of(b).total_cmp(&cost_of(a)));
+                let cost = members.iter().map(|&i| cost_of(i)).sum::<f64>();
+                (kind, cost, members)
+            })
+            .collect();
+        types.sort_by(|a, b| b.1.total_cmp(&a.1));
+        types
     }
 
     /// Said once, above the findings, when the bill names no resources:
@@ -976,6 +1193,7 @@ impl InsightsView {
     }
 }
 
+/// One finding under an opened type group.
 fn render_row(finding: &InsightFinding, priced: bool, currency: &str, cx: &App) -> Div {
     let label = finding
         .name
@@ -1012,15 +1230,7 @@ fn render_row(finding: &InsightFinding, priced: bool, currency: &str, cx: &App) 
                         .child(format!("{} · {}", finding.evidence, finding.resource_id)),
                 ),
         )
-        .child(
-            div()
-                .w_40()
-                .text_sm()
-                .text_color(theme::text_muted(cx))
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .child(finding.resource_kind.clone()),
-        )
+        // No type column: the row sits under its type's group.
         .child(
             div()
                 .w_32()
@@ -1041,6 +1251,100 @@ fn render_row(finding: &InsightFinding, priced: bool, currency: &str, cx: &App) 
                     "—".to_string()
                 }),
         )
+}
+
+/// One scanned resource under an opened inventory type: its name, what it
+/// used this period (or, with no usage on the bill, the scan's id for it),
+/// where it is, and what the bill charged it.
+fn render_resource_row(
+    resource: &InventoryResource,
+    usage: Option<&Vec<ResourceUsage>>,
+    cost: Option<f64>,
+    currency: &str,
+    cx: &App,
+) -> Div {
+    let label = resource
+        .name
+        .clone()
+        .unwrap_or_else(|| resource_key(&resource.resource_id).to_string());
+    div()
+        .w_full()
+        .h_flex()
+        .items_center()
+        .gap_4()
+        .py_2()
+        .border_t_1()
+        .border_color(theme::card_border(cx))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .v_flex()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(label),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_muted(cx))
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(match usage {
+                            Some(usage) => usage_line(usage),
+                            None => resource.resource_id.clone(),
+                        }),
+                ),
+        )
+        .child(
+            div()
+                .w_32()
+                .text_sm()
+                .text_color(theme::text_muted(cx))
+                .child(resource.region.clone().unwrap_or_else(|| "—".to_string())),
+        )
+        .child(
+            div()
+                .w_24()
+                .text_right()
+                .text_sm()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(fmt::amount(cost.unwrap_or(0.0), currency)),
+        )
+}
+
+/// A resource's usage this period in one line: each service the bill
+/// split onto it, without the allowance note in its name, and how much.
+fn usage_line(usage: &[ResourceUsage]) -> String {
+    usage
+        .iter()
+        .map(|row| {
+            let service = row
+                .service
+                .split(" (")
+                .next()
+                .unwrap_or(&row.service)
+                .trim();
+            let amount = if row.quantity < 1.0 {
+                format!("{:.2}", row.quantity)
+            } else {
+                fmt::quantity(row.quantity)
+            };
+            match row
+                .unit
+                .as_deref()
+                .filter(|unit| !unit.is_empty() && *unit != "Count")
+            {
+                Some(unit) => format!("{service} {amount} {unit}"),
+                None => format!("{service} {amount}"),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// The inventory card's title for a source.
@@ -1153,7 +1457,7 @@ impl Render for InsightsView {
                     d.inventory
                         .iter()
                         .filter(|source| !JUDGED_SOURCES.contains(&source.source.as_str()))
-                        .map(|source| self.render_inventory(source, cx)),
+                        .map(|source| self.render_inventory(d, source, cx)),
                 )
                 .into_any_element()
         } else if let Some(error) = &self.error {

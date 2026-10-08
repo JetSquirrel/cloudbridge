@@ -5,6 +5,7 @@ pub mod aws;
 pub mod aws_focus;
 pub mod billfile;
 pub mod cloudflare;
+pub mod cloudflare_analytics;
 pub mod corkscrew;
 pub mod deduction;
 pub mod deepseek;
