@@ -86,7 +86,17 @@ impl AwsCloudService {
     /// for it yet — is [`aws_focus::ExportNotReady`] rather than an empty
     /// batch: writing nothing here must never replace a month's ledger rows
     /// with zero rows.
-    fn fetch_focus_export(&self, period: &BillingPeriod) -> Result<Fetched> {
+    ///
+    /// `previous_listing` is the listing part of the period's last complete
+    /// fetch. When the export still names exactly those files — same keys,
+    /// sizes and ETags — nothing is downloaded and the result is `None`: a
+    /// month AWS has finished delivering would otherwise be bought again,
+    /// in S3 requests and transfer, every refresh.
+    fn fetch_focus_export(
+        &self,
+        period: &BillingPeriod,
+        previous_listing: Option<&str>,
+    ) -> Result<Option<Fetched>> {
         let uri = S3Uri::parse(self.export_uri.as_deref().unwrap_or_default())?;
         let client = self.s3_client();
         let label = period.label();
@@ -148,6 +158,9 @@ impl AwsCloudService {
             })
             .collect();
         let listing_json = serde_json::to_string_pretty(&listing)?;
+        if previous_listing.is_some_and(|previous| same_listing(previous, &listing_json)) {
+            return Ok(None);
+        }
 
         let mut payload_files = Vec::with_capacity(objects.len());
         for (index, object) in objects.iter().enumerate() {
@@ -159,7 +172,7 @@ impl AwsCloudService {
             });
         }
 
-        Ok(Fetched {
+        Ok(Some(Fetched {
             parts: vec![
                 RawPart::new(
                     PART_EXPORT_LISTING,
@@ -173,7 +186,7 @@ impl AwsCloudService {
                 ),
             ],
             payload_files,
-        })
+        }))
     }
 
     /// Calculate SHA256 hash
@@ -384,6 +397,23 @@ impl AwsCloudService {
 /// Name the Cost Explorer payload is stored under in a raw batch.
 const PART_COST_AND_USAGE: &str = "cost_and_usage";
 
+/// Name of the n-th page after the first (counting from 2), when Cost
+/// Explorer splits a response. The first page keeps the bare name, so a
+/// batch recorded before pages were followed replays unchanged.
+fn page_part_name(page: usize) -> String {
+    format!("{PART_COST_AND_USAGE}.page{page}")
+}
+
+/// Marks a batch whose pages ran past [`MAX_COST_EXPLORER_PAGES`]: what
+/// was fetched is kept, but it is not a whole month and is not recorded.
+const PART_PAGES_TRUNCATED: &str = "cost_and_usage.truncated";
+
+/// The most pages one period's request is followed for. Each page is a
+/// billed request; a month grouped by service and record type fits in a
+/// handful, so a response that keeps paging past this is not one to keep
+/// paying for.
+const MAX_COST_EXPLORER_PAGES: usize = 20;
+
 /// What was actually charged.
 const METRIC_UNBLENDED: &str = "UnblendedCost";
 /// The same spend with commitment fees spread over the term they cover.
@@ -424,6 +454,20 @@ fn is_period_data(key: &str, label: &str) -> bool {
     key.to_ascii_lowercase()
         .contains(&format!("billing_period={label}"))
         && aws_focus::ExportFormat::of_key(key).is_some()
+}
+
+/// Whether two export listings name the same files, byte for byte as far
+/// as S3 can say: the same keys with the same sizes and ETags. Compared as
+/// JSON, so a change in how a listing is printed is not a change in data;
+/// a listing that does not parse matches nothing.
+fn same_listing(previous: &str, current: &str) -> bool {
+    match (
+        serde_json::from_str::<serde_json::Value>(previous),
+        serde_json::from_str::<serde_json::Value>(current),
+    ) {
+        (Ok(previous), Ok(current)) => previous == current,
+        _ => false,
+    }
 }
 
 /// Where the manifest of the delivery `data_key` belongs to lives:
@@ -614,69 +658,83 @@ pub fn normalize(batch: &RawBatch) -> Result<Normalized> {
         }
     }
 
-    let part = batch
+    if batch.part(PART_PAGES_TRUNCATED).is_some() {
+        return Err(anyhow!(
+            "Cost Explorer returned more than {MAX_COST_EXPLORER_PAGES} pages for one month; \
+             the pages fetched are kept on disk, but not recorded as the whole month"
+        ));
+    }
+    let first = batch
         .part(PART_COST_AND_USAGE)
         .ok_or_else(|| anyhow!("Raw batch has no '{}' payload", PART_COST_AND_USAGE))?;
-    let response: CeResponse = serde_json::from_str(&part.body)
-        .map_err(|e| anyhow!("Failed to parse Cost Explorer payload: {}", e))?;
-
-    // Which key is which comes from the response itself rather than from
-    // the request this build would have sent, so a payload recorded by an
-    // older version still normalizes.
-    let definitions = response.group_definitions.unwrap_or_default();
-    let position = |dimension: &str| definitions.iter().position(|d| d.key == dimension);
-    let service_at = position(DIMENSION_SERVICE).unwrap_or(0);
-    let record_type_at = position(DIMENSION_RECORD_TYPE);
+    // The first page, then the rest in the order they were fetched.
+    let later_pages = batch.parts.iter().filter(|part| {
+        part.name
+            .starts_with(&format!("{PART_COST_AND_USAGE}.page"))
+    });
 
     let mut charges = Vec::new();
-    for result in response.results_by_time.unwrap_or_default() {
-        let start = parse_day(&result.time_period.start)?;
-        let end = parse_day(&result.time_period.end)?;
+    for part in std::iter::once(first).chain(later_pages) {
+        let response: CeResponse = serde_json::from_str(&part.body)
+            .map_err(|e| anyhow!("Failed to parse Cost Explorer payload: {}", e))?;
 
-        for group in result.groups.unwrap_or_default() {
-            let unblended = group.metrics.get(METRIC_UNBLENDED);
-            let amortized = group.metrics.get(METRIC_AMORTIZED);
-            let billed_cost = unblended.map(CostAmount::value);
-            let effective_cost = amortized.map(CostAmount::value);
+        // Which key is which comes from the response itself rather than from
+        // the request this build would have sent, so a payload recorded by an
+        // older version still normalizes.
+        let definitions = response.group_definitions.unwrap_or_default();
+        let position = |dimension: &str| definitions.iter().position(|d| d.key == dimension);
+        let service_at = position(DIMENSION_SERVICE).unwrap_or(0);
+        let record_type_at = position(DIMENSION_RECORD_TYPE);
 
-            // Cost Explorer returns a row for every service in the account,
-            // most of them zero on every metric. They carry no information
-            // and would bloat the fact table by an order of magnitude. A
-            // row that is zero unblended but non-zero amortized — usage a
-            // commitment already paid for — is not one of them.
-            if billed_cost.unwrap_or(0.0) == 0.0 && effective_cost.unwrap_or(0.0) == 0.0 {
-                continue;
+        for result in response.results_by_time.unwrap_or_default() {
+            let start = parse_day(&result.time_period.start)?;
+            let end = parse_day(&result.time_period.end)?;
+
+            for group in result.groups.unwrap_or_default() {
+                let unblended = group.metrics.get(METRIC_UNBLENDED);
+                let amortized = group.metrics.get(METRIC_AMORTIZED);
+                let billed_cost = unblended.map(CostAmount::value);
+                let effective_cost = amortized.map(CostAmount::value);
+
+                // Cost Explorer returns a row for every service in the account,
+                // most of them zero on every metric. They carry no information
+                // and would bloat the fact table by an order of magnitude. A
+                // row that is zero unblended but non-zero amortized — usage a
+                // commitment already paid for — is not one of them.
+                if billed_cost.unwrap_or(0.0) == 0.0 && effective_cost.unwrap_or(0.0) == 0.0 {
+                    continue;
+                }
+
+                // A quantity is only kept when the group leaves it in one unit.
+                let quantity = group
+                    .metrics
+                    .get(METRIC_USAGE_QUANTITY)
+                    .filter(|q| q.unit != UNIT_NOT_APPLICABLE && !q.unit.is_empty());
+
+                // Without RECORD_TYPE in the grouping, credits and refunds are
+                // already netted into each service's amount and there is
+                // nothing left to label: such a payload is Usage throughout,
+                // which is what it was read as before the dimension was added.
+                let record_type = record_type_at.and_then(|at| group.keys.get(at));
+                let category = record_type.map_or(ChargeCategory::Usage, |rt| charge_category(rt));
+
+                charges.push(Charge {
+                    service_name: group.keys.get(service_at).cloned(),
+                    charge_description: record_type.cloned(),
+                    billed_cost,
+                    effective_cost,
+                    pricing_quantity: quantity.map(|q| q.value()),
+                    pricing_unit: quantity.map(|q| q.unit.clone()),
+                    charge_category: category,
+                    ..Charge::new(
+                        start,
+                        end,
+                        unblended
+                            .or(amortized)
+                            .map_or_else(|| "USD".to_string(), |amount| amount.unit.clone()),
+                    )
+                });
             }
-
-            // A quantity is only kept when the group leaves it in one unit.
-            let quantity = group
-                .metrics
-                .get(METRIC_USAGE_QUANTITY)
-                .filter(|q| q.unit != UNIT_NOT_APPLICABLE && !q.unit.is_empty());
-
-            // Without RECORD_TYPE in the grouping, credits and refunds are
-            // already netted into each service's amount and there is
-            // nothing left to label: such a payload is Usage throughout,
-            // which is what it was read as before the dimension was added.
-            let record_type = record_type_at.and_then(|at| group.keys.get(at));
-            let category = record_type.map_or(ChargeCategory::Usage, |rt| charge_category(rt));
-
-            charges.push(Charge {
-                service_name: group.keys.get(service_at).cloned(),
-                charge_description: record_type.cloned(),
-                billed_cost,
-                effective_cost,
-                pricing_quantity: quantity.map(|q| q.value()),
-                pricing_unit: quantity.map(|q| q.unit.clone()),
-                charge_category: category,
-                ..Charge::new(
-                    start,
-                    end,
-                    unblended
-                        .or(amortized)
-                        .map_or_else(|| "USD".to_string(), |amount| amount.unit.clone()),
-                )
-            });
         }
     }
 
@@ -684,6 +742,18 @@ pub fn normalize(batch: &RawBatch) -> Result<Normalized> {
         charges,
         balances: Vec::new(),
     })
+}
+
+/// The token for the next page of a Cost Explorer response, if it has one.
+/// A body that does not parse has none: the request that produced it
+/// failed, and is reported as such by whoever reads it.
+fn next_page_token(body: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()?
+        .get("NextPageToken")?
+        .as_str()
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
 }
 
 /// Parse a Cost Explorer `YYYY-MM-DD` into an instant at UTC midnight.
@@ -749,19 +819,58 @@ impl BillingSource for AwsCloudService {
 
     fn fetch(&self, period: &BillingPeriod) -> Result<Fetched> {
         if self.export_uri.is_some() {
-            return self.fetch_focus_export(period);
+            return self.fetch_focus_export(period, None)?.ok_or_else(|| {
+                anyhow!("an export fetch with nothing to compare always downloads")
+            });
         }
-        let request = ledger_request(
-            &period.start().to_string(),
-            &period.end_exclusive().to_string(),
-        );
-        let body = self.cost_and_usage_raw(&request)?;
+        // A large month comes back in pages; every page is followed, or
+        // the ledger would hold part of the month as though it were all.
+        let mut parts = Vec::new();
+        let mut next_token: Option<String> = None;
+        for page in 1..=MAX_COST_EXPLORER_PAGES {
+            let mut request = ledger_request(
+                &period.start().to_string(),
+                &period.end_exclusive().to_string(),
+            );
+            if let Some(token) = &next_token {
+                request["NextPageToken"] = serde_json::Value::String(token.clone());
+            }
+            let body = self.cost_and_usage_raw(&request)?;
+            next_token = next_page_token(&body);
+            let name = if page == 1 {
+                PART_COST_AND_USAGE.to_string()
+            } else {
+                page_part_name(page)
+            };
+            parts.push(RawPart::new(name, serde_json::to_string(&request)?, body));
+            if next_token.is_none() {
+                return Ok(Fetched::parts_only(parts));
+            }
+        }
+        // Kept rather than dropped, so the pages already paid for are on
+        // disk; normalizing refuses the batch, so it is never recorded as
+        // the month.
+        parts.push(RawPart::new(
+            PART_PAGES_TRUNCATED,
+            "",
+            format!("more than {MAX_COST_EXPLORER_PAGES} pages"),
+        ));
+        Ok(Fetched::parts_only(parts))
+    }
 
-        Ok(Fetched::parts_only(vec![RawPart::new(
-            PART_COST_AND_USAGE,
-            serde_json::to_string(&request)?,
-            body,
-        )]))
+    fn fetch_changed(
+        &self,
+        period: &BillingPeriod,
+        previous: &[RawPart],
+    ) -> Result<Option<Fetched>> {
+        if self.export_uri.is_some() {
+            let listing = previous
+                .iter()
+                .find(|part| part.name == PART_EXPORT_LISTING)
+                .map(|part| part.body.as_str());
+            return self.fetch_focus_export(period, listing);
+        }
+        self.fetch(period).map(Some)
     }
 
     fn normalize(&self, batch: &RawBatch) -> Result<Normalized> {
@@ -935,6 +1044,80 @@ mod tests {
             parts: vec![RawPart::new(PART_COST_AND_USAGE, "{}", body)],
             payload_files: Vec::new(),
         }
+    }
+
+    /// One page of a paged response, for the pagination tests: a single
+    /// service on one day.
+    fn page(service: &str, amount: &str, next: Option<&str>) -> String {
+        let next = next.map_or(String::new(), |token| {
+            format!(r#","NextPageToken":"{token}""#)
+        });
+        format!(
+            r#"{{"GroupDefinitions":[{{"Type":"DIMENSION","Key":"SERVICE"}},{{"Type":"DIMENSION","Key":"RECORD_TYPE"}}],
+               "ResultsByTime":[{{"TimePeriod":{{"Start":"2026-08-01","End":"2026-08-02"}},
+               "Groups":[{{"Keys":["{service}","Usage"],
+                 "Metrics":{{"UnblendedCost":{{"Amount":"{amount}","Unit":"USD"}},
+                             "AmortizedCost":{{"Amount":"{amount}","Unit":"USD"}}}}}}]}}]{next}}}"#
+        )
+    }
+
+    /// A month Cost Explorer splits is read whole: every page's charges.
+    #[test]
+    fn every_page_of_a_paged_month_is_read() {
+        let mut batch = recorded_batch(&page("Amazon S3", "1.5", Some("t2")));
+        batch.parts.push(RawPart::new(
+            page_part_name(2),
+            "{}",
+            page("AWS Lambda", "2.25", None),
+        ));
+        let normalized = normalize(&batch).unwrap();
+        let services: Vec<_> = normalized
+            .charges
+            .iter()
+            .map(|c| c.service_name.as_deref().unwrap())
+            .collect();
+        assert_eq!(services, ["Amazon S3", "AWS Lambda"]);
+    }
+
+    /// Pages past the cap are kept on disk but never recorded as the
+    /// month: it would be part of a month reading as all of it.
+    #[test]
+    fn a_month_cut_off_by_the_page_cap_is_not_recorded() {
+        let mut batch = recorded_batch(&page("Amazon S3", "1.5", Some("t2")));
+        batch
+            .parts
+            .push(RawPart::new(PART_PAGES_TRUNCATED, "", "more than 20 pages"));
+        let error = normalize(&batch).unwrap_err().to_string();
+        assert!(error.contains("more than"), "{error}");
+    }
+
+    #[test]
+    fn the_next_page_token_is_read_from_the_body() {
+        assert_eq!(
+            next_page_token(&page("Amazon S3", "1", Some("abc"))).as_deref(),
+            Some("abc")
+        );
+        assert_eq!(next_page_token(&page("Amazon S3", "1", None)), None);
+        assert_eq!(next_page_token(r#"{"NextPageToken":""}"#), None);
+        assert_eq!(next_page_token("not json"), None);
+    }
+
+    /// The same files are the same listing however it was printed; a
+    /// changed ETag, or a file more, is a new delivery.
+    #[test]
+    fn an_export_listing_is_unchanged_only_with_the_same_files() {
+        let listing = r#"[{"key":"data/a.parquet","size":10,"etag":"\"e1\""}]"#;
+        let pretty = "[\n  {\n    \"key\": \"data/a.parquet\",\n    \"size\": 10,\n    \"etag\": \"\\\"e1\\\"\"\n  }\n]";
+        assert!(same_listing(listing, pretty));
+        assert!(!same_listing(
+            listing,
+            r#"[{"key":"data/a.parquet","size":10,"etag":"\"e2\""}]"#
+        ));
+        assert!(!same_listing(
+            listing,
+            r#"[{"key":"data/a.parquet","size":10,"etag":"\"e1\""},{"key":"data/b.parquet","size":4,"etag":"\"e3\""}]"#
+        ));
+        assert!(!same_listing("", listing));
     }
 
     #[test]

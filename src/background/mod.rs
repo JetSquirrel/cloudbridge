@@ -21,6 +21,7 @@
 //! The state the menu bar shows is one entity, [`Status`]; the schedule
 //! writes it and the icon and panel observe it.
 
+pub mod backoff;
 pub mod login_item;
 pub mod notify;
 pub mod schedule;
@@ -64,9 +65,11 @@ pub struct Status {
     pub refreshing: bool,
     /// When the last refresh finished.
     pub last_run: Option<DateTime<Utc>>,
-    /// The accounts the last refresh could not fetch, as `name: reason`.
+    /// The accounts that are failing to refresh, as `name: reason` —
+    /// including those the schedule is backing off from.
     pub failures: Vec<String>,
     announcer: Announcer,
+    backoff: backoff::Backoff,
 }
 
 /// The [`Status`] entity, for anything that needs to read or refresh it.
@@ -85,6 +88,7 @@ pub fn start(started_at: DateTime<Utc>, cx: &mut App) {
         last_run: None,
         failures: Vec::new(),
         announcer: Announcer::new(started_at),
+        backoff: backoff::Backoff::default(),
     });
     cx.set_global(GlobalStatus(status.clone()));
 
@@ -98,6 +102,6 @@ pub fn start(started_at: DateTime<Utc>, cx: &mut App) {
 /// Refresh. A no-op before [`start`] or while a refresh is running.
 pub fn refresh_now(cx: &mut App) {
     if let Some(status) = cx.try_global::<GlobalStatus>().map(|g| g.0.clone()) {
-        schedule::run_once(status, true, cx);
+        schedule::run_once(status, true, true, cx);
     }
 }

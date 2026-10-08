@@ -105,6 +105,24 @@ pub fn replace_period(
     with_connection(|conn| write_period(conn, key, batch_id, charges, source_ref, channel))
 }
 
+/// Record that a period's complete batch was found to be current — the
+/// provider still holds what it was built from — without writing it again.
+/// Moves its completion time to now, which is what the refresh interval
+/// and the sync time are measured from.
+pub fn confirm_period(key: &PeriodKey) -> Result<()> {
+    with_connection(|conn| confirm_period_of(conn, key))
+}
+
+pub(crate) fn confirm_period_of(conn: &mut Connection, key: &PeriodKey) -> Result<()> {
+    let now = Utc::now().format(TIMESTAMP_FORMAT).to_string();
+    conn.execute(
+        "UPDATE ingest_batch SET completed_at = CAST(? AS TIMESTAMP)
+         WHERE provider = ? AND account_id = ? AND billing_period = ? AND status = 'complete'",
+        params![now, key.provider, key.account_id, key.billing_period],
+    )?;
+    Ok(())
+}
+
 /// Remove everything the ledger holds for one account — charges, ingest
 /// batches, balance snapshots and the day rollup — in one transaction.
 /// Returns how many charges went. The raw payloads are the caller's: see

@@ -98,6 +98,22 @@ pub trait BillingSource: Send + Sync {
     /// unchanged. The only method here that talks to the network.
     fn fetch(&self, period: &BillingPeriod) -> Result<Fetched>;
 
+    /// [`Self::fetch`], unless the provider still holds exactly what
+    /// `previous` — the raw parts of the period's last complete fetch —
+    /// was built from: then `None`, and nothing is downloaded.
+    ///
+    /// For a source whose fetch is expensive to repeat and cheap to check,
+    /// such as an S3 export whose listing names each file's ETag. The
+    /// default cannot tell without fetching, so it always fetches.
+    fn fetch_changed(
+        &self,
+        period: &BillingPeriod,
+        previous: &[RawPart],
+    ) -> Result<Option<Fetched>> {
+        let _ = previous;
+        self.fetch(period).map(Some)
+    }
+
     /// Turn a fetched batch into ledger rows. Pure: no clock, no network,
     /// no database — everything it needs is in the batch.
     fn normalize(&self, batch: &RawBatch) -> Result<Normalized>;
