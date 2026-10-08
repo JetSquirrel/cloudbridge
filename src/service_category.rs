@@ -197,6 +197,19 @@ const VOLCENGINE_CODES: &[(&str, Placement)] = &[
     ("eip", (NETWORKING, "Network Connectivity")),
 ];
 
+/// Cloudflare, by `ServiceFamilyName` — the billable-usage API's grouping
+/// above the per-meter service name.
+const CLOUDFLARE_FAMILIES: &[(&str, Placement)] = &[
+    ("Workers", (COMPUTE, "Serverless Compute")),
+    ("Durable Objects", (COMPUTE, "Serverless Compute")),
+    ("R2", (STORAGE, "Object Storage")),
+    ("D1", (DATABASES, "Relational Databases")),
+    ("Workers KV", (DATABASES, "NoSQL Databases")),
+    ("Workers AI", (AI, "Generative AI")),
+    ("Argo", (NETWORKING, "Network Routing")),
+    ("Load Balancing", (NETWORKING, "Application Networking")),
+];
+
 /// The sources whose whole bill is model inference.
 const MODEL_PROVIDERS: &[&str] = &["OpenAI", "Anthropic", "DeepSeek"];
 
@@ -225,6 +238,7 @@ pub fn classify(
             .or_else(|| service_name.and_then(|name| lookup(AWS_CE_NAMES, name))),
         "Aliyun" => code.and_then(|code| lookup(ALIYUN_CODES, code)),
         "Volcengine" => code.and_then(|code| lookup(VOLCENGINE_CODES, code)),
+        "Cloudflare" => code.and_then(|code| lookup(CLOUDFLARE_FAMILIES, code)),
         _ => None,
     }
 }
@@ -251,10 +265,16 @@ mod tests {
     use chrono::Utc;
 
     fn every_entry() -> impl Iterator<Item = (&'static str, Placement)> {
-        [AWS_CODES, AWS_CE_NAMES, ALIYUN_CODES, VOLCENGINE_CODES]
-            .into_iter()
-            .flatten()
-            .copied()
+        [
+            AWS_CODES,
+            AWS_CE_NAMES,
+            ALIYUN_CODES,
+            VOLCENGINE_CODES,
+            CLOUDFLARE_FAMILIES,
+        ]
+        .into_iter()
+        .flatten()
+        .copied()
     }
 
     #[test]
@@ -277,7 +297,13 @@ mod tests {
 
     #[test]
     fn no_table_lists_a_key_twice() {
-        for table in [AWS_CODES, AWS_CE_NAMES, ALIYUN_CODES, VOLCENGINE_CODES] {
+        for table in [
+            AWS_CODES,
+            AWS_CE_NAMES,
+            ALIYUN_CODES,
+            VOLCENGINE_CODES,
+            CLOUDFLARE_FAMILIES,
+        ] {
             let mut keys: Vec<String> = table
                 .iter()
                 .map(|(key, _)| key.to_ascii_lowercase())
@@ -300,6 +326,16 @@ mod tests {
         assert_eq!(classify("AWS", Some("AmazonS3"), None), objects);
         assert_eq!(classify("Aliyun", Some("oss"), None), objects);
         assert_eq!(classify("Volcengine", Some("tos"), None), objects);
+        assert_eq!(classify("Cloudflare", Some("R2"), None), objects);
+
+        let serverless = Some((COMPUTE, "Serverless Compute"));
+        assert_eq!(classify("AWS", Some("AWSLambda"), None), serverless);
+        assert_eq!(classify("Aliyun", Some("fc"), None), serverless);
+        assert_eq!(classify("Cloudflare", Some("Workers"), None), serverless);
+        assert_eq!(
+            classify("Cloudflare", Some("Durable Objects"), None),
+            serverless
+        );
 
         let inference = Some((AI, "Generative AI"));
         assert_eq!(classify("Aliyun", Some("bailian"), None), inference);
