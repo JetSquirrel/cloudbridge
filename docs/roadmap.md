@@ -436,16 +436,29 @@ to which, and which ones nothing uses any more.
   metrics), owner tag keys set in Settings rather than the built-in list,
   and relationships (`dim_resource_edge`), which wait on the Resource
   Explorer path describing resources.
-- **Cloudflare resources, as a corkscrew plugin in the fork.** Cloudflare
+- **Cloudflare resources, from the fork's `cloudflare` plugin.** Cloudflare
   bills Workers, Durable Objects, R2, D1 and KV per day, and a runaway
-  Durable Object is a resource, not a line on the bill — so the bill says
-  *which service* blew up, and only an inventory says *which object*. The
-  plugin lists them over the account API with the same token the billing
-  source holds (read permissions for Workers, R2, D1 and zones on top of
-  Billing · Read), and is scanned whole, with no regions. The app side is
-  ready for it: a scan runs whatever `corkscrew::ScanProvider` a source's
-  descriptor names, and Cloudflare's is `None` until a `cloudbridge-rN`
-  release ships the plugin with its checksums.
+  Durable Object is a resource, not a line on the bill — the bill says
+  *which service* blew up, only an inventory says *which object*. The
+  plugin (`plugins/cloudflare-provider` in the fork) lists accounts,
+  zones, Workers, R2, KV, Queues, D1, Durable Object namespaces and
+  objects, reading
+  `CLOUDFLARE_API_TOKEN` and scoped by `account_ids`. The app side is
+  written against it — `corkscrew::CLOUDFLARE` asks for the `accounts,
+  zones, workers, storage, data` groups of the account the token was
+  saved for, the import files `provider = 'cloudflare'` scans under the
+  Cloudflare source, and Insights does not call untagged Cloudflare
+  resources unclaimed. The fork's `cloudbridge-dist` now carries the
+  plugin, the fix that expands service groups only for AWS (`storage` and
+  `data` were becoming AWS's `s3, ebs, …` for every provider), and
+  packaging under `build/bin/plugins/official/cloudflare`. Still owed:
+  1. In the fork: a `cloudbridge-r3` tag, so the release carries both
+     plugins with checksums.
+  2. Here: `RELEASE` and the archive checksums bumped to it, `inventory:
+     Some(&corkscrew::CLOUDFLARE)` on the descriptor, and the token's
+     extra read permissions (Account Settings, Zone, Workers Scripts,
+     Workers R2 Storage, Workers KV Storage, Queues, D1) on the
+     permissions page.
 - **Relationship questions, not a topology picture.** Computed in
   `analytics.rs` from the two tables, and shared by both targets:
   - *Cost rolled up along ownership* — a volume's cost counted to the

@@ -62,14 +62,14 @@ fn archive() -> Option<(&'static str, &'static str)> {
 ///
 /// A source scans its resources when its descriptor names one of these
 /// (`SourceDescriptor::inventory`). Everything provider-specific about a
-/// scan is here; [`scan`] itself only runs the scanner. AWS is the only
-/// one so far. Cloudflare's — Workers, Durable Objects, R2 buckets, D1
-/// databases, zones — is to be written as a plugin in the fork and ship in
-/// a later `cloudbridge-rN` release; adding it means a second value of this
-/// type, and the release's checksums.
+/// scan is here; [`scan`] itself only runs the scanner, and the import
+/// tells a scan's resources apart by [`Self::plugin`].
 pub struct ScanProvider {
-    /// The plugin's name: `--provider`, and its key in the config file.
+    /// The plugin's name: `--provider`, its key in the config file, and
+    /// the `provider` corkscrew records the scan under.
     pub plugin: &'static str,
+    /// The ledger's source id for the plugin's resources.
+    pub source: &'static str,
     /// The services a scan asks for.
     pub services: &'static [&'static str],
     /// Whether a scan covers a list of regions. A provider without regions
@@ -78,18 +78,59 @@ pub struct ScanProvider {
     /// Hand the account's credentials to the plugin, and keep anything of
     /// the user's own configuration for the same provider out of its way.
     pub configure: fn(&mut Command, &SourceContext, &[String], &Path),
+    /// Settings handed to the plugin when it starts: the `config:` map of
+    /// its entry in the config file.
+    pub settings: fn(&SourceContext) -> Vec<(&'static str, String)>,
     /// A failure worth saying in the user's terms, from the scanner's log.
     pub explain_failure: fn(&str) -> Option<String>,
+}
+
+/// Every plugin CloudBridge knows how to run and import.
+pub static PROVIDERS: &[&ScanProvider] = &[&AWS, &CLOUDFLARE];
+
+/// The provider a corkscrew plugin name belongs to.
+pub fn provider_for_plugin(plugin: &str) -> Option<&'static ScanProvider> {
+    PROVIDERS
+        .iter()
+        .copied()
+        .find(|provider| provider.plugin.eq_ignore_ascii_case(plugin))
 }
 
 /// AWS, over Resource Explorer and Cloud Control.
 pub static AWS: ScanProvider = ScanProvider {
     plugin: "aws",
+    source: "AWS",
     services: AWS_SERVICES,
     regional: true,
     configure: configure_aws,
+    settings: |_| Vec::new(),
     explain_failure: aws_scan_failure,
 };
+
+/// Cloudflare, over the account API: the fork's `cloudflare` plugin.
+///
+/// Not in the pinned release yet, so no source names it; the Cloudflare
+/// descriptor switches to it with the release that ships the plugin.
+pub static CLOUDFLARE: ScanProvider = ScanProvider {
+    plugin: "cloudflare",
+    source: "Cloudflare",
+    services: CLOUDFLARE_SERVICES,
+    // One account, worldwide: corkscrew takes the plugin's own `global`.
+    regional: false,
+    configure: configure_cloudflare,
+    settings: cloudflare_settings,
+    explain_failure: cloudflare_scan_failure,
+};
+
+/// The plugin's service groups a Cloudflare scan asks for: the ones that
+/// bill — Workers and Durable Objects, R2, KV, Queues, D1 — and the
+/// account and zones they hang from. DNS records are left out: there can
+/// be thousands, and none of them carries a cost.
+///
+/// Each group needs its own read permission on the account's token, on top
+/// of the Billing · Read the bill uses: Account Settings, Zone, Workers
+/// Scripts, Workers R2 Storage, Workers KV Storage, Queues and D1, all Read.
+pub const CLOUDFLARE_SERVICES: &[&str] = &["accounts", "zones", "workers", "storage", "data"];
 
 /// The services an AWS scan asks for: the ones that carry cost and that the
 /// Insights findings read. Resource Explorer's names.
@@ -251,7 +292,8 @@ pub fn scan(
         let _ = std::fs::remove_file(stale);
     }
     let config = sandbox.join("corkscrew.yaml");
-    std::fs::write(&config, config_yaml(provider, regions, out))?;
+    let settings = (provider.settings)(credentials);
+    std::fs::write(&config, config_yaml(provider, regions, &settings, out))?;
 
     let mut command = Command::new(executable(install));
     command
@@ -332,18 +374,65 @@ fn configure_aws(
         .env_remove("AWS_SESSION_TOKEN");
 }
 
+/// The Cloudflare plugin reads an API token from the environment. The
+/// legacy key and email it would also accept are removed, so a Global API
+/// Key in the user's shell cannot stand in for the account's own token —
+/// and the sandboxed `HOME` keeps its stored OAuth profiles out of reach.
+fn configure_cloudflare(
+    command: &mut Command,
+    credentials: &SourceContext,
+    _regions: &[String],
+    _sandbox: &Path,
+) {
+    command
+        .env("CLOUDFLARE_API_TOKEN", &credentials.secret_access_key)
+        .env_remove("CLOUDFLARE_API_KEY")
+        .env_remove("CLOUDFLARE_EMAIL");
+}
+
+/// The token is the only method, and the scan stays inside the account
+/// the token was saved for — a token can reach several.
+fn cloudflare_settings(credentials: &SourceContext) -> Vec<(&'static str, String)> {
+    vec![
+        ("auth.method", "api_token".to_string()),
+        ("account_ids", credentials.access_key_id.trim().to_string()),
+    ]
+}
+
+/// A failure of a Cloudflare scan worth saying in the user's terms: the
+/// plugin refusing to start is the token, and says why.
+fn cloudflare_scan_failure(log: &str) -> Option<String> {
+    let start = log
+        .lines()
+        .find(|line| line.contains("initialize provider \"cloudflare\""))?;
+    let reason = start
+        .split_once("initialize provider \"cloudflare\":")
+        .map(|(_, reason)| reason.trim())
+        .filter(|reason| !reason.is_empty())
+        .unwrap_or("no reason given");
+    Some(format!(
+        "Cloudflare did not let the scan start ({reason}). Check that the account's \
+         API token can read Workers, R2, KV, Queues, D1 and zones."
+    ))
+}
+
+/// YAML's double-quoted form of `value`.
+fn yaml_quoted(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 /// The configuration a scan runs with: the provider over `regions` and
-/// its services, writing to `out`. The flags say the same; corkscrew still
-/// wants the file.
-fn config_yaml(provider: &ScanProvider, regions: &[String], out: &Path) -> String {
+/// its services, with its `settings`, writing to `out`. The flags say the
+/// same; corkscrew still wants the file.
+fn config_yaml(
+    provider: &ScanProvider,
+    regions: &[String],
+    settings: &[(&str, String)],
+    out: &Path,
+) -> String {
     let quoted = |items: &mut dyn Iterator<Item = &str>| -> String {
         items
-            .map(|item| {
-                format!(
-                    "      - \"{}\"\n",
-                    item.replace('\\', "\\\\").replace('"', "\\\"")
-                )
-            })
+            .map(|item| format!("      - {}\n", yaml_quoted(item)))
             .collect()
     };
     let regions = if provider.regional {
@@ -354,15 +443,22 @@ fn config_yaml(provider: &ScanProvider, regions: &[String], out: &Path) -> Strin
     } else {
         String::new()
     };
+    let config = if settings.is_empty() {
+        String::new()
+    } else {
+        let entries: String = settings
+            .iter()
+            .map(|(key, value)| format!("      {}: {}\n", yaml_quoted(key), yaml_quoted(value)))
+            .collect();
+        format!("    config:\n{entries}")
+    };
     format!(
-        "version: \"2.0\"\nproviders:\n  {}:\n    enabled: true\n{}    services:\n{}database:\n  path: \"{}\"\n",
+        "version: \"2.0\"\nproviders:\n  {}:\n    enabled: true\n{}    services:\n{}{}database:\n  path: {}\n",
         provider.plugin,
         regions,
         quoted(&mut provider.services.iter().copied()),
-        out.display()
-            .to_string()
-            .replace('\\', "\\\\")
-            .replace('"', "\\\""),
+        config,
+        yaml_quoted(&out.display().to_string()),
     )
 }
 
@@ -442,6 +538,7 @@ mod tests {
         let yaml = config_yaml(
             &AWS,
             &["ap-east-1".to_string(), "us-east-1".to_string()],
+            &[],
             Path::new("/data/inventory/scan-1.duckdb"),
         );
         assert!(yaml.starts_with("version: \"2.0\"\nproviders:\n  aws:\n    enabled: true\n"));
@@ -452,6 +549,7 @@ mod tests {
         let windows = config_yaml(
             &AWS,
             &["us-east-1".to_string()],
+            &[],
             Path::new(r"C:\data\scan.duckdb"),
         );
         assert!(
@@ -466,16 +564,70 @@ mod tests {
     fn a_provider_without_regions_is_configured_without_them() {
         static WHOLE: ScanProvider = ScanProvider {
             plugin: "example",
+            source: "Example",
             services: &["things"],
             regional: false,
             configure: |_, _, _, _| {},
+            settings: |_| Vec::new(),
             explain_failure: |_| None,
         };
-        let yaml = config_yaml(&WHOLE, &[], Path::new("/data/scan.duckdb"));
+        let yaml = config_yaml(&WHOLE, &[], &[], Path::new("/data/scan.duckdb"));
         assert!(yaml.starts_with(
             "version: \"2.0\"\nproviders:\n  example:\n    enabled: true\n    services:\n"
         ));
         assert!(!yaml.contains("regions"));
+    }
+
+    fn cloudflare_account() -> SourceContext {
+        SourceContext {
+            access_key_id: " 023e105f4ecef8ad9ca31a8372d0c353 ".to_string(),
+            secret_access_key: "token".to_string(),
+            region: None,
+            export_uri: None,
+        }
+    }
+
+    /// The scan is held to the token's own method and the account it was
+    /// saved for, and asks for no regions: corkscrew then takes the
+    /// plugin's own `global`.
+    #[test]
+    fn a_cloudflare_scan_is_one_account_with_its_token() {
+        let settings = (CLOUDFLARE.settings)(&cloudflare_account());
+        let yaml = config_yaml(&CLOUDFLARE, &[], &settings, Path::new("/data/scan.duckdb"));
+        assert!(
+            yaml.contains("  cloudflare:\n    enabled: true\n    services:\n"),
+            "{yaml}"
+        );
+        assert!(!yaml.contains("regions"), "{yaml}");
+        assert!(yaml.contains(
+            "    config:\n      \"auth.method\": \"api_token\"\n      \"account_ids\": \"023e105f4ecef8ad9ca31a8372d0c353\"\n"
+        ), "{yaml}");
+        assert!(
+            !yaml.contains("\"dns\""),
+            "DNS records carry no cost: {yaml}"
+        );
+    }
+
+    #[test]
+    fn a_scan_database_names_its_provider_by_plugin() {
+        assert_eq!(provider_for_plugin("AWS").map(|p| p.source), Some("AWS"));
+        assert_eq!(
+            provider_for_plugin("cloudflare").map(|p| p.source),
+            Some("Cloudflare")
+        );
+        assert!(provider_for_plugin("gcp").is_none());
+    }
+
+    #[test]
+    fn a_cloudflare_scan_that_cannot_start_says_why() {
+        let log = "Error: initialize provider \"cloudflare\": cloudflare token validation failed: Invalid API Token";
+        let message = cloudflare_scan_failure(log).unwrap();
+        assert!(message.contains("Invalid API Token"), "{message}");
+        assert!(message.contains("API token can read"), "{message}");
+        assert_eq!(
+            cloudflare_scan_failure("Batch scan scan_1: 12 resources"),
+            None
+        );
     }
 
     #[test]

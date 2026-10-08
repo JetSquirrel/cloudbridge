@@ -508,9 +508,9 @@ static SOURCES: &[SourceDescriptor] = &[
         // The dashboard's billing CSV is per invoice, not per day; the API
         // is the finer channel and the only one read.
         bill_file: None,
-        // Resource discovery is planned as a corkscrew plugin in our fork
-        // (Workers, Durable Objects, R2, D1, zones); until a release ships
-        // it, Insights does not scan Cloudflare. See corkscrew::ScanProvider.
+        // corkscrew::CLOUDFLARE is ready for the fork's `cloudflare`
+        // plugin, but the pinned release does not carry it; this becomes
+        // `Some(&corkscrew::CLOUDFLARE)` with the release that does.
         inventory: None,
     },
     SourceDescriptor {

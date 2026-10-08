@@ -31,6 +31,12 @@ pub const OWNER_TAG_KEYS: &[&str] = &[
     "business_line",
 ];
 
+/// The sources whose resources carry tags an owner can be read from. A
+/// Cloudflare Worker or bucket has no such tags, so calling it unclaimed
+/// would list every one of them; its resources are matched against the
+/// bill, and judged by nothing else.
+const TAGGED_SOURCES: &[&str] = &["AWS"];
+
 /// Tags a stack, app or cluster puts on what it manages: such a resource
 /// has an owner even without an owner tag — whoever owns the stack.
 const MANAGED_BY_TAG_KEYS: &[&str] = &[
@@ -120,7 +126,8 @@ pub fn insights(
         }
 
         let tags = resource.tags.as_deref().and_then(parse_object);
-        if !is_claimed(tags.as_ref(), owner_tag_keys) {
+        let tagged = TAGGED_SOURCES.contains(&resource.provider.as_str());
+        if tagged && !is_claimed(tags.as_ref(), owner_tag_keys) {
             if cost_of[i] > 0.0 || !priced {
                 findings.push(finding(
                     InsightKind::Unclaimed,
@@ -552,6 +559,24 @@ mod tests {
         assert!(!report.priced);
         assert_eq!(report.findings.len(), 2);
         assert_eq!(report.unclaimed_free, 0);
+    }
+
+    /// A Cloudflare resource has no owner tags to miss, so it is never
+    /// unclaimed — but a billed zone still counts as matched.
+    #[test]
+    fn an_untagged_source_has_nothing_unclaimed() {
+        let mut zone = resource("9a7806061c88ada191ed06f989cc3dac", "zone", "global");
+        zone.provider = "Cloudflare".to_string();
+        let mut worker = resource("ticker", "worker_script", "global");
+        worker.provider = "Cloudflare".to_string();
+        let mut zone_cost = cost("9a7806061c88ada191ed06f989cc3dac", "global", 0.75);
+        zone_cost.provider = "Cloudflare".to_string();
+        zone_cost.region = None;
+
+        let report = insights(&[zone, worker], &[zone_cost], None, OWNER_TAG_KEYS);
+        assert!(report.findings.is_empty(), "{:?}", kinds(&report));
+        assert_eq!(report.unclaimed_free, 0);
+        assert_eq!(report.matched_cost, 0.75);
     }
 
     #[test]
