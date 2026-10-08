@@ -173,7 +173,6 @@ cloudbridge/
 ├── scripts/
 │   ├── build-web.sh       # wasm build + wasm-bindgen + icon catalog
 │   ├── package-macos.sh   # Sign, notarize and staple the macOS dmg
-│   ├── render-blog.py     # Render docs/blog Markdown posts to HTML
 │   └── locked-version.py  # The version Cargo.lock resolved, for a package
 ├── web/
 │   ├── site/              # Static shell for the browser demo

@@ -37,9 +37,9 @@ enum PendingDelete {
 /// Key context for the add-account dialog, so Escape closes it.
 const ACCOUNT_DIALOG_CONTEXT: &str = "AccountDialog";
 
-/// The docs site's provider permissions page; each source's setup hint
-/// links to its section.
-const POLICIES_URL: &str = "https://cloudbridge.jetsquirrel.cloud/policies.html";
+/// The docs' provider permissions page; each source's setup hint links to
+/// its section.
+const POLICIES_URL: &str = "https://cloudbridge.jetsquirrel.cloud/docs/permissions";
 
 /// What a source's API credential is and what it must be allowed to do,
 /// with the anchor of its section on the permissions page. `None` for the
@@ -49,7 +49,7 @@ fn setup_hint(source_id: &str) -> Option<(&'static str, &'static str)> {
         "AWS" => Some((
             "An IAM user's access key with a policy allowing ce:GetCostAndUsage. \
              Cost Explorer charges $0.01 per request.",
-            "aws-cost-explorer",
+            "aws",
         )),
         "Aliyun" => Some((
             "A RAM user's AccessKey with AliyunBSSReadOnlyAccess. Don't use the \

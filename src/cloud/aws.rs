@@ -893,7 +893,7 @@ fn cost_explorer_error(status: u16, body: &str) -> anyhow::Error {
         anyhow!(
             "this access key may not call Cost Explorer. Attach a policy allowing \
              ce:GetCostAndUsage to its IAM user — see \
-             https://cloudbridge.jetsquirrel.cloud/policies.html#aws-cost-explorer"
+             https://cloudbridge.jetsquirrel.cloud/docs/permissions#aws"
         )
     } else if body.contains("DataUnavailableException") {
         anyhow!(

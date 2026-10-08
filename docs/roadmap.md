@@ -399,7 +399,7 @@ to which, and which ones nothing uses any more.
     `AWS_SECRET_ACCESS_KEY` in the child's environment, never on its
     command line. Scanning needs read access well beyond billing (Cloud
     Control, Resource Explorer, each service's Describe/List), so it gets
-    its own template in `docs/policies.md`, and it is off until the user
+    its own section on the [permissions page](https://cloudbridge.jetsquirrel.cloud/docs/permissions#aws-scan), and it is off until the user
     turns it on per account: it runs third-party code with cloud
     credentials.
   - The contract is two tables, not corkscrew's database. The scan is

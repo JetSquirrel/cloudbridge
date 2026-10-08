@@ -7,10 +7,6 @@ release/
 /web/site/src/wasm/
 /web/site/assets/
 
-# The demo as the docs site serves it; gh-pages.yml builds it into the
-# deployment, so a local copy is never the thing that gets published
-/docs/demo/
-
 # macOS packaging output (scripts/package-macos.sh writes these into the
 # repository root; CI uploads them as release assets)
 /CloudBridge.app/
