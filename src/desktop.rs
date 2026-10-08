@@ -38,8 +38,79 @@ fn themes_dir() -> PathBuf {
     local
 }
 
+/// The main window, while it is open, and whether the stores behind it
+/// have opened — a window opened after that has to be told at once, since
+/// the notice it would otherwise wait for has already gone out.
+struct MainWindow {
+    handle: Option<WindowHandle<Root>>,
+    stores_ready: bool,
+}
+
+impl Global for MainWindow {}
+
+/// Bring the main window up — focusing it if it is open, opening it if it
+/// was closed or never opened (a login launch starts without one) — and
+/// switch it to `view` when one is given.
+pub fn show_main_window(view: Option<crate::app::CurrentView>, cx: &mut App) {
+    #[cfg(target_os = "macos")]
+    crate::background::macos::set_dock_icon_visible(true);
+    cx.activate(true);
+
+    let open = cx
+        .global::<MainWindow>()
+        .handle
+        .and_then(|handle| {
+            handle
+                .update(cx, |_, window, _| window.activate_window())
+                .ok()
+        })
+        .is_some();
+    if !open {
+        match open_main_window(cx) {
+            Ok(handle) => {
+                let main = cx.global_mut::<MainWindow>();
+                main.handle = Some(handle);
+                if main.stores_ready {
+                    crate::app::stores_opened(cx);
+                }
+            }
+            Err(e) => {
+                tracing::error!("Could not open the window: {}", e);
+                return;
+            }
+        }
+    }
+    if let Some(view) = view {
+        crate::app::navigate_to(view, cx);
+    }
+}
+
+fn open_main_window(cx: &mut App) -> anyhow::Result<WindowHandle<Root>> {
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
+                origin: Point::default(),
+                size: gpui_kit::Size {
+                    width: px(1280.0),
+                    height: px(800.0),
+                },
+            })),
+            titlebar: Some(TitlebarOptions {
+                title: Some("CloudBridge — local bill analysis".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        |window, cx| {
+            let view = cx.new(|cx| crate::app::CloudBridgeApp::new(window, cx));
+            cx.new(|cx| Root::new(view, window, cx))
+        },
+    )
+}
+
 /// Open the desktop window and run until it closes.
 pub fn run() {
+    let started_at = chrono::Utc::now();
     // Initialize logging with appropriate level for release/debug
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         if cfg!(debug_assertions) {
@@ -58,7 +129,18 @@ pub fn run() {
 
     tracing::info!("Starting CloudBridge...");
 
-    let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
+    // Closing the window leaves the app in the menu bar where there is one;
+    // the menu's Quit is what ends it. Elsewhere it quits with the window.
+    let quit_mode = if crate::background::RUNS_WINDOWLESS {
+        QuitMode::Explicit
+    } else {
+        QuitMode::LastWindowClosed
+    };
+    let app = gpui_kit::application()
+        .with_assets(gpui_kit::assets::Assets)
+        .with_quit_mode(quit_mode);
+    // The Dock icon of a running app, clicked with no window open.
+    app.on_reopen(|cx| show_main_window(None, cx));
 
     app.run(move |cx| {
         // Initialize GPUI Component
@@ -82,31 +164,40 @@ pub fn run() {
             tracing::error!("Failed to watch themes directory: {}", e);
         }
 
+        cx.set_global(MainWindow {
+            handle: None,
+            stores_ready: false,
+        });
+        // Forget the window once it closes, and with it the Dock icon: a
+        // closed CloudBridge lives in the menu bar.
+        cx.on_window_closed(|cx, closed| {
+            let main = cx.global_mut::<MainWindow>();
+            if main
+                .handle
+                .is_some_and(|handle| handle.window_id() == closed)
+            {
+                main.handle = None;
+                #[cfg(target_os = "macos")]
+                crate::background::macos::set_dock_icon_visible(false);
+            }
+        })
+        .detach();
+
+        let background_launch = crate::background::launched_in_background();
+        #[cfg(target_os = "macos")]
+        if background_launch {
+            crate::background::macos::set_dock_icon_visible(false);
+        }
+
         cx.spawn(async move |cx| {
             // Open the window before touching the stores, so a large ledger
             // no longer delays the first frame. Until init below finishes
             // the shell holds every page load back and shows loading
-            // placeholders instead (see app.rs).
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(Bounds {
-                        origin: Point::default(),
-                        size: gpui_kit::Size {
-                            width: px(1280.0),
-                            height: px(800.0),
-                        },
-                    })),
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("CloudBridge — local bill analysis".into()),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                },
-                |window, cx| {
-                    let view = cx.new(|cx| crate::app::CloudBridgeApp::new(window, cx));
-                    cx.new(|cx| Root::new(view, window, cx))
-                },
-            )?;
+            // placeholders instead (see app.rs). A login launch opens none:
+            // it starts in the menu bar.
+            if !background_launch {
+                cx.update(|cx| show_main_window(None, cx));
+            }
 
             // Both stores open and migrate on disk and the first alert
             // evaluation scans the ledger — all blocking, so they run on a
@@ -138,7 +229,16 @@ pub fn run() {
             // The pages deferred their first loads (see app.rs) and the
             // sidebar badge reads what evaluation wrote; tell the shell the
             // stores are open so it loads the current page and status bar.
-            cx.update(crate::app::stores_opened);
+            cx.update(|cx| {
+                let main = cx.global_mut::<MainWindow>();
+                main.stores_ready = true;
+                if main.handle.is_some() {
+                    crate::app::stores_opened(cx);
+                }
+                // Now the ledger can be read, the schedule and the menu bar
+                // can start reading it.
+                crate::background::start(started_at, cx);
+            });
 
             Ok::<_, anyhow::Error>(())
         })

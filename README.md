@@ -27,7 +27,13 @@ required.
 - **Review changes that matter.** Configurable rules flag unusual daily spend,
   low prepaid balances, and unallocated costs. Rules run when the app opens
   and after each refresh; opening the Alerts page re-checks whether open
-  alerts have resolved. Nothing runs while the app is closed.
+  alerts have resolved.
+- **Keep watching with the window closed.** On macOS and Windows, CloudBridge
+  stays in the menu bar (notification area) with the month's spend as the
+  icon's title. Every 15 minutes it fetches the accounts that are due, runs
+  the rules and posts a system notification for each new alert. Open at login
+  keeps that running after a restart. Linux has no tray icon, so the app still
+  quits when its window closes.
 - **Report in one currency.** Original billing amounts are preserved; a dated,
   built-in exchange-rate table converts them for display. Missing rates are
   reported rather than silently treated as 1:1. Rates are not live market data.

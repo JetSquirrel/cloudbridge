@@ -59,6 +59,19 @@ pub struct AppConfig {
     /// AWS enables by default ([`crate::model::AWS_DEFAULT_REGIONS`]).
     #[serde(default)]
     pub scan_regions: Option<Vec<String>>,
+    /// Fetch accounts that are due and run the alert rules on a timer while
+    /// the app runs, window open or not. Each fetch still waits out
+    /// `refresh_interval_hours`, so this costs what a daily Refresh click
+    /// would.
+    #[serde(default = "default_true")]
+    pub background_refresh: bool,
+    /// Post a system notification when an alert fires.
+    #[serde(default = "default_true")]
+    pub alert_notifications: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_reporting_currency() -> String {
@@ -77,6 +90,8 @@ impl Default for AppConfig {
             refresh_interval_hours: default_refresh_interval_hours(),
             reporting_currency: default_reporting_currency(),
             scan_regions: None,
+            background_refresh: true,
+            alert_notifications: true,
         }
     }
 }

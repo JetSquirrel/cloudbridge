@@ -89,7 +89,10 @@ rows, including model-level detail for Model Studio (百炼). DeepSeek's
 API provides balances; its cost export supplies spend detail. The anomaly,
 balance-floor and untagged-ratio rules evaluate the ledger on open and
 after each ingest; opening the Alerts page only re-checks whether open
-alerts have resolved, and nothing runs while the app is closed.
+alerts have resolved. A background schedule fetches due accounts and
+runs the rules every 15 minutes while the app runs — in the menu bar with
+its window closed, on macOS and Windows — and posts a system notification
+for each new alert; Open at login starts it after a restart.
 
 ## P0 — FOCUS normalization (historical implementation notes)
 

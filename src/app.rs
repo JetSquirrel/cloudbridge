@@ -769,9 +769,9 @@ impl Render for CloudBridgeApp {
 }
 
 /// The muted line under the sync title: source count plus whether a
-/// Refresh would fetch anything. Nothing fetches on a timer — Refresh skips
-/// a period fetched within the refresh interval, so this says how long the
-/// data counts as current, not when a fetch will happen by itself.
+/// Refresh would fetch anything. Refresh — the button's, and the background
+/// schedule's every 15 minutes — skips a period fetched within the refresh
+/// interval, so this says how long the data counts as current.
 fn sync_detail(sync: &SyncStatus) -> String {
     if sync.source_count == 0 {
         return "No sources configured".to_string();
