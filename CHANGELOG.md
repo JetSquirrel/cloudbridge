@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a login launch opens the window instead of starting hidden.
 
 ### Changed
+- The menu bar title is the month's spend alone. Open alerts put an
+  exclamation mark on the cloud icon instead of a count beside the amount;
+  the tooltip and panel still give the number.
+- Captions no longer join their parts with a middle dot; they read as
+  plain text ("October 2026, month to date, reported in USD").
 - The background refresh's description says what the 15 minutes is: a
   local check for accounts whose refresh interval has passed, which sends
   nothing to a provider. Each account is still fetched once per interval.
