@@ -16,7 +16,11 @@ use directories::BaseDirs;
 use std::path::{Path, PathBuf};
 
 use super::billfile::{self, BillFileFormat};
-use super::{aliyun::AliyunCloudService, aws::AwsCloudService, deepseek::DeepSeekService};
+use super::corkscrew::{self, ScanProvider};
+use super::{
+    aliyun::AliyunCloudService, aws::AwsCloudService, cloudflare::CloudflareService,
+    deepseek::DeepSeekService,
+};
 use super::{BillingSource, SourceContext};
 
 pub use crate::model::Reporting;
@@ -296,6 +300,9 @@ pub struct SourceDescriptor {
     /// The second channel into the ledger: see [`billfile`]. A source can
     /// have both, and for Alibaba Cloud the export is the finer of the two.
     pub bill_file: Option<&'static BillFileFormat>,
+    /// The scanner plugin that discovers this source's resources for
+    /// Insights, or `None` for a source nothing scans yet.
+    pub inventory: Option<&'static ScanProvider>,
 }
 
 impl SourceDescriptor {
@@ -439,6 +446,7 @@ static SOURCES: &[SourceDescriptor] = &[
         // Exports (FOCUS) export in S3 — set the bucket URI on the account
         // — with Cost Explorer as the fallback when no URI is set.
         bill_file: None,
+        inventory: Some(&corkscrew::AWS),
     },
     SourceDescriptor {
         id: "Aliyun",
@@ -468,6 +476,41 @@ static SOURCES: &[SourceDescriptor] = &[
         // The finer of Alibaba Cloud's two channels, and the only one that
         // reports Model Studio (百炼) per model.
         bill_file: Some(&billfile::aliyun::FORMAT),
+        inventory: None,
+    },
+    SourceDescriptor {
+        id: "Cloudflare",
+        display_name: "Cloudflare",
+        short_name: "Cloudflare",
+        // The account is named in the request path rather than signed for,
+        // so the "public half" is its ID and the token is the secret.
+        access_key_label: "Account ID",
+        secret_key_label: Some("API Token"),
+        default_region: None,
+        reporting: Reporting::Periodic,
+        local_credentials: Some(LocalCredentials {
+            // The variables wrangler reads. Its own login is an OAuth
+            // session, not a token this client could reuse.
+            env: EnvCredentials {
+                access_key: &["CLOUDFLARE_ACCOUNT_ID"],
+                secret_key: &["CLOUDFLARE_API_TOKEN"],
+                region: &[],
+            },
+            files: &[],
+        }),
+        build: Some(|ctx| {
+            Box::new(CloudflareService::new(
+                ctx.access_key_id,
+                ctx.secret_access_key,
+                ctx.region,
+            ))
+        }),
+        // The dashboard's billing CSV is per invoice, not per day; the API
+        // is the finer channel and the only one read.
+        bill_file: None,
+        // Workers, Durable Objects, R2, KV, Queues, D1 and zones, with the
+        // same token — which then needs their Read permissions too.
+        inventory: Some(&corkscrew::CLOUDFLARE),
     },
     SourceDescriptor {
         id: "DeepSeek",
@@ -496,6 +539,7 @@ static SOURCES: &[SourceDescriptor] = &[
         // The only window into what DeepSeek spend was for: its API
         // reports a balance and nothing else.
         bill_file: Some(&billfile::deepseek::FORMAT),
+        inventory: None,
     },
     // The three below are bill-file only so far. Each names the credential
     // its billing API will want, so the form has a label ready, but none is
@@ -512,6 +556,7 @@ static SOURCES: &[SourceDescriptor] = &[
         build: None,
         // Added for Ark (火山方舟); the export covers the whole account.
         bill_file: Some(&billfile::volcengine::FORMAT),
+        inventory: None,
     },
     SourceDescriptor {
         id: "OpenAI",
@@ -527,6 +572,7 @@ static SOURCES: &[SourceDescriptor] = &[
         local_credentials: None,
         build: None,
         bill_file: Some(&billfile::openai::FORMAT),
+        inventory: None,
     },
     SourceDescriptor {
         id: "Anthropic",
@@ -539,6 +585,7 @@ static SOURCES: &[SourceDescriptor] = &[
         local_credentials: None,
         build: None,
         bill_file: Some(&billfile::anthropic::FORMAT),
+        inventory: None,
     },
 ];
 
@@ -648,6 +695,17 @@ mod tests {
                     "{} would fill in a credential nothing uses",
                     source.id
                 );
+            }
+        }
+    }
+
+    /// A scan runs with the account's API credentials, so a source that
+    /// scans must be one that has them.
+    #[test]
+    fn a_source_that_scans_is_one_with_an_api_credential() {
+        for source in all() {
+            if source.inventory.is_some() {
+                assert!(source.fetches_from_api(), "{}", source.id);
             }
         }
     }

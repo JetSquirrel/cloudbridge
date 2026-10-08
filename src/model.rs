@@ -789,7 +789,7 @@ pub struct InventoryScope {
     pub regions: Vec<String>,
     pub resource_count: i64,
     /// Which enrichment plugin wrote the inventory, and at what version —
-    /// `corkscrew cloudbridge-r2`, or `demo`. `None` for a scan imported
+    /// `corkscrew cloudbridge-r3`, or `demo`. `None` for a scan imported
     /// before the ledger recorded it. The ledger reads only the two tables,
     /// so this is what tells one scanner's inventory from another's.
     pub scanner: Option<String>,

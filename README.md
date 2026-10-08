@@ -50,6 +50,7 @@ required.
 | Volcengine (火山引擎) | Bill import | Ark (火山方舟) endpoints and token types |
 | OpenAI | Cost or usage export | Project and model costs or token usage |
 | Anthropic (Claude) | Cost or usage export | Workspace and model costs or token usage |
+| Cloudflare | Billable usage API | Daily spend per service and zone (pay-as-you-go accounts) |
 | DeepSeek | Balance API or bill import | Prepaid balance; imported daily, per-model spend |
 
 File imports need no provider credentials. DeepSeek's API reports a balance,

@@ -616,7 +616,8 @@ fn record(
 
 // ==================== Resource scans (Insights) ====================
 
-/// An AWS account an Insights scan covers, and the regions to look in.
+/// An account an Insights scan covers, and the regions to look in (none
+/// for a provider scanned whole).
 #[derive(Debug, Clone)]
 pub struct ScanTarget {
     pub account: CloudAccount,
@@ -653,8 +654,9 @@ pub fn scan_regions() -> Vec<String> {
         })
 }
 
-/// The AWS accounts an Insights scan covers — enabled, not demo — each
-/// over [`scan_regions`].
+/// The accounts an Insights scan covers — enabled, not demo, of a source
+/// with a scanner plugin — a regional provider's each over
+/// [`scan_regions`].
 pub fn scan_targets() -> Result<Vec<ScanTarget>> {
     let regions = scan_regions();
     let mut targets = Vec::new();
@@ -662,16 +664,18 @@ pub fn scan_targets() -> Result<Vec<ScanTarget>> {
         let Some(descriptor) = account.descriptor() else {
             continue;
         };
-        if descriptor.id != "AWS"
+        if descriptor.inventory.is_none()
             || !account.enabled
             || account.id.starts_with(crate::ledger::demo::DEMO_PREFIX)
         {
             continue;
         }
-        targets.push(ScanTarget {
-            account,
-            regions: regions.clone(),
-        });
+        // A provider scanned whole takes no regions.
+        let regions = match descriptor.inventory {
+            Some(provider) if provider.regional => regions.clone(),
+            _ => Vec::new(),
+        };
+        targets.push(ScanTarget { account, regions });
     }
     Ok(targets)
 }
@@ -683,13 +687,19 @@ pub fn scan_target(target: &ScanTarget) -> Result<PathBuf> {
         .account
         .descriptor()
         .ok_or_else(|| anyhow!("No billing source registered for {}", target.account.name))?;
+    let provider = descriptor.inventory.ok_or_else(|| {
+        anyhow!(
+            "{} has no resource scanner in this build",
+            descriptor.display_name
+        )
+    })?;
     let credentials = crate::db::account_context(&target.account, descriptor)?;
     raw::check_path_segment(&target.account.id, "account id")?;
     let install = crate::cloud::corkscrew::ensure_installed()?;
     let out = crate::config::get_app_data_dir()?
         .join("inventory")
         .join(format!("scan-{}.duckdb", target.account.id));
-    crate::cloud::corkscrew::scan(&install, &credentials, &target.regions, &out)?;
+    crate::cloud::corkscrew::scan(&install, provider, &credentials, &target.regions, &out)?;
     Ok(out)
 }
 

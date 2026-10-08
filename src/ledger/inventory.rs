@@ -1,10 +1,10 @@
 //! The resource inventory: a corkscrew scan copied into the ledger.
 //!
 //! corkscrew (github.com/jlgore/corkscrew, MIT) is an external tool the
-//! user installs and runs; it scans an AWS account into a DuckDB file of
-//! its own. An import reads that file through a separate read-only
-//! connection — nothing attaches it to the ledger's — takes the newest
-//! complete AWS scan of each, and replaces `dim_resource` and
+//! user installs and runs; it scans an AWS or Cloudflare account into a
+//! DuckDB file of its own. An import reads that file through a separate
+//! read-only connection — nothing attaches it to the ledger's — takes the
+//! newest complete scan of each, and replaces `dim_resource` and
 //! `inventory_scan` with them in one transaction. Nothing reads corkscrew's file afterwards:
 //! its schema is its own to change, and it writes with a newer DuckDB.
 
@@ -16,14 +16,12 @@ use duckdb::{params, AccessMode, Config, Connection};
 
 use super::schema::TIMESTAMP_FORMAT;
 use super::with_connection;
+use crate::cloud::corkscrew;
 use crate::model::{InventoryResource, InventoryScope};
 
-/// The ledger's source id for what corkscrew calls `aws`.
-const AWS: &str = "AWS";
-
-/// Replace the inventory with the newest complete AWS scan in each of the
-/// corkscrew databases at `paths` — one per scanned account — merged into
-/// one inventory.
+/// Replace the inventory with the newest complete scan in each of the
+/// corkscrew databases at `paths` — one per scanned account, of whichever
+/// provider scanned it — merged into one inventory.
 pub fn import_scans(paths: &[PathBuf]) -> Result<InventoryScope> {
     let mut scans = Vec::with_capacity(paths.len());
     let mut resources = Vec::new();
@@ -92,7 +90,9 @@ pub(crate) struct Scan {
     pub regions: Vec<String>,
 }
 
-/// Read the newest complete AWS scan out of a corkscrew database.
+/// Read the newest complete scan out of a corkscrew database, by a plugin
+/// CloudBridge knows ([`corkscrew::PROVIDERS`]); its resources are filed
+/// under that plugin's source.
 ///
 /// Only a scan corkscrew marked `snapshot_complete` is taken: a partial
 /// one would make every resource it did not reach look deleted.
@@ -109,31 +109,42 @@ pub(crate) fn read_scan(corkscrew: &Connection) -> Result<(Scan, Vec<InventoryRe
         ));
     }
 
+    let known = corkscrew::PROVIDERS
+        .iter()
+        .map(|provider| format!("'{}'", provider.plugin))
+        .collect::<Vec<_>>()
+        .join(", ");
     let scan = corkscrew
         .query_row(
-            "SELECT id,
-                    CAST(coalesce(scan_end_time, scan_start_time) AS VARCHAR),
-                    CAST(regions AS VARCHAR)
-             FROM scan_metadata
-             WHERE lower(provider) = 'aws' AND coalesce(snapshot_complete, false)
-             ORDER BY coalesce(scan_end_time, scan_start_time) DESC
-             LIMIT 1",
+            &format!(
+                "SELECT id,
+                        CAST(coalesce(scan_end_time, scan_start_time) AS VARCHAR),
+                        CAST(regions AS VARCHAR),
+                        lower(provider)
+                 FROM scan_metadata
+                 WHERE lower(provider) IN ({known}) AND coalesce(snapshot_complete, false)
+                 ORDER BY coalesce(scan_end_time, scan_start_time) DESC
+                 LIMIT 1"
+            ),
             [],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
                 ))
             },
         )
         .map_err(|e| match e {
             duckdb::Error::QueryReturnedNoRows => {
-                anyhow!("The corkscrew database has no complete AWS scan to import")
+                anyhow!("The corkscrew database has no complete scan to import")
             }
             other => other.into(),
         })?;
-    let (scan_id, scanned_at, regions) = scan;
+    let (scan_id, scanned_at, regions, plugin) = scan;
+    let provider =
+        corkscrew::provider_for_plugin(&plugin).expect("the query only returns a known plugin");
     let regions: Vec<String> = regions
         .map(|json| serde_json::from_str(&json))
         .transpose()
@@ -145,13 +156,13 @@ pub(crate) fn read_scan(corkscrew: &Connection) -> Result<(Scan, Vec<InventoryRe
                 account_id, resource_id, arn, type, location, name,
                 CAST(tags AS VARCHAR), CAST(raw_data AS VARCHAR)
          FROM resource_observations
-         WHERE scan_id = ? AND lower(provider) = 'aws'
+         WHERE scan_id = ? AND lower(provider) = ?
          ORDER BY resource_id",
     )?;
     let resources = stmt
-        .query_map(params![scan_id], |row| {
+        .query_map(params![scan_id, provider.plugin], |row| {
             Ok(InventoryResource {
-                provider: AWS.to_string(),
+                provider: provider.source.to_string(),
                 cloud_account_id: present(row.get(0)?),
                 resource_id: row.get(1)?,
                 // corkscrew's arn column falls back to the id when a
@@ -316,7 +327,48 @@ mod tests {
         conn.execute_batch("UPDATE scan_metadata SET snapshot_complete = false")
             .unwrap();
         let error = read_scan(&conn).unwrap_err().to_string();
-        assert!(error.contains("no complete AWS scan"), "{error}");
+        assert!(error.contains("no complete scan"), "{error}");
+    }
+
+    /// The Cloudflare plugin records its scan and resources under its own
+    /// name; they are filed under the Cloudflare source, account-wide.
+    #[test]
+    fn a_cloudflare_scan_is_read_as_cloudflare() {
+        let conn = corkscrew_fixture();
+        conn.execute_batch(
+            r#"INSERT INTO scan_metadata VALUES
+                   ('cf', 'cloudflare', '["global"]', '2026-10-08 06:00:00', '2026-10-08 06:01:00', true);
+               INSERT INTO resource_observations VALUES
+                   ('cf', 'cloudflare', 'do-namespace-1', 'alarm-loop', 'durable_object_namespace',
+                    'data', 'global', '023e105f4ecef8ad9ca31a8372d0c353', NULL, NULL, NULL, NULL,
+                    '{"script":"ticker"}', 'h4', '2026-10-08 06:00:30');"#,
+        )
+        .unwrap();
+
+        let (scan, resources) = read_scan(&conn).unwrap();
+        assert_eq!(scan.scan_id, "cf");
+        assert_eq!(scan.regions, ["global"]);
+        assert_eq!(resources.len(), 1, "the AWS scan's resources stay out");
+        let namespace = &resources[0];
+        assert_eq!(namespace.provider, "Cloudflare");
+        assert_eq!(namespace.resource_type, "durable_object_namespace");
+        assert_eq!(
+            namespace.cloud_account_id.as_deref(),
+            Some("023e105f4ecef8ad9ca31a8372d0c353")
+        );
+    }
+
+    /// A scan by a plugin CloudBridge does not import is no scan at all.
+    #[test]
+    fn a_scan_by_an_unknown_plugin_is_not_taken() {
+        let conn = corkscrew_fixture();
+        conn.execute_batch(
+            r#"DELETE FROM scan_metadata;
+               INSERT INTO scan_metadata VALUES
+                   ('gcp', 'gcp', '["us-central1"]', '2026-10-08 06:00:00', '2026-10-08 06:01:00', true);"#,
+        )
+        .unwrap();
+        assert!(read_scan(&conn).is_err());
     }
 
     #[test]

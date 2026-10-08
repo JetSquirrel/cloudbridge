@@ -279,7 +279,7 @@ const ANTHROPIC_FORMAT: BillFileFormat = BillFileFormat {
 
 /// Every source, in the order the picker shows them.
 ///
-/// The same six the desktop registers, with the same names and the same
+/// The same seven the desktop registers, with the same names and the same
 /// answers to every question above.
 static SOURCES: &[SourceDescriptor] = &[
     SourceDescriptor {
@@ -304,6 +304,18 @@ static SOURCES: &[SourceDescriptor] = &[
         reporting: Reporting::Periodic,
         fetches_from_api: true,
         bill_file: Some(&ALIYUN_FORMAT),
+        local_credentials: None,
+    },
+    SourceDescriptor {
+        id: "Cloudflare",
+        display_name: "Cloudflare",
+        short_name: "Cloudflare",
+        access_key_label: "Account ID",
+        secret_key_label: Some("API Token"),
+        default_region: None,
+        reporting: Reporting::Periodic,
+        fetches_from_api: true,
+        bill_file: None,
         local_credentials: None,
     },
     SourceDescriptor {

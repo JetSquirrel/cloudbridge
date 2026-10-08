@@ -1,0 +1,15 @@
+{
+  "Provider": "cloudflare",
+  "Status": "failed",
+  "Resources": [],
+  "Scopes": [
+    {
+      "Scope": "global",
+      "Resources": null,
+      "Errors": [
+        "service accounts: accounts list failed: GET \"https://api.cloudflare.com/client/v4/accounts\": 403 Forbidden {\"success\":false,\"errors\":[{\"code\":9109,\"message\":\"Invalid access token\"}],\"messages\":[],\"result\":null}",
+        "service workers: workers scripts list failed for account 023e105f4ecef8ad9ca31a8372d0c353: GET \"https://api.cloudflare.com/client/v4/accounts/023e105f4ecef8ad9ca31a8372d0c353/workers/scripts\": 401 Unauthorized {\"success\":false,\"errors\":[{\"code\":10000,\"message\":\"Authentication error\"}],\"messages\":[],\"result\":null}\n"
+      ]
+    }
+  ]
+}
