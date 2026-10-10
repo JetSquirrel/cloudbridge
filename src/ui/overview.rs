@@ -5,8 +5,12 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use super::data::Range;
-use super::{chart, data, fmt, theme};
+use super::{accounts, chart, data, fmt, theme};
 use crate::ui::theme::CardOutline as _;
+
+/// Findings the data-quality strip lists before "Show all": enough for the
+/// worst of them to be read, few enough that the spend cards stay in view.
+const QUALITY_STRIP_ROWS: usize = 3;
 
 /// Overview View
 pub struct OverviewView {
@@ -39,6 +43,8 @@ pub struct OverviewView {
     /// at the data layer, so a refresh can only bring the strip back with
     /// a finding that is genuinely new — never with a dismissed one.
     quality_strip_dismissed: bool,
+    /// The strip lists every finding rather than the worst few.
+    quality_strip_expanded: bool,
     /// Demo data is being loaded or cleared from this page.
     demo_running: bool,
 }
@@ -56,6 +62,7 @@ impl OverviewView {
             generation: 0,
             chart_hover: chart::ChartHover::new(),
             quality_strip_dismissed: false,
+            quality_strip_expanded: false,
             demo_running: false,
         }
     }
@@ -620,92 +627,120 @@ impl OverviewView {
             )
     }
 
-    /// The data-quality warnings strip under the header: one row per
-    /// finding, worst severity first, severity pills colored like the
-    /// Alerts page's badges. Dismiss persists every shown finding's key
-    /// (`{kind}:{billing_period}`) and hides the strip; the data layer
-    /// filters dismissed findings out of every later load, so the strip
-    /// only reappears when a refresh surfaces something new.
+    /// The data-quality findings under the header: a card like the stat
+    /// cards below it, worst severity first, drawn with the same finding
+    /// row as the Accounts page. It qualifies the figures rather than
+    /// being one, so it stays neutral and shows only the worst
+    /// [`QUALITY_STRIP_ROWS`] until asked for the rest — the spend cards
+    /// are what the page is for and must not slide below the fold.
+    ///
+    /// Dismiss persists every finding's key (`{kind}:{billing_period}`),
+    /// shown or not, and hides the strip; the data layer filters dismissed
+    /// findings out of every later load, so the strip only reappears when
+    /// a refresh surfaces something new.
     fn render_data_quality_strip(
         &self,
         cx: &mut Context<Self>,
         d: &data::OverviewData,
     ) -> impl IntoElement {
-        div()
+        let total = d.data_quality.len();
+        let hidden = total.saturating_sub(QUALITY_STRIP_ROWS);
+        let shown = if self.quality_strip_expanded {
+            total
+        } else {
+            total.min(QUALITY_STRIP_ROWS)
+        };
+        let summary = if total == 1 {
+            "1 finding this billing period".to_string()
+        } else {
+            format!("{total} findings this billing period")
+        };
+
+        theme::card(cx)
             .w_full()
-            .p_3()
-            .rounded_md()
-            .bg(theme::warning_bg(cx))
+            .p_5()
             .v_flex()
-            .gap_2()
+            .gap_3()
             .child(
                 div()
                     .h_flex()
                     .items_center()
                     .justify_between()
-                    .child(theme::caption(cx, "Data quality"))
-                    .child(
-                        Button::new("dismiss-quality-strip")
-                            .label("Dismiss")
-                            .link()
-                            .small()
-                            .text_color(theme::text_muted(cx))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let keys: Vec<String> = this
-                                    .data
-                                    .as_ref()
-                                    .map(|d| {
-                                        d.data_quality.iter().map(|row| row.key.clone()).collect()
-                                    })
-                                    .unwrap_or_default();
-                                if let Err(e) = data::dismiss_quality_issues(&keys) {
-                                    tracing::warn!(
-                                        "Could not persist the data-quality dismissal: {}",
-                                        e
-                                    );
-                                }
-                                this.quality_strip_dismissed = true;
-                                cx.notify();
-                            })),
-                    ),
-            )
-            .children(d.data_quality.iter().map(|issue| {
-                let (badge_bg, badge_fg) = match issue.severity {
-                    data::DataQualitySeverity::Critical => {
-                        (theme::alert_tint(cx), theme::danger(cx))
-                    }
-                    data::DataQualitySeverity::Warning => {
-                        (theme::warning_bg(cx), theme::warning_text(cx))
-                    }
-                    data::DataQualitySeverity::Info => {
-                        (theme::sidebar_bg(cx), theme::text_muted(cx))
-                    }
-                };
-                div()
-                    .h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(theme::pill(issue.severity.label(), badge_bg, badge_fg))
+                    .gap_3()
                     .child(
                         div()
-                            .flex_1()
-                            // min_w_0 so a long message wraps/truncates
-                            // instead of pushing the amount out.
-                            .min_w_0()
-                            .text_sm()
-                            .text_color(theme::text_primary(cx))
-                            .child(issue.message.clone()),
+                            .v_flex()
+                            .gap_1()
+                            .child(theme::section_title(cx, "Data quality"))
+                            .child(theme::caption(cx, summary)),
                     )
-                    .when_some(issue.affected_amount, |el, amount| {
-                        el.child(
-                            div()
-                                .text_sm()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme::text_primary(cx))
-                                .child(fmt::amount(amount, &d.currency)),
+                    .child(
+                        div()
+                            .h_flex()
+                            .items_center()
+                            .gap_2()
+                            .when(hidden > 0, |el| {
+                                el.child(
+                                    Button::new("toggle-quality-strip")
+                                        .label(if self.quality_strip_expanded {
+                                            "Show fewer".to_string()
+                                        } else {
+                                            format!("Show all {total}")
+                                        })
+                                        .ghost()
+                                        .small()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.quality_strip_expanded =
+                                                !this.quality_strip_expanded;
+                                            cx.notify();
+                                        })),
+                                )
+                            })
+                            .child(
+                                Button::new("dismiss-quality-strip")
+                                    // Names its scope: it dismisses the rows
+                                    // the collapsed strip is not showing too.
+                                    .label(if total > 1 { "Dismiss all" } else { "Dismiss" })
+                                    .ghost()
+                                    .small()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let keys: Vec<String> = this
+                                            .data
+                                            .as_ref()
+                                            .map(|d| {
+                                                d.data_quality
+                                                    .iter()
+                                                    .map(|row| row.key.clone())
+                                                    .collect()
+                                            })
+                                            .unwrap_or_default();
+                                        if let Err(e) = data::dismiss_quality_issues(&keys) {
+                                            tracing::warn!(
+                                                "Could not persist the data-quality dismissal: {}",
+                                                e
+                                            );
+                                        }
+                                        this.quality_strip_dismissed = true;
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
+            )
+            .child(
+                // One group, so the rows sit closer to one another than to
+                // the heading; each row draws the hairline above itself.
+                div()
+                    .v_flex()
+                    .children(d.data_quality.iter().take(shown).map(|issue| {
+                        accounts::issue_row(
+                            issue.severity.issue_severity(),
+                            issue.message.clone(),
+                            issue.affected_amount,
+                            &d.currency,
+                            cx,
                         )
-                    })
-            }))
+                    })),
+            )
     }
 }
 
