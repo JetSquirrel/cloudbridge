@@ -21,11 +21,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The background refresh's description says what the 15 minutes is: a
   local check for accounts whose refresh interval has passed, which sends
   nothing to a provider. Each account is still fetched once per interval.
+- Overview's data-quality findings sit in a plain card instead of a
+  warning-colored panel, drawn like the Accounts page's. The worst three
+  show, with "Show all" for the rest, so the spend cards stay in view.
+  Each finding's amount appears once, in the amount column, rather than
+  again unformatted in its sentence.
+- Dismiss on Overview and Accounts is a quiet button rather than a link.
 
 ### Fixed
 - The app icon had a white square behind it, visible as a rim in the Dock
   and Finder. It is now transparent outside the artwork and sized to
   macOS's icon grid.
+- A scheduled refresh and a Refresh press that overlapped could both find
+  a period stale and both fetch it, paying Cost Explorer twice. The second
+  now waits for the first and finds the period fresh.
+- The DeepSeek balance request had no timeout; a stalled one stopped the
+  background refresh, for every account, until the app restarted. It and
+  the AWS credential test now give up after 30 seconds.
+- The web demo showed no icons. It asked for them by a relative URL, which
+  the fetch underneath refuses; it now uses the page's absolute address.
 
 ## [0.5.0] - 2026-10-08
 
