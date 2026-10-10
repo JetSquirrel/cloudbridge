@@ -334,7 +334,7 @@ pub struct Share {
 pub type Usage = HashMap<(Meter, NaiveDate), Vec<Share>>;
 
 /// Read the analytics payloads of a batch. A payload that carries errors —
-/// a field the account's plan lacks, a token without Analytics · Read —
+/// a field the account's plan lacks, a token without Analytics: Read —
 /// contributes nothing, and its meters stay unsplit.
 pub fn usage_from(parts: &[RawPart]) -> Usage {
     let mut totals: BTreeMap<(Meter, NaiveDate, String), f64> = BTreeMap::new();

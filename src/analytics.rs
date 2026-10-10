@@ -716,7 +716,7 @@ pub fn data_quality(counts: QualityCounts<'_>) -> Vec<DataQualityIssue> {
                 IssueSeverity::Info
             },
             message: format!(
-                "{untagged:.2} of usage ({:.1}% of the period's usage) carries no '{tag_key}' tag",
+                "{:.1}% of the period's usage carries no '{tag_key}' tag",
                 share * 100.0
             ),
             affected_amount: Some(untagged),
@@ -739,7 +739,7 @@ pub fn data_quality(counts: QualityCounts<'_>) -> Vec<DataQualityIssue> {
                 IssueSeverity::Info
             },
             message: format!(
-                "{amount:.2} of {service} usage ({:.1}% of the period's usage) has no region",
+                "{service} usage has no region ({:.1}% of the period's usage)",
                 share * 100.0
             ),
             affected_amount: Some(amount),
@@ -753,7 +753,7 @@ pub fn data_quality(counts: QualityCounts<'_>) -> Vec<DataQualityIssue> {
             kind: DataQualityKind::UnreconciledAdjustment,
             severity: IssueSeverity::Critical,
             message: format!(
-                "{count} 'Unreconciled' adjustment rows totalling {amount:.2}: \
+                "{count} 'Unreconciled' adjustment rows: \
                  bill lines whose named deductions did not add up"
             ),
             affected_amount: Some(amount),
@@ -781,8 +781,8 @@ pub fn data_quality(counts: QualityCounts<'_>) -> Vec<DataQualityIssue> {
             kind: DataQualityKind::UncategorizedUsage,
             severity: IssueSeverity::Info,
             message: format!(
-                "{amount:.2} of usage ({:.1}% of the period's usage) is from products with no \
-                 service category yet: {}",
+                "{:.1}% of the period's usage is from products with no service category \
+                 yet: {}",
                 share * 100.0,
                 named.join(", ")
             ),

@@ -12,7 +12,7 @@ or import provider exports, compare costs across sources, and trace spending to
 services, models, and business lines. No CloudBridge account or hosted backend
 required.
 
-[Download](#installation) · [Live demo](https://cloudbridge.jetsquirrel.cloud/demo/) · [Quick start](#quick-start) · [Documentation](https://cloudbridge.jetsquirrel.cloud/docs.html) · [Contributing](CONTRIBUTING.md)
+[Download](#installation) | [Live demo](https://cloudbridge.jetsquirrel.cloud/demo/) | [Quick start](#quick-start) | [Documentation](https://cloudbridge.jetsquirrel.cloud/docs.html) | [Contributing](CONTRIBUTING.md)
 
 ![CloudBridge desktop dashboard with spending totals, trends, and a service breakdown](images/cloudbridge.png)
 
@@ -71,8 +71,8 @@ Download from the official [GitHub Releases](https://github.com/JetSquirrel/clou
 
 | Platform | Download |
 | --- | --- |
-| macOS · Apple Silicon | [cloudbridge-macos-arm64.dmg](https://github.com/JetSquirrel/cloudbridge/releases/latest/download/cloudbridge-macos-arm64.dmg) |
-| Windows · x64 | [cloudbridge-windows-x64.exe](https://github.com/JetSquirrel/cloudbridge/releases/latest/download/cloudbridge-windows-x64.exe) |
+| macOS, Apple Silicon | [cloudbridge-macos-arm64.dmg](https://github.com/JetSquirrel/cloudbridge/releases/latest/download/cloudbridge-macos-arm64.dmg) |
+| Windows, x64 | [cloudbridge-windows-x64.exe](https://github.com/JetSquirrel/cloudbridge/releases/latest/download/cloudbridge-windows-x64.exe) |
 
 **macOS:** Open the disk image and drag **CloudBridge** to **Applications**.
 Current official macOS releases are Developer ID signed and notarized. If macOS
@@ -180,7 +180,7 @@ and [security notes](https://cloudbridge.jetsquirrel.cloud/docs.html#security).
 | Understand totals, attribution, and currency conversion | [User guide](https://cloudbridge.jetsquirrel.cloud/docs.html#usage) |
 | Configure alerts | [Alerts and rules](https://cloudbridge.jetsquirrel.cloud/docs.html#alerts) |
 | Set up provider permissions | [IAM and API access](docs/policies.md) |
-| See what changed or what is planned | [Changelog](CHANGELOG.md) · [Roadmap](docs/roadmap.md) |
+| See what changed or what is planned | [Changelog](CHANGELOG.md), [Roadmap](docs/roadmap.md) |
 | Build the app or add a billing source | [Contributing guide](CONTRIBUTING.md) |
 
 ## Development

@@ -51,9 +51,10 @@ async function init() {
   try {
     const wasm = await import('./wasm/cloudbridge.js');
     await wasm.default();
-    // The demo seeds its own data and opens its own window; there is nothing
-    // to pass in.
-    await wasm.run();
+    // The demo seeds its own data and opens its own window. All it needs is
+    // where the page is, as an absolute URL: icons are fetched from there,
+    // and the fetch accepts no relative URL.
+    await wasm.run(new URL('.', document.baseURI).href);
     loading?.remove();
   } catch (error) {
     console.error('Failed to start CloudBridge:', error);

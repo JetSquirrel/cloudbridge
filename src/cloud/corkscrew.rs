@@ -135,7 +135,7 @@ pub static CLOUDFLARE: ScanProvider = ScanProvider {
 /// be thousands, and none of them carries a cost.
 ///
 /// Each group needs its own read permission on the account's token, on top
-/// of the Billing · Read the bill uses: Account Settings, Zone, Workers
+/// of the Billing: Read the bill uses: Account Settings, Zone, Workers
 /// Scripts, Workers R2 Storage, Workers KV Storage, Queues and D1, all Read.
 pub const CLOUDFLARE_SERVICES: &[&str] = &["accounts", "zones", "workers", "storage", "data"];
 
@@ -421,7 +421,7 @@ fn cloudflare_settings(credentials: &SourceContext) -> Vec<(&'static str, String
 /// what Cloudflare said to it in the scan's report. Two refusals matter:
 /// a token Cloudflare does not accept at all, and one that is valid but
 /// lacks a service's Read permission — likely, since the bill needs only
-/// Billing · Read. Either fails the scan, which is then not imported.
+/// Billing: Read. Either fails the scan, which is then not imported.
 fn cloudflare_scan_failure(output: &ScanOutput) -> Option<String> {
     if let Some(line) = output
         .log

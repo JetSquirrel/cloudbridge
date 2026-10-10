@@ -411,7 +411,7 @@ TEMPLATE = """<!DOCTYPE html>
     <!-- GENERATED FROM {slug}.md - edit the Markdown, then re-run scripts/render-blog.py -->
     <main id="main">
         <article class="post">
-            <span class="eyebrow">{tag} · {date}</span>
+            <span class="eyebrow">{tag} / {date}</span>
             <h1>{title}</h1>
             <p class="lede">{description}</p>
 

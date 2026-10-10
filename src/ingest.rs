@@ -17,9 +17,9 @@
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Duration, Utc};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Condvar, LazyLock, Mutex};
 
 use crate::cloud::billfile::BillFileFormat;
 use crate::cloud::raw::{self, RawBatch, RawPart};
@@ -123,6 +123,9 @@ pub fn refresh_account(account: &CloudAccount, force: bool) -> Result<RefreshOut
     let mut not_ready = 0;
     for period in periods {
         let key = period_key(account, &period);
+        // Taken before the freshness check, so a caller that waited on
+        // another's fetch of this period sees it landed and skips it.
+        let _claim = PeriodClaim::take(&key);
         if !force {
             if is_fresh(&key, now, window)? {
                 tracing::debug!(
@@ -255,6 +258,43 @@ fn remember_paid_fetch(key: &PeriodKey, at: DateTime<Utc>, outcome: Result<(), S
         Err(failure) => {
             fetches.insert(key.clone(), PaidFetch { at, failure });
         }
+    }
+}
+
+/// Periods some caller is fetching right now.
+///
+/// The background schedule, Overview's Refresh and an account's first
+/// fetch each call [`refresh_account`] on their own. A period counts as
+/// fresh only once its batch is recorded, so without this two of them
+/// overlapping would both find it stale and both pay for it.
+static IN_FLIGHT: LazyLock<(Mutex<HashSet<PeriodKey>>, Condvar)> =
+    LazyLock::new(|| (Mutex::new(HashSet::new()), Condvar::new()));
+
+/// One caller's hold on a period, released when dropped.
+struct PeriodClaim(PeriodKey);
+
+impl PeriodClaim {
+    /// Wait for any other caller to finish this period, then take it.
+    /// Blocking; every caller of [`refresh_account`] is already off the UI
+    /// thread.
+    fn take(key: &PeriodKey) -> Self {
+        let (lock, released) = &*IN_FLIGHT;
+        let mut held = lock.lock().unwrap_or_else(|e| e.into_inner());
+        while held.contains(key) {
+            held = released.wait(held).unwrap_or_else(|e| e.into_inner());
+        }
+        held.insert(key.clone());
+        Self(key.clone())
+    }
+}
+
+impl Drop for PeriodClaim {
+    fn drop(&mut self) {
+        let (lock, released) = &*IN_FLIGHT;
+        lock.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.0);
+        released.notify_all();
     }
 }
 
@@ -850,6 +890,37 @@ mod tests {
 
     fn paid_key(account: &str) -> PeriodKey {
         PeriodKey::new("AWS", account, "2026-10")
+    }
+
+    /// A second caller reaching a period another is fetching waits for it,
+    /// rather than fetching — and paying for — the same period alongside.
+    #[test]
+    fn a_period_being_fetched_holds_off_a_second_caller() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let key = paid_key("in-flight");
+        let first = PeriodClaim::take(&key);
+
+        let taken = Arc::new(AtomicBool::new(false));
+        let second = std::thread::spawn({
+            let key = key.clone();
+            let taken = Arc::clone(&taken);
+            move || {
+                let _claim = PeriodClaim::take(&key);
+                taken.store(true, Ordering::SeqCst);
+            }
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert!(!taken.load(Ordering::SeqCst), "took a period still held");
+
+        drop(first);
+        second.join().unwrap();
+        assert!(taken.load(Ordering::SeqCst));
+
+        // Released again once the second caller is done.
+        drop(PeriodClaim::take(&key));
     }
 
     /// A fetch the provider answered and the ingest then lost is not

@@ -689,7 +689,7 @@ impl AttributionView {
             div()
                 .v_flex()
                 .children(card.largest.iter().map(|item| {
-                    // Provider · service is the row; a description, when
+                    // Provider and service are the row; a description, when
                     // the row even has one, trails it.
                     let what = item
                         .service

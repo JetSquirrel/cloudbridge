@@ -48,7 +48,16 @@ impl DeepSeekService {
 
     /// Ask the balance endpoint and return the response body unchanged.
     fn balance_raw(&self) -> Result<String> {
-        let response = ureq::get(BALANCE_URL)
+        // ureq waits forever by default, and the background schedule
+        // refreshes accounts one after another: one stalled balance call
+        // would stop every account behind it.
+        let agent = ureq::Agent::config_builder()
+            .timeout_global(Some(std::time::Duration::from_secs(30)))
+            .build()
+            .new_agent();
+
+        let response = agent
+            .get(BALANCE_URL)
             .header("Accept", "application/json")
             .header("Authorization", &format!("Bearer {}", self.api_key))
             .call()

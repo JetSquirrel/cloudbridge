@@ -1536,10 +1536,7 @@ impl AccountsView {
                                 div()
                                     .text_sm()
                                     .text_color(theme::text_primary(cx))
-                                    .child(format!(
-                                        "{} \u{b7} {}",
-                                        history.provider, history.account_id
-                                    ))
+                                    .child(format!("{} {}", history.provider, history.account_id))
                                     .text_ellipsis(),
                             )
                             .child(theme::caption(cx, history_summary(history, currency))),
@@ -1597,9 +1594,8 @@ impl AccountsView {
                     el.child(
                         Button::new("dismiss-health-card")
                             .label("Dismiss")
-                            .link()
+                            .ghost()
                             .small()
-                            .text_color(theme::text_muted(cx))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if let Err(e) = data::dismiss_quality_issues(&dismiss_keys) {
                                     tracing::warn!(
@@ -2269,7 +2265,7 @@ struct UntaggedSummary {
     amount: f64,
     /// Share of the period's usage, 0..=1.
     share: f64,
-    /// `provider · service` and amount, largest first, at most three.
+    /// `provider service` and amount, largest first, at most three.
     top_services: Vec<(String, f64)>,
 }
 
@@ -2401,7 +2397,27 @@ pub(super) fn issue_severity_style(severity: IssueSeverity, cx: &App) -> (IconNa
 /// the reporting-currency amount behind it when the check could sum one
 /// (unconverted charges cannot — their currencies do not mix).
 pub(super) fn render_issue_row(issue: &DataQualityIssue, currency: &str, cx: &App) -> Div {
-    let (icon, bg, fg) = issue_severity_style(issue.severity, cx);
+    issue_row(
+        issue.severity,
+        issue.message.clone(),
+        issue.affected_amount,
+        currency,
+        cx,
+    )
+}
+
+/// [`render_issue_row`] from its parts, for a page that holds findings in
+/// its own row type — Overview's strip — so every page draws a finding
+/// the same way.
+pub(super) fn issue_row(
+    severity: IssueSeverity,
+    message: impl Into<SharedString>,
+    affected_amount: Option<f64>,
+    currency: &str,
+    cx: &App,
+) -> Div {
+    let (icon, bg, fg) = issue_severity_style(severity, cx);
+    let message: SharedString = message.into();
     div()
         .h_flex()
         .items_center()
@@ -2428,9 +2444,9 @@ pub(super) fn render_issue_row(issue: &DataQualityIssue, currency: &str, cx: &Ap
                 .min_w_0()
                 .text_sm()
                 .text_color(theme::text_primary(cx))
-                .child(issue.message.clone()),
+                .child(message),
         )
-        .when_some(issue.affected_amount, |el, amount| {
+        .when_some(affected_amount, |el, amount| {
             el.child(
                 div()
                     .flex_shrink_0()

@@ -298,11 +298,13 @@ pub enum DataQualitySeverity {
 }
 
 impl DataQualitySeverity {
-    pub fn label(self) -> &'static str {
+    /// The ledger's severity, for drawing a strip row with the same
+    /// finding row the Accounts page uses.
+    pub fn issue_severity(self) -> query::IssueSeverity {
         match self {
-            Self::Info => "Info",
-            Self::Warning => "Warning",
-            Self::Critical => "Critical",
+            Self::Info => query::IssueSeverity::Info,
+            Self::Warning => query::IssueSeverity::Warning,
+            Self::Critical => query::IssueSeverity::Critical,
         }
     }
 }
