@@ -205,9 +205,12 @@ Things that will bite you:
 - **Icons are fetched, not embedded.** gpui-kit's wasm asset source requests
   `<endpoint>/assets/icons/<name>.svg` on demand, so the build script copies the
   catalog out of the `gpui-kit-assets` version `Cargo.lock` names into
-  `web/site/assets/` (gitignored). The endpoint is `.`, relative to the page, so the
-  same module works at a site root and under `/demo/`; anything added to
-  `web/site/index.html` has to stay relative for the same reason.
+  `web/site/assets/` (gitignored). The endpoint must be an **absolute** URL —
+  the fetch goes through reqwest, which rejects a relative one with a bare
+  "builder error" and leaves every icon blank. `main.js` passes the page's
+  own directory to `run()`, so the same module works at a site root and
+  under `/demo/`; anything added to `web/site/index.html` has to stay
+  relative for the same reason.
 - **The demo is published for the website.** The site lives in
   [JetSquirrel/cloudbridge-site](https://github.com/JetSquirrel/cloudbridge-site)
   and is built by Cloudflare, which cannot install the pinned nightly.

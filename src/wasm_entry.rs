@@ -22,9 +22,10 @@ thread_local! {
     static APPLICATION: RefCell<Option<ApplicationHandle>> = const { RefCell::new(None) };
 }
 
-/// Boot the demo. Called once, from `web/site/src/main.js`.
+/// Boot the demo. Called once, from `web/site/src/main.js`, with the absolute
+/// URL of the directory the page is served from.
 #[wasm_bindgen]
-pub fn run() -> Result<(), JsValue> {
+pub fn run(page_url: String) -> Result<(), JsValue> {
     console_error_panic_hook::set_once();
     tracing_wasm::set_as_global_default();
 
@@ -40,12 +41,16 @@ pub fn run() -> Result<(), JsValue> {
     let http_client = Arc::new(platform.fetch_http_client());
     let app = Application::with_platform(platform)
         .with_http_client(http_client)
-        // The one argument is the prefix the icon source fetches from.
-        // Relative, not empty: it resolves against the page's own URL, so the
-        // same module works served from the site root and from a
-        // subdirectory — which is where the demo is published, under
-        // `/demo/`. `scripts/build-web.sh` puts `assets/` next to the page.
-        .with_assets(gpui_kit::assets::Assets::new("."));
+        // The one argument is the prefix the icon source fetches from, as
+        // `<prefix>/assets/icons/<name>.svg`. It must be absolute: the fetch
+        // goes through reqwest, which refuses a relative URL before sending
+        // anything, so `"."` left every icon blank. The page's own directory
+        // keeps the module working at a site root and under `/demo/`, where
+        // the demo is published. `scripts/build-web.sh` puts `assets/` next
+        // to the page.
+        .with_assets(gpui_kit::assets::Assets::new(
+            page_url.trim_end_matches('/').to_string(),
+        ));
 
     let launch = move |cx: &mut App| {
         gpui_kit::init(cx);
