@@ -296,7 +296,15 @@ impl AwsCloudService {
 
         let url = format!("https://{}{}?{}", host, uri, query_string);
 
-        let response = ureq::get(&url)
+        // ureq waits forever by default; a stalled STS would leave the
+        // credential test spinning with nothing to report.
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .timeout_global(Some(std::time::Duration::from_secs(30)))
+            .build()
+            .into();
+
+        let response = agent
+            .get(&url)
             .header("Authorization", &authorization)
             .header("X-Amz-Date", &amz_date)
             .header("X-Amz-Content-Sha256", &payload_hash)
