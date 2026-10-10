@@ -35,12 +35,14 @@ if ! rustup run "$WEB_TOOLCHAIN" rustc --version >/dev/null 2>&1; then
 fi
 
 echo "==> Building the wasm module with $WEB_TOOLCHAIN"
+# The cdylib is asked for here rather than in Cargo.toml's `crate-type`, so
+# that desktop builds do not link a library they never load.
 if [[ "${1:-}" == "--release" ]]; then
     profile="release"
-    cargo "+$WEB_TOOLCHAIN" build --lib --release --target wasm32-unknown-unknown
+    cargo "+$WEB_TOOLCHAIN" rustc --lib --release --target wasm32-unknown-unknown --crate-type cdylib
 else
     profile="debug"
-    cargo "+$WEB_TOOLCHAIN" build --lib --target wasm32-unknown-unknown
+    cargo "+$WEB_TOOLCHAIN" rustc --lib --target wasm32-unknown-unknown --crate-type cdylib
 fi
 
 wasm="target/wasm32-unknown-unknown/$profile/cloudbridge.wasm"

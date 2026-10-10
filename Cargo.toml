@@ -13,11 +13,13 @@ rust-version = "1.95"
 
 # The desktop binary and the web demo are the same crate built for two
 # targets. The library target is what makes the wasm entry point possible;
-# `main.rs` stays the desktop entry.
+# `main.rs` stays the desktop entry. `scripts/build-web.sh` adds the
+# `cdylib` crate type for the wasm build only: listed here, every desktop
+# build would also link a ~34 MB DLL nobody loads, about 10 s per change.
 [lib]
 name = "cloudbridge"
 path = "src/lib.rs"
-crate-type = ["rlib", "cdylib"]
+crate-type = ["rlib"]
 
 # None of these belong to a target in particular.
 [dependencies]

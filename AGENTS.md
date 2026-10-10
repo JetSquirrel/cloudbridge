@@ -225,5 +225,7 @@ Things that will bite you:
   wasm it runs the closure inline, because there is no second thread.
 - **`cargo build --release` at the root still means the desktop application.**
   `[workspace] default-members = ["."]` keeps it that way; the wasm build is
-  `--lib --target wasm32-unknown-unknown`. A release wasm build is heavy and the
+  `cargo rustc --lib --target wasm32-unknown-unknown --crate-type cdylib`. The
+  `cdylib` is asked for there and not in `Cargo.toml`, so desktop builds skip
+  linking a library they never load. A release wasm build is heavy and the
   disk advice above applies to it too.
