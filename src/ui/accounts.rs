@@ -20,6 +20,7 @@ use crate::ingest;
 use crate::ledger::query::{self, DataQualityIssue, DataQualityKind, IssueSeverity};
 use crate::ui::theme::CardOutline as _;
 
+use super::data_health::{self, HealthCard};
 use super::{data, fmt, theme};
 
 actions!(accounts, [CloseAccountDialog]);
@@ -75,11 +76,6 @@ fn setup_hint(source_id: &str) -> Option<(&'static str, &'static str)> {
 /// so the two cannot drift apart.
 const COLUMN_REMS: [f32; 7] = [10.0, 10.0, 8.0, 7.0, 6.0, 8.0, 12.0];
 
-/// Findings the Data health card lists before "Show all", as on Overview:
-/// the card qualifies the accounts table under which it sits, so it stays
-/// short unless asked.
-const HEALTH_ROWS: usize = 3;
-
 /// Account Management View
 pub struct AccountsView {
     /// Account list
@@ -91,8 +87,7 @@ pub struct AccountsView {
     /// load failure — the card is advisory, never an error banner — and
     /// after a dismissal, which hides the card until the next load).
     health: Option<AccountsHealth>,
-    /// The Data health card lists every finding, not only the worst
-    /// [`HEALTH_ROWS`].
+    /// The Data health card lists every finding, not only the worst few.
     health_expanded: bool,
     /// A table/card data load is in flight; reloads do not pile on.
     loading_data: bool,
@@ -1569,11 +1564,8 @@ impl AccountsView {
             .into_any_element()
     }
 
-    /// The Data health card, Wealthfolio Health Center style: the ledger's
-    /// data-quality findings for the current billing period, worst first,
-    /// untagged usage among them. It sits under the accounts table it
-    /// qualifies and, like Overview's card, lists only the worst
-    /// [`HEALTH_ROWS`] until asked for the rest.
+    /// The Data health card under the accounts table: findings across every
+    /// account, untagged usage among them, worst first.
     /// Hidden until the first load lands, so the page does not flash it.
     /// Dismiss persists every finding's key, shown or not, and hides the
     /// card; the loader filters dismissed findings out, so only a genuinely
@@ -1591,111 +1583,34 @@ impl AccountsView {
         let mut findings: Vec<Finding> = health.issues.iter().map(Finding::Issue).collect();
         findings.extend(health.untagged.as_ref().map(Finding::Untagged));
         // Stable, so the loader's order holds within a severity.
-        findings.sort_by_key(|finding| severity_rank(finding.severity()));
-
-        let total = findings.len();
-        let hidden = total.saturating_sub(HEALTH_ROWS);
-        let shown = if self.health_expanded {
-            total
-        } else {
-            total.min(HEALTH_ROWS)
-        };
-        let summary = match total {
-            0 => "Data-quality checks over the current billing period".to_string(),
-            1 => "1 finding this billing period".to_string(),
-            n => format!("{n} findings this billing period"),
-        };
+        findings.sort_by_key(|finding| data_health::severity_rank(finding.severity()));
+        let rows = findings
+            .iter()
+            .map(|finding| match finding {
+                Finding::Issue(issue) => {
+                    data_health::render_issue_row(issue, currency, cx).into_any_element()
+                }
+                Finding::Untagged(untagged) => {
+                    render_untagged_finding(untagged, currency, cx).into_any_element()
+                }
+            })
+            .collect();
         let dismiss_keys = health.dismiss_keys.clone();
 
-        let card = theme::card(cx).w_full().p_5().v_flex().gap_3().child(
-            div()
-                .h_flex()
-                .items_center()
-                .justify_between()
-                .gap_3()
-                .child(
-                    div()
-                        .v_flex()
-                        .gap_1()
-                        .child(theme::section_title(cx, "Data health"))
-                        .child(theme::caption(cx, summary)),
-                )
-                .when(total > 0, |el| {
-                    el.child(
-                        div()
-                            .h_flex()
-                            .items_center()
-                            .gap_2()
-                            .when(hidden > 0, |el| {
-                                el.child(
-                                    Button::new("toggle-health-card")
-                                        .label(if self.health_expanded {
-                                            "Show fewer".to_string()
-                                        } else {
-                                            format!("Show all {total}")
-                                        })
-                                        .ghost()
-                                        .small()
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.health_expanded = !this.health_expanded;
-                                            cx.notify();
-                                        })),
-                                )
-                            })
-                            .child(
-                                Button::new("dismiss-health-card")
-                                    // Names its scope: it dismisses the rows
-                                    // the collapsed card is not showing too.
-                                    .label(if total > 1 { "Dismiss all" } else { "Dismiss" })
-                                    .ghost()
-                                    .small()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        if let Err(e) = data::dismiss_quality_issues(&dismiss_keys)
-                                        {
-                                            tracing::warn!(
-                                                "Could not persist the data-quality dismissal: {}",
-                                                e
-                                            );
-                                        }
-                                        this.health = None;
-                                        cx.notify();
-                                    })),
-                            ),
-                    )
-                }),
-        );
-
-        if total == 0 {
-            return card
-                .child(
-                    div()
-                        .h_flex()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            Icon::new(IconName::CircleCheck)
-                                .size_4()
-                                .text_color(theme::success(cx)),
-                        )
-                        .child(theme::caption(
-                            cx,
-                            "All good — no data-quality issues this period.",
-                        )),
-                )
-                .into_any_element();
-        }
-
-        card.child(
-            // One group, so the rows sit closer to one another than to the
-            // heading; each row draws the hairline above itself.
-            div()
-                .v_flex()
-                .children(findings.iter().take(shown).map(|finding| match finding {
-                    Finding::Issue(issue) => render_issue_row(issue, currency, cx),
-                    Finding::Untagged(untagged) => render_untagged_finding(untagged, currency, cx),
-                })),
-        )
-        .into_any_element()
+        HealthCard::new("accounts-health", rows)
+            .expanded(self.health_expanded)
+            .on_toggle(cx.listener(|this, _, _, cx| {
+                this.health_expanded = !this.health_expanded;
+                cx.notify();
+            }))
+            .on_dismiss(cx.listener(move |this, _, _, cx| {
+                if let Err(e) = data::dismiss_quality_issues(&dismiss_keys) {
+                    tracing::warn!("Could not persist the data-quality dismissal: {}", e);
+                }
+                this.health = None;
+                cx.notify();
+            }))
+            .into_any_element()
     }
 
     fn render_add_dialog(&self, cx: &Context<Self>) -> AnyElement {
@@ -2393,7 +2308,9 @@ fn load_health() -> anyhow::Result<AccountsHealth> {
             }
             if issue.kind == DataQualityKind::UntaggedUsage {
                 untagged_amount += issue.affected_amount.unwrap_or(0.0);
-                if severity_rank(issue.severity) < severity_rank(untagged_severity) {
+                if data_health::severity_rank(issue.severity)
+                    < data_health::severity_rank(untagged_severity)
+                {
                     untagged_severity = issue.severity;
                 }
             } else {
@@ -2404,7 +2321,7 @@ fn load_health() -> anyhow::Result<AccountsHealth> {
     }
 
     // Untagged usage is summed across periods above, not listed per period.
-    issues.sort_by_key(|issue| severity_rank(issue.severity));
+    issues.sort_by_key(|issue| data_health::severity_rank(issue.severity));
     top_services.sort_by(|a, b| b.1.total_cmp(&a.1));
     top_services.truncate(3);
 
@@ -2426,101 +2343,13 @@ fn load_health() -> anyhow::Result<AccountsHealth> {
     })
 }
 
-/// Worst-first ordering key for a severity.
-pub(super) fn severity_rank(severity: IssueSeverity) -> u8 {
-    match severity {
-        IssueSeverity::Critical => 0,
-        IssueSeverity::Warning => 1,
-        IssueSeverity::Info => 2,
-    }
-}
-
-/// A severity's icon and tint/ink pair, mirroring the alerts page's badges:
-/// critical in the alert tint, warning in the warning colours, info quiet.
-pub(super) fn issue_severity_style(severity: IssueSeverity, cx: &App) -> (IconName, Hsla, Hsla) {
-    match severity {
-        IssueSeverity::Critical => (IconName::CircleX, theme::alert_tint(cx), theme::danger(cx)),
-        IssueSeverity::Warning => (
-            IconName::TriangleAlert,
-            theme::warning_bg(cx),
-            theme::warning_text(cx),
-        ),
-        IssueSeverity::Info => (IconName::Info, theme::sidebar_bg(cx), theme::text_muted(cx)),
-    }
-}
-
-/// One data-quality issue: a severity icon badge, the check's message, and
-/// the reporting-currency amount behind it when the check could sum one
-/// (unconverted charges cannot — their currencies do not mix).
-pub(super) fn render_issue_row(issue: &DataQualityIssue, currency: &str, cx: &App) -> Div {
-    issue_row(
-        issue.severity,
-        issue.message.clone(),
-        issue.affected_amount,
-        currency,
-        cx,
-    )
-}
-
-/// [`render_issue_row`] from its parts, for a page that holds findings in
-/// its own row type — Overview's strip — so every page draws a finding
-/// the same way.
-pub(super) fn issue_row(
-    severity: IssueSeverity,
-    message: impl Into<SharedString>,
-    affected_amount: Option<f64>,
-    currency: &str,
-    cx: &App,
-) -> Div {
-    let (icon, bg, fg) = issue_severity_style(severity, cx);
-    let message: SharedString = message.into();
-    div()
-        .h_flex()
-        .items_center()
-        .gap_3()
-        .py_2()
-        .border_t_1()
-        .border_color(theme::card_border(cx))
-        .child(
-            div()
-                .flex_shrink_0()
-                .size_8()
-                .rounded_full()
-                .bg(bg)
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(Icon::new(icon).size_4().text_color(fg)),
-        )
-        .child(
-            div()
-                .flex_1()
-                // min_w_0 so a long message wraps instead of pushing the
-                // amount out of the card.
-                .min_w_0()
-                .text_sm()
-                .text_color(theme::text_primary(cx))
-                .child(message),
-        )
-        .when_some(affected_amount, |el, amount| {
-            el.child(
-                div()
-                    .flex_shrink_0()
-                    .text_sm()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme::text_primary(cx))
-                    .child(fmt::amount(amount, currency)),
-            )
-        })
-}
-
 /// The untagged-usage finding: a finding row like the others, then the
 /// largest services behind it and where to fix it, inset to the message
 /// column so the card keeps one leading edge.
 fn render_untagged_finding(untagged: &UntaggedSummary, currency: &str, cx: &App) -> Div {
     div()
         .v_flex()
-        .child(issue_row(
+        .child(data_health::issue_row(
             untagged.severity,
             format!(
                 "Usage with no '{}' tag ({:.1}% of the period's usage)",
