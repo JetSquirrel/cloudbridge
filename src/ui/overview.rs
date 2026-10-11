@@ -5,12 +5,9 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use super::data::Range;
-use super::{accounts, chart, data, fmt, theme};
+use super::data_health::{self, HealthCard};
+use super::{chart, data, fmt, theme};
 use crate::ui::theme::CardOutline as _;
-
-/// Findings the data-quality strip lists before "Show all": enough for the
-/// worst of them to be read, few enough that the spend cards stay in view.
-const QUALITY_STRIP_ROWS: usize = 3;
 
 /// Overview View
 pub struct OverviewView {
@@ -37,14 +34,14 @@ pub struct OverviewView {
     /// Chart hover state (point under the mouse + the canvas's per-frame
     /// geometry cells); drives the hover guide, dot, and tooltip.
     chart_hover: chart::ChartHover,
-    /// The user closed the data-quality strip; it stays hidden until the
+    /// The user dismissed the Data health card; it stays hidden until the
     /// next load. Dismissal is also persisted per finding
     /// (`{kind}:{billing_period}` in the app-state database) and filtered
-    /// at the data layer, so a refresh can only bring the strip back with
+    /// at the data layer, so a refresh can only bring the card back with
     /// a finding that is genuinely new — never with a dismissed one.
-    quality_strip_dismissed: bool,
-    /// The strip lists every finding rather than the worst few.
-    quality_strip_expanded: bool,
+    health_dismissed: bool,
+    /// The Data health card lists every finding rather than the worst few.
+    health_expanded: bool,
     /// Demo data is being loaded or cleared from this page.
     demo_running: bool,
 }
@@ -61,8 +58,8 @@ impl OverviewView {
             reporting_currency: data::reporting_currency(),
             generation: 0,
             chart_hover: chart::ChartHover::new(),
-            quality_strip_dismissed: false,
-            quality_strip_expanded: false,
+            health_dismissed: false,
+            health_expanded: false,
             demo_running: false,
         }
     }
@@ -627,120 +624,53 @@ impl OverviewView {
             )
     }
 
-    /// The data-quality findings under the header: a card like the stat
-    /// cards below it, worst severity first, drawn with the same finding
-    /// row as the Accounts page. It qualifies the figures rather than
-    /// being one, so it stays neutral and shows only the worst
-    /// [`QUALITY_STRIP_ROWS`] until asked for the rest — the spend cards
-    /// are what the page is for and must not slide below the fold.
+    /// The Data health card under the header, worst finding first. It
+    /// qualifies the figures rather than being one, and stays collapsed
+    /// until asked: the spend cards are what the page is for and must not
+    /// slide below the fold.
     ///
     /// Dismiss persists every finding's key (`{kind}:{billing_period}`),
-    /// shown or not, and hides the strip; the data layer filters dismissed
-    /// findings out of every later load, so the strip only reappears when
+    /// shown or not, and hides the card; the data layer filters dismissed
+    /// findings out of every later load, so the card only reappears when
     /// a refresh surfaces something new.
-    fn render_data_quality_strip(
+    fn render_health_card(
         &self,
         cx: &mut Context<Self>,
         d: &data::OverviewData,
     ) -> impl IntoElement {
-        let total = d.data_quality.len();
-        let hidden = total.saturating_sub(QUALITY_STRIP_ROWS);
-        let shown = if self.quality_strip_expanded {
-            total
-        } else {
-            total.min(QUALITY_STRIP_ROWS)
-        };
-        let summary = if total == 1 {
-            "1 finding this billing period".to_string()
-        } else {
-            format!("{total} findings this billing period")
-        };
+        let rows = d
+            .data_quality
+            .iter()
+            .map(|issue| {
+                data_health::issue_row(
+                    issue.severity.issue_severity(),
+                    issue.message.clone(),
+                    issue.affected_amount,
+                    &d.currency,
+                    cx,
+                )
+                .into_any_element()
+            })
+            .collect();
 
-        theme::card(cx)
-            .w_full()
-            .p_5()
-            .v_flex()
-            .gap_3()
-            .child(
-                div()
-                    .h_flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .v_flex()
-                            .gap_1()
-                            .child(theme::section_title(cx, "Data quality"))
-                            .child(theme::caption(cx, summary)),
-                    )
-                    .child(
-                        div()
-                            .h_flex()
-                            .items_center()
-                            .gap_2()
-                            .when(hidden > 0, |el| {
-                                el.child(
-                                    Button::new("toggle-quality-strip")
-                                        .label(if self.quality_strip_expanded {
-                                            "Show fewer".to_string()
-                                        } else {
-                                            format!("Show all {total}")
-                                        })
-                                        .ghost()
-                                        .small()
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.quality_strip_expanded =
-                                                !this.quality_strip_expanded;
-                                            cx.notify();
-                                        })),
-                                )
-                            })
-                            .child(
-                                Button::new("dismiss-quality-strip")
-                                    // Names its scope: it dismisses the rows
-                                    // the collapsed strip is not showing too.
-                                    .label(if total > 1 { "Dismiss all" } else { "Dismiss" })
-                                    .ghost()
-                                    .small()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let keys: Vec<String> = this
-                                            .data
-                                            .as_ref()
-                                            .map(|d| {
-                                                d.data_quality
-                                                    .iter()
-                                                    .map(|row| row.key.clone())
-                                                    .collect()
-                                            })
-                                            .unwrap_or_default();
-                                        if let Err(e) = data::dismiss_quality_issues(&keys) {
-                                            tracing::warn!(
-                                                "Could not persist the data-quality dismissal: {}",
-                                                e
-                                            );
-                                        }
-                                        this.quality_strip_dismissed = true;
-                                        cx.notify();
-                                    })),
-                            ),
-                    ),
-            )
-            .child(
-                // One group, so the rows sit closer to one another than to
-                // the heading; each row draws the hairline above itself.
-                div()
-                    .v_flex()
-                    .children(d.data_quality.iter().take(shown).map(|issue| {
-                        accounts::issue_row(
-                            issue.severity.issue_severity(),
-                            issue.message.clone(),
-                            issue.affected_amount,
-                            &d.currency,
-                            cx,
-                        )
-                    })),
-            )
+        HealthCard::new("overview-health", rows)
+            .expanded(self.health_expanded)
+            .on_toggle(cx.listener(|this, _, _, cx| {
+                this.health_expanded = !this.health_expanded;
+                cx.notify();
+            }))
+            .on_dismiss(cx.listener(|this, _, _, cx| {
+                let keys: Vec<String> = this
+                    .data
+                    .as_ref()
+                    .map(|d| d.data_quality.iter().map(|row| row.key.clone()).collect())
+                    .unwrap_or_default();
+                if let Err(e) = data::dismiss_quality_issues(&keys) {
+                    tracing::warn!("Could not persist the data-quality dismissal: {}", e);
+                }
+                this.health_dismissed = true;
+                cx.notify();
+            }))
     }
 }
 
@@ -791,8 +721,8 @@ impl Render for OverviewView {
                 .when_some(
                     self.data
                         .as_ref()
-                        .filter(|d| !d.data_quality.is_empty() && !self.quality_strip_dismissed),
-                    |el, d| el.child(self.render_data_quality_strip(cx, d)),
+                        .filter(|d| !d.data_quality.is_empty() && !self.health_dismissed),
+                    |el, d| el.child(self.render_health_card(cx, d)),
                 )
                 .when_some(
                     self.data.as_ref().filter(|d| d.accounts.demo > 0),
@@ -931,17 +861,13 @@ fn render_stats(cx: &App, d: &data::OverviewData) -> impl IntoElement {
                 cx,
                 "OPEN ALERTS",
                 stats.open_alerts.to_string(),
-                Button::new("open-alerts")
-                    .label(format!(
-                        "{} critical, {} warning →",
-                        stats.critical_alerts, stats.warning_alerts
-                    ))
-                    .link()
-                    .small()
-                    .text_color(theme::accent(cx))
-                    .on_click(|_, _, cx| {
-                        crate::app::navigate_to(crate::app::CurrentView::Alerts, cx)
-                    }),
+                // Plain text like the other cards' footers, so the four
+                // stay on one baseline; the sidebar's Alerts entry, badge
+                // included, is the way there.
+                div().text_color(theme::text_muted(cx)).child(format!(
+                    "{} critical, {} warning",
+                    stats.critical_alerts, stats.warning_alerts
+                )),
             )
             .when(stats.open_alerts > 0, |el| el.bg(theme::alert_tint(cx))),
         )

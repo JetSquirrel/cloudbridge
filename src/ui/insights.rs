@@ -16,13 +16,16 @@ use std::collections::HashMap;
 use anyhow::Result;
 use chrono::Utc;
 use gpui_kit::component::{
-    button::*, checkbox::Checkbox, skeleton::Skeleton, Disableable as _, Icon, IconName,
-    Sizable as _, StyledExt,
+    button::*,
+    checkbox::Checkbox,
+    dialog::{Cancel, Confirm, Dialog, DialogFooter},
+    skeleton::Skeleton,
+    Disableable as _, Icon, IconName, Sizable as _, StyledExt,
 };
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use super::{data, fmt, theme};
+use super::{data, dialogs, fmt, theme};
 use crate::analytics::insights::{
     findings_by_type, insights, inventory_by_source, resource_key, FindingGroup, SourceInventory,
     JUDGED_SOURCES, OWNER_TAG_KEYS,
@@ -34,11 +37,6 @@ use crate::model::{
     InsightFinding, InsightKind, InsightsReport, InventoryResource, InventoryScope, ResourceUsage,
 };
 use crate::ui::theme::CardOutline as _;
-
-actions!(insights, [CloseScanDialog]);
-
-/// Key context for the install dialog, so Escape closes it.
-const SCAN_DIALOG_CONTEXT: &str = "InsightsScanDialog";
 
 /// The kinds in the order the page shows them: the ones a person can act
 /// on first, the one that may just be a scan's blind spot last.
@@ -158,8 +156,6 @@ pub struct InsightsView {
     scan: ScanState,
     /// What the last scan did, or why it failed.
     scan_outcome: Option<Result<String, String>>,
-    /// Focus anchor the install dialog tracks, so Escape reaches it.
-    dialog_focus: FocusHandle,
     /// The groups opened, by [`group_key`], each with how many of its rows
     /// are shown. A list renders only what is open, so a scan of
     /// thousands costs a page of rows, not thousands.
@@ -176,15 +172,7 @@ fn group_key(scope: &str, resource_type: &str) -> String {
 }
 
 impl InsightsView {
-    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
-        static BIND_KEYS: std::sync::Once = std::sync::Once::new();
-        BIND_KEYS.call_once(|| {
-            cx.bind_keys([KeyBinding::new(
-                "escape",
-                CloseScanDialog,
-                Some(SCAN_DIALOG_CONTEXT),
-            )]);
-        });
+    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
         Self {
             data: None,
             error: None,
@@ -193,7 +181,6 @@ impl InsightsView {
             scan: ScanState::Idle,
             scan_outcome: None,
             expanded: HashMap::new(),
-            dialog_focus: cx.focus_handle(),
         }
     }
 
@@ -258,10 +245,14 @@ impl InsightsView {
             return;
         }
         self.scan = ScanState::Configuring(RegionChoice::saved());
-        self.dialog_focus.focus(window, cx);
+        dialogs::open(window, cx, |this, dialog, window, cx| {
+            this.scan_dialog(dialog, window, cx)
+        });
         cx.notify();
     }
 
+    /// The dialog was dismissed; after a confirm the scan is already
+    /// running and this leaves it be.
     fn cancel_scan(&mut self, cx: &mut Context<Self>) {
         if matches!(self.scan, ScanState::Configuring(_)) {
             self.scan = ScanState::Idle;
@@ -276,13 +267,14 @@ impl InsightsView {
         }
     }
 
-    /// Save the region choice and scan with it.
-    fn confirm_scan(&mut self, cx: &mut Context<Self>) {
+    /// Save the region choice and scan with it. Whether a scan started, so
+    /// the dialog stays open on a choice that cannot be scanned.
+    fn confirm_scan(&mut self, cx: &mut Context<Self>) -> bool {
         let ScanState::Configuring(choice) = &self.scan else {
-            return;
+            return false;
         };
         if !choice.can_scan() {
-            return;
+            return false;
         }
         if let Err(e) = choice.save() {
             self.scan_outcome = Some(Err(format!("Couldn't save the regions: {e}")));
@@ -291,6 +283,7 @@ impl InsightsView {
         }
         self.scan = ScanState::Idle;
         self.run_scan(cx);
+        true
     }
 
     fn step(this: &WeakEntity<Self>, cx: &mut AsyncApp, step: String) {
@@ -974,9 +967,14 @@ impl InsightsView {
 
     /// The scan dialog: before the first scan, what will be installed and
     /// what the scan does; every time it opens, which regions to cover.
-    fn render_scan_dialog(&self, cx: &Context<Self>) -> AnyElement {
+    fn scan_dialog(
+        &mut self,
+        dialog: Dialog,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Dialog {
         let ScanState::Configuring(choice) = &self.scan else {
-            return div().size_0().into_any_element();
+            return dialog;
         };
         let installing = !ingest::scanner_installed();
         let point = |text: &'static str| {
@@ -1058,51 +1056,24 @@ impl InsightsView {
         };
         let can_scan = choice.can_scan();
 
-        div()
-            .id("insights-scan-scrim")
-            .absolute()
-            .top_0()
-            .left_0()
-            .w_full()
-            .h_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(theme::scrim(cx))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| this.cancel_scan(cx)),
-            )
+        let view = cx.entity().downgrade();
+
+        dialog
+            .title(if installing {
+                "Install the resource scanner?"
+            } else {
+                "Scan settings"
+            })
+            .w(rems(32.).to_pixels(window.rem_size()))
+            .on_close(cx.listener(|this, _, _, cx| this.cancel_scan(cx)))
+            .on_ok(move |_, _, cx| {
+                view.update(cx, |this, cx| this.confirm_scan(cx))
+                    .unwrap_or(true)
+            })
             .child(
                 div()
-                    .id("insights-scan-dialog")
-                    .occlude()
-                    .key_context(SCAN_DIALOG_CONTEXT)
-                    .track_focus(&self.dialog_focus)
-                    .on_action(cx.listener(|this, _: &CloseScanDialog, _, cx| {
-                        this.cancel_scan(cx);
-                        cx.stop_propagation();
-                    }))
-                    .w_128()
-                    .p_6()
-                    .rounded_xl()
-                    .bg(theme::card_bg(cx))
-                    .border_1()
-                    .border_color(theme::card_border(cx))
-                    .text_color(theme::text_primary(cx))
-                    .shadow_lg()
                     .v_flex()
                     .gap_4()
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::BOLD)
-                            .child(if installing {
-                                "Install the resource scanner?"
-                            } else {
-                                "Scan settings"
-                            }),
-                    )
                     .when(installing, |el| {
                         el.child(
                             div()
@@ -1124,33 +1095,29 @@ impl InsightsView {
                                 )),
                         )
                     })
-                    .child(regions)
+                    .child(regions),
+            )
+            .footer(
+                DialogFooter::new()
+                    .gap_2()
                     .child(
-                        div()
-                            .h_flex()
-                            .gap_2()
-                            .justify_end()
-                            .child(
-                                Button::new("insights-scan-cancel")
-                                    .label("Cancel")
-                                    .ghost()
-                                    .on_click(cx.listener(|this, _, _, cx| this.cancel_scan(cx))),
-                            )
-                            .child(
-                                Button::new("insights-scan-confirm")
-                                    .label(confirm_label)
-                                    .primary()
-                                    .disabled(!can_scan)
-                                    .on_click(cx.listener(|this, _, _, cx| this.confirm_scan(cx))),
-                            ),
+                        Button::new("insights-scan-cancel")
+                            .label("Cancel")
+                            .ghost()
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(Cancel), cx)
+                            }),
                     )
-                    .with_animation(
-                        "insights-scan-dialog-enter",
-                        theme::dialog_enter_animation(),
-                        |this, delta| this.opacity(delta).mt(px(10.0 * (1.0 - delta))),
+                    .child(
+                        Button::new("insights-scan-confirm")
+                            .label(confirm_label)
+                            .primary()
+                            .disabled(!can_scan)
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(Confirm { secondary: false }), cx)
+                            }),
                     ),
             )
-            .into_any_element()
     }
 
     fn render_loading(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -1492,20 +1459,16 @@ impl Render for InsightsView {
                 .into_any_element()
         };
 
-        div()
-            .size_full()
-            .relative()
-            .child(
-                div()
-                    .id("insights")
-                    .size_full()
-                    .v_flex()
-                    .gap_6()
-                    .p_8()
-                    .bg(theme::app_bg(cx))
-                    .overflow_y_scroll()
-                    .child(body),
-            )
-            .child(self.render_scan_dialog(cx))
+        div().size_full().relative().child(
+            div()
+                .id("insights")
+                .size_full()
+                .v_flex()
+                .gap_6()
+                .p_8()
+                .bg(theme::app_bg(cx))
+                .overflow_y_scroll()
+                .child(body),
+        )
     }
 }

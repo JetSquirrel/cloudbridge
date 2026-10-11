@@ -3,6 +3,7 @@
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
 
+use super::http;
 use super::raw::RawPart;
 use super::{BillingPeriod, BillingSource, Fetched, Normalized, RawBatch};
 use crate::ledger::BalanceSnapshot;
@@ -51,10 +52,7 @@ impl DeepSeekService {
         // ureq waits forever by default, and the background schedule
         // refreshes accounts one after another: one stalled balance call
         // would stop every account behind it.
-        let agent = ureq::Agent::config_builder()
-            .timeout_global(Some(std::time::Duration::from_secs(30)))
-            .build()
-            .new_agent();
+        let agent = http::strict_agent(http::API_TIMEOUT);
 
         let response = agent
             .get(BALANCE_URL)

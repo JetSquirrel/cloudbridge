@@ -8,7 +8,8 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use super::data::{AccountDetailData, Range, ServiceRow};
-use super::{accounts, chart, data, fmt, theme};
+use super::data_health::{self, HealthCard};
+use super::{chart, data, fmt, theme};
 use crate::cloud::BillingPeriod;
 use crate::ledger::query::{breakdown_by, data_quality_issues, BreakdownDim, DataQualityIssue};
 use crate::ui::theme::CardOutline as _;
@@ -33,6 +34,8 @@ pub struct AccountDetailView {
     /// lands in the same flight as `data`. `None` until a load completes
     /// and after a dismissal, which hides the section until the next load.
     health: Option<AccountHealth>,
+    /// The Data health card lists every finding, not only the worst few.
+    health_expanded: bool,
     /// The dimension the drill-down card's switcher has selected.
     drill_dim: DrillDim,
     /// A load is in flight.
@@ -53,6 +56,7 @@ impl AccountDetailView {
             data: None,
             drilldown: None,
             health: None,
+            health_expanded: false,
             drill_dim: DrillDim::Region,
             loading: false,
             error: None,
@@ -70,6 +74,7 @@ impl AccountDetailView {
             self.data = None;
             self.drilldown = None;
             self.health = None;
+            self.health_expanded = false;
         }
         self.account_id = Some(account_id);
         self.load(cx);
@@ -270,7 +275,7 @@ impl AccountDetailView {
             return card.child(
                 div()
                     .v_flex()
-                    .gap_1()
+                    .gap_2()
                     .items_start()
                     .child(theme::caption(
                         cx,
@@ -279,10 +284,9 @@ impl AccountDetailView {
                     ))
                     .child(
                         Button::new("go-to-accounts")
-                            .label("Go to Accounts → Import")
-                            .link()
+                            .label("Open Accounts")
+                            .outline()
                             .small()
-                            .text_color(theme::accent(cx))
                             .on_click(|_, _, cx| {
                                 crate::app::navigate_to(crate::app::CurrentView::Accounts, cx)
                             }),
@@ -399,68 +403,37 @@ impl AccountDetailView {
         .into_any_element()
     }
 
-    /// The compact health section: the account's data-quality findings for
-    /// its current billing period, rendered like the accounts page's Data
-    /// health card. Billing-period keyed like the drill-down — the ledger's
-    /// checks group per period — so it ignores the header's range. Dismiss
-    /// persists every shown finding's key and hides the section; the loader
+    /// The account's Data health card: its findings for its current
+    /// billing period. Billing-period keyed like the drill-down (the
+    /// ledger's checks group per period), so it ignores the header's range.
+    /// Dismiss persists every finding's key and hides the card; the loader
     /// filters dismissed findings out, so only a genuinely new finding
-    /// brings the section back.
+    /// brings the card back.
     fn render_health(&self, d: &AccountDetailData, cx: &Context<Self>) -> AnyElement {
         let Some(health) = &self.health else {
             return div().into_any_element();
         };
-        let has_findings = !health.issues.is_empty();
+        let rows = health
+            .issues
+            .iter()
+            .map(|issue| data_health::render_issue_row(issue, &d.currency, cx).into_any_element())
+            .collect();
         let dismiss_keys = health.dismiss_keys.clone();
-        let card = theme::card(cx).w_full().p_5().v_flex().gap_3().child(
-            div()
-                .h_flex()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .v_flex()
-                        .gap_1()
-                        .child(theme::section_title(cx, "Data health"))
-                        .child(theme::caption(cx, "Current billing period")),
-                )
-                .when(has_findings, |el| {
-                    el.child(
-                        Button::new("dismiss-health-section")
-                            .label("Dismiss")
-                            .link()
-                            .small()
-                            .text_color(theme::text_muted(cx))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if let Err(e) = data::dismiss_quality_issues(&dismiss_keys) {
-                                    tracing::warn!(
-                                        "Could not persist the data-quality dismissal: {}",
-                                        e
-                                    );
-                                }
-                                this.health = None;
-                                cx.notify();
-                            })),
-                    )
-                }),
-        );
 
-        if health.issues.is_empty() {
-            return card
-                .child(theme::caption(
-                    cx,
-                    "All good — no data-quality issues this period.",
-                ))
-                .into_any_element();
-        }
-
-        card.children(
-            health
-                .issues
-                .iter()
-                .map(|issue| accounts::render_issue_row(issue, &d.currency, cx)),
-        )
-        .into_any_element()
+        HealthCard::new("account-health", rows)
+            .expanded(self.health_expanded)
+            .on_toggle(cx.listener(|this, _, _, cx| {
+                this.health_expanded = !this.health_expanded;
+                cx.notify();
+            }))
+            .on_dismiss(cx.listener(move |this, _, _, cx| {
+                if let Err(e) = data::dismiss_quality_issues(&dismiss_keys) {
+                    tracing::warn!("Could not persist the data-quality dismissal: {}", e);
+                }
+                this.health = None;
+                cx.notify();
+            }))
+            .into_any_element()
     }
 }
 
@@ -731,7 +704,7 @@ fn load_drilldown(account_id: &str) -> Result<AccountDrilldown> {
 /// account, so with several accounts in the same period the findings cover
 /// them all. For the same reason a dismissal here is period-and-kind
 /// scoped, not account scoped: dismissing a finding also hides it on the
-/// other surfaces that show the same period and kind (the Overview strip
+/// other surfaces that show the same period and kind (the Overview card
 /// and the Accounts page's Data health card).
 fn load_health(account_id: &str) -> Result<AccountHealth> {
     let account = db::get_all_accounts()?
@@ -750,7 +723,7 @@ fn load_health(account_id: &str) -> Result<AccountHealth> {
         dismiss_keys.push(dismissal_key);
         issues.push(issue);
     }
-    issues.sort_by_key(|issue| accounts::severity_rank(issue.severity));
+    issues.sort_by_key(|issue| data_health::severity_rank(issue.severity));
     Ok(AccountHealth {
         issues,
         dismiss_keys,

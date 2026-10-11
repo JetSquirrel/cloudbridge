@@ -9,6 +9,7 @@ pub mod cloudflare_analytics;
 pub mod corkscrew;
 pub mod deduction;
 pub mod deepseek;
+pub mod http;
 pub mod raw;
 pub mod registry;
 pub mod s3;

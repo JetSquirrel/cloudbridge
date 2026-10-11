@@ -13,10 +13,6 @@
 //! would leave behind entries the provider has since deleted and the total
 //! would stop matching theirs.
 
-// Some query entry points are read only through the page view-models and
-// the budget UI, which the page phase wires up.
-#![allow(dead_code)]
-
 pub mod demo;
 pub mod inventory;
 pub mod query;

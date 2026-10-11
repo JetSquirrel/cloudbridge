@@ -4,6 +4,7 @@ use chrono::Utc;
 use gpui_kit::component::{
     button::*,
     checkbox::Checkbox,
+    dialog::{AlertDialog, Cancel, Dialog, DialogButtonProps, DialogFooter},
     input::{Input, InputState},
     scroll::ScrollableElement,
     *,
@@ -20,9 +21,8 @@ use crate::ingest;
 use crate::ledger::query::{self, DataQualityIssue, DataQualityKind, IssueSeverity};
 use crate::ui::theme::CardOutline as _;
 
-use super::{data, fmt, theme};
-
-actions!(accounts, [CloseAccountDialog]);
+use super::data_health::{self, HealthCard};
+use super::{data, dialogs, fmt, theme};
 
 /// What the delete dialog is asking about.
 #[derive(Debug, Clone, PartialEq)]
@@ -33,9 +33,6 @@ enum PendingDelete {
     /// The billing history of an account that no longer exists, by id.
     History(String),
 }
-
-/// Key context for the add-account dialog, so Escape closes it.
-const ACCOUNT_DIALOG_CONTEXT: &str = "AccountDialog";
 
 /// The docs site's provider permissions page; each source's setup hint
 /// links to its section.
@@ -73,7 +70,7 @@ fn setup_hint(source_id: &str) -> Option<(&'static str, &'static str)> {
 
 /// Column widths (rem) shared by the accounts table header and its rows,
 /// so the two cannot drift apart.
-const COLUMN_REMS: [f32; 7] = [10.0, 10.0, 8.0, 5.0, 6.0, 8.0, 12.0];
+const COLUMN_REMS: [f32; 7] = [10.0, 10.0, 8.0, 7.0, 6.0, 8.0, 12.0];
 
 /// Account Management View
 pub struct AccountsView {
@@ -86,6 +83,8 @@ pub struct AccountsView {
     /// load failure — the card is advisory, never an error banner — and
     /// after a dismissal, which hides the card until the next load).
     health: Option<AccountsHealth>,
+    /// The Data health card lists every finding, not only the worst few.
+    health_expanded: bool,
     /// A table/card data load is in flight; reloads do not pile on.
     loading_data: bool,
     /// A save is in flight; the dialog's Save button is disabled.
@@ -117,8 +116,6 @@ pub struct AccountsView {
     /// Bumped whenever a banner is (re)assigned; an auto-fade timer only
     /// clears the banners while its own generation is still current.
     message_generation: u64,
-    /// Focus anchor the add dialog tracks, so Escape reaches it
-    dialog_focus: FocusHandle,
     /// Input field states
     name_input: Entity<InputState>,
     ak_input: Entity<InputState>,
@@ -163,7 +160,7 @@ enum FillStatus {
 
 impl AccountsView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Account Name"));
+        let name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Account name"));
         let ak_input = cx.new(|cx| InputState::new(window, cx).placeholder("Access Key ID"));
         let sk_input = cx.new(|cx| InputState::new(window, cx).placeholder("Secret Access Key"));
         let region_input = cx.new(|cx| {
@@ -177,19 +174,11 @@ impl AccountsView {
 
         let default_source = registry::default_source();
 
-        static BIND_KEYS: std::sync::Once = std::sync::Once::new();
-        BIND_KEYS.call_once(|| {
-            cx.bind_keys([KeyBinding::new(
-                "escape",
-                CloseAccountDialog,
-                Some(ACCOUNT_DIALOG_CONTEXT),
-            )]);
-        });
-
         Self {
             accounts: Vec::new(),
             accounts_data: None,
             health: None,
+            health_expanded: false,
             loading_data: false,
             saving: false,
             validating_ids: HashSet::new(),
@@ -206,7 +195,6 @@ impl AccountsView {
             success: None,
             info: None,
             message_generation: 0,
-            dialog_focus: cx.focus_handle(),
             name_input,
             ak_input,
             sk_input,
@@ -307,7 +295,7 @@ impl AccountsView {
     fn replay_normalization(&mut self, cx: &mut Context<Self>) {
         self.error = None;
         self.success = None;
-        self.info = Some("Replaying normalization from the raw store...".to_string());
+        self.info = Some("Replaying normalization from the raw store…".to_string());
         self.cancel_banner_fade();
         cx.notify();
 
@@ -362,7 +350,9 @@ impl AccountsView {
         self.error = None;
         self.success = None;
         self.info = None;
-        self.dialog_focus.focus(window, cx);
+        dialogs::open(window, cx, |this, dialog, window, cx| {
+            this.add_account_dialog(dialog, window, cx)
+        });
         cx.notify();
     }
 
@@ -476,8 +466,11 @@ impl AccountsView {
             })
     }
 
-    fn hide_add_dialog(&mut self, cx: &mut Context<Self>) {
+    /// The add dialog was dismissed (Escape, Cancel, the close button or the
+    /// backdrop), or the page closed it after a save.
+    fn add_dialog_closed(&mut self, cx: &mut Context<Self>) {
         self.show_add_dialog = false;
+        self.dialog_error = None;
         cx.notify();
     }
 
@@ -510,7 +503,7 @@ impl AccountsView {
         .detach();
     }
 
-    fn save_account(&mut self, cx: &mut Context<Self>) {
+    fn save_account(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.saving {
             return;
         }
@@ -616,42 +609,45 @@ impl AccountsView {
         self.dialog_error = None;
         cx.notify();
 
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let outcome = smol::unblock(move || db::save_account(&account, &ak, &sk))
                 .await
                 .map_err(|e| e.to_string());
 
-            cx.update(|cx| {
-                this.update(cx, |this, cx| {
-                    this.saving = false;
-                    match outcome {
-                        Ok(_) => {
-                            this.error = None;
-                            this.show_add_dialog = false;
-                            if fetch_after_save {
-                                this.fetch_first_bill(saved, cx);
-                            } else {
-                                this.info = None;
-                                this.success = Some(match import_hint {
-                                    Some(format) => format!(
-                                        "Added {}. Use Import on its row to read the {}.",
-                                        saved.name, format
-                                    ),
-                                    None => format!("Added {}.", saved.name),
-                                });
-                                this.schedule_banner_fade(cx);
-                            }
-                            this.load_accounts(cx);
-                            this.load_data(cx);
+            this.update_in(cx, |this, window, cx| {
+                this.saving = false;
+                match outcome {
+                    Ok(_) => {
+                        this.error = None;
+                        // Dismissed while the save ran: nothing to close,
+                        // and the dialog on top may be another one.
+                        if this.show_add_dialog {
+                            window.close_dialog(cx);
                         }
-                        Err(e) => {
-                            this.dialog_error = Some(format!("Couldn't save the account: {}", e));
+                        this.add_dialog_closed(cx);
+                        if fetch_after_save {
+                            this.fetch_first_bill(saved, cx);
+                        } else {
+                            this.info = None;
+                            this.success = Some(match import_hint {
+                                Some(format) => format!(
+                                    "Added {}. Use Import on its row to read the {}.",
+                                    saved.name, format
+                                ),
+                                None => format!("Added {}.", saved.name),
+                            });
+                            this.schedule_banner_fade(cx);
                         }
+                        this.load_accounts(cx);
+                        this.load_data(cx);
                     }
-                    cx.notify();
-                })
-                .ok();
-            });
+                    Err(e) => {
+                        this.dialog_error = Some(format!("Couldn't save the account: {}", e));
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
         })
         .detach();
     }
@@ -802,13 +798,9 @@ impl AccountsView {
     fn ask_delete(&mut self, pending: PendingDelete, window: &mut Window, cx: &mut Context<Self>) {
         self.pending_delete = Some(pending);
         self.delete_history = false;
-        self.dialog_focus.focus(window, cx);
-        cx.notify();
-    }
-
-    fn cancel_delete(&mut self, cx: &mut Context<Self>) {
-        self.pending_delete = None;
-        cx.notify();
+        dialogs::open_alert(window, cx, |this, alert, _, cx| {
+            this.delete_confirm(alert, cx)
+        });
     }
 
     fn confirm_delete(&mut self, cx: &mut Context<Self>) {
@@ -853,7 +845,7 @@ impl AccountsView {
         }
 
         // Show validating status
-        self.info = Some(format!("Validating account {}...", account_name));
+        self.info = Some(format!("Validating account {}…", account_name));
         self.error = None;
         self.success = None;
         self.cancel_banner_fade();
@@ -1071,11 +1063,12 @@ impl AccountsView {
     fn render_setup_hint(&self, cx: &Context<Self>) -> impl IntoElement {
         let hint = setup_hint(self.selected_source.id);
         div().when_some(hint, |el, (text, anchor)| {
+            // Stacked, not a wrapping row: a row would not let the text
+            // shrink, and it would run past the dialog's edge.
             el.pt_1()
-                .h_flex()
-                .flex_wrap()
-                .items_center()
-                .gap_x_2()
+                .v_flex()
+                .items_start()
+                .gap_1()
                 .child(
                     div()
                         .text_xs()
@@ -1117,7 +1110,7 @@ impl AccountsView {
             )
             .child(
                 Button::new("add")
-                    .label("Add account")
+                    .label("Add account…")
                     .primary()
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.show_add_dialog(window, cx);
@@ -1146,7 +1139,8 @@ impl AccountsView {
                 )
                 .child(theme::header_cell(cx, "LAST FETCH").w(rems(COLUMN_REMS[4])))
                 .child(theme::header_cell(cx, "STATE").w(rems(COLUMN_REMS[5])))
-                .child(theme::header_cell(cx, "ACTIONS").w(rems(COLUMN_REMS[6]))),
+                // The row's buttons name themselves; the lane stays reserved.
+                .child(div().w(rems(COLUMN_REMS[6]))),
         );
 
         match &self.accounts_data {
@@ -1316,6 +1310,9 @@ impl AccountsView {
             .child(
                 div()
                     .w(rems(COLUMN_REMS[5]))
+                    // A flex parent, so the pill hugs its label instead of
+                    // stretching across the lane.
+                    .flex()
                     .child(render_state(row.state, cx)),
             )
             .child(
@@ -1556,13 +1553,12 @@ impl AccountsView {
             .into_any_element()
     }
 
-    /// The Data health card, Wealthfolio Health Center style: the ledger's
-    /// data-quality findings for the current billing period, worst first,
-    /// plus the untagged-spend nag when usage carries no business-line tag.
+    /// The Data health card under the accounts table: findings across every
+    /// account, untagged usage among them, worst first.
     /// Hidden until the first load lands, so the page does not flash it.
-    /// Dismiss persists every shown finding's key (the nag's included) and
-    /// hides the card; the loader filters dismissed findings out, so only a
-    /// genuinely new finding brings the card back.
+    /// Dismiss persists every finding's key, shown or not, and hides the
+    /// card; the loader filters dismissed findings out, so only a genuinely
+    /// new finding brings the card back.
     fn render_health_card(&self, cx: &Context<Self>) -> AnyElement {
         let Some(health) = &self.health else {
             return div().into_any_element();
@@ -1572,351 +1568,234 @@ impl AccountsView {
             .as_ref()
             .map(|loaded| loaded.currency.as_str())
             .unwrap_or("USD");
-        let has_findings = !health.issues.is_empty() || health.untagged.is_some();
+
+        let mut findings: Vec<Finding> = health.issues.iter().map(Finding::Issue).collect();
+        findings.extend(health.untagged.as_ref().map(Finding::Untagged));
+        // Stable, so the loader's order holds within a severity.
+        findings.sort_by_key(|finding| data_health::severity_rank(finding.severity()));
+        let rows = findings
+            .iter()
+            .map(|finding| match finding {
+                Finding::Issue(issue) => {
+                    data_health::render_issue_row(issue, currency, cx).into_any_element()
+                }
+                Finding::Untagged(untagged) => {
+                    render_untagged_finding(untagged, currency, cx).into_any_element()
+                }
+            })
+            .collect();
         let dismiss_keys = health.dismiss_keys.clone();
 
-        let card = theme::card(cx).w_full().p_5().v_flex().gap_3().child(
-            div()
-                .h_flex()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .v_flex()
-                        .gap_1()
-                        .child(theme::section_title(cx, "Data health"))
-                        .child(theme::caption(
-                            cx,
-                            "Data-quality checks over the current billing period",
-                        )),
-                )
-                .when(has_findings, |el| {
-                    el.child(
-                        Button::new("dismiss-health-card")
-                            .label("Dismiss")
-                            .ghost()
-                            .small()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if let Err(e) = data::dismiss_quality_issues(&dismiss_keys) {
-                                    tracing::warn!(
-                                        "Could not persist the data-quality dismissal: {}",
-                                        e
-                                    );
-                                }
-                                this.health = None;
-                                cx.notify();
-                            })),
-                    )
-                }),
-        );
-
-        if health.issues.is_empty() && health.untagged.is_none() {
-            return card
-                .child(
-                    div()
-                        .h_flex()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            Icon::new(IconName::CircleCheck)
-                                .size_4()
-                                .text_color(theme::success(cx)),
-                        )
-                        .child(theme::caption(
-                            cx,
-                            "All good — no data-quality issues this period.",
-                        )),
-                )
-                .into_any_element();
-        }
-
-        card.children(
-            health
-                .issues
-                .iter()
-                .map(|issue| render_issue_row(issue, currency, cx)),
-        )
-        .when_some(health.untagged.as_ref(), |el, untagged| {
-            el.child(render_untagged_nag(untagged, currency, cx))
-        })
-        .into_any_element()
+        HealthCard::new("accounts-health", rows)
+            .expanded(self.health_expanded)
+            .on_toggle(cx.listener(|this, _, _, cx| {
+                this.health_expanded = !this.health_expanded;
+                cx.notify();
+            }))
+            .on_dismiss(cx.listener(move |this, _, _, cx| {
+                if let Err(e) = data::dismiss_quality_issues(&dismiss_keys) {
+                    tracing::warn!("Could not persist the data-quality dismissal: {}", e);
+                }
+                this.health = None;
+                cx.notify();
+            }))
+            .into_any_element()
     }
 
-    fn render_add_dialog(&self, cx: &Context<Self>) -> AnyElement {
-        if !self.show_add_dialog {
-            return div().size_0().into_any_element();
-        }
-
-        // Dialog overlay
-        div()
-            .id("add-account-scrim")
-            .absolute()
-            .top_0()
-            .left_0()
-            .w_full()
-            .h_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(theme::scrim(cx))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.hide_add_dialog(cx);
-                }),
-            )
+    /// The add-account form. Enter saves, like the Save button; the dialog
+    /// stays open until the save lands, so a validation error shows next
+    /// to what was typed.
+    fn add_account_dialog(
+        &mut self,
+        dialog: Dialog,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Dialog {
+        let view = cx.entity().downgrade();
+        dialog
+            .title("Add account")
+            .w(rems(32.).to_pixels(window.rem_size()))
+            .max_h(rems(37.5))
+            .on_close(cx.listener(|this, _, _, cx| this.add_dialog_closed(cx)))
+            .on_ok(move |_, window, cx| {
+                view.update(cx, |this, cx| this.save_account(window, cx))
+                    .ok();
+                false
+            })
             .child(
-                // Dialog content
                 div()
-                    .id("add-account-dialog")
-                    // occlude: clicks on the panel must not reach the
-                    // dismiss-on-click scrim behind it.
-                    .occlude()
-                    .key_context(ACCOUNT_DIALOG_CONTEXT)
-                    .track_focus(&self.dialog_focus)
-                    .on_action(cx.listener(|this, _: &CloseAccountDialog, _, cx| {
-                        this.hide_add_dialog(cx);
-                        cx.stop_propagation();
-                    }))
-                    // When an input inside is focused, its own Escape
-                    // binding wins the keystroke but re-propagates, so the
-                    // raw key is caught here on the bubble.
-                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                        if event.keystroke.key == "escape" {
-                            this.hide_add_dialog(cx);
-                            cx.stop_propagation();
-                        }
-                    }))
-                    .w_128()
-                    .max_h(rems(37.5))
-                    .p_6()
-                    .rounded_xl()
-                    .bg(theme::card_bg(cx))
-                    .border_1()
-                    .border_color(theme::card_border(cx))
-                    .text_color(theme::text_primary(cx))
-                    .shadow_lg()
                     .v_flex()
                     .gap_4()
                     .child(
                         div()
-                            .flex_shrink_0()
-                            .h_flex()
-                            .justify_between()
-                            .items_center()
-                            .child(
-                                div()
-                                    .text_xl()
-                                    .font_weight(FontWeight::BOLD)
-                                    .child("Add Cloud Account"),
-                            )
-                            .child(Button::new("close").icon(IconName::Close).ghost().on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.hide_add_dialog(cx);
-                                }),
-                            )),
+                            .v_flex()
+                            .gap_1()
+                            .child(div().text_sm().child("Provider"))
+                            .child(self.render_source_selector(cx))
+                            .child(self.render_setup_hint(cx)),
                     )
-                    // The body scrolls so Save and Cancel below stay
-                    // reachable however short the window is.
                     .child(
                         div()
-                            .id("add-account-body")
-                            .flex_1()
-                            .min_h_0()
                             .v_flex()
-                            .gap_4()
-                            .overflow_y_scroll()
-                            .child(
+                            .gap_1()
+                            .child(div().text_sm().child("Name"))
+                            .child(Input::new(&self.name_input)),
+                    )
+                    // A source with no billing API in this build has
+                    // nothing to sign, so the form does not ask for a
+                    // secret it would only file away unused. Its bill
+                    // arrives through Import instead.
+                    .when(self.selected_source.fetches_from_api(), |el| {
+                        el.when(self.selected_source.local_credentials.is_some(), |el| {
+                            el.child(self.render_credential_choice(cx))
+                        })
+                        .when(!self.use_system_credentials, |el| {
+                            el.child(
                                 div()
                                     .v_flex()
                                     .gap_1()
-                                    .child(div().text_sm().child("Cloud Provider"))
-                                    .child(self.render_source_selector(cx))
-                                    .child(self.render_setup_hint(cx)),
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .child(self.selected_source.access_key_label),
+                                    )
+                                    .child(Input::new(&self.ak_input)),
                             )
-                            .child(
+                            .when_some(self.selected_source.secret_key_label, |el, label| {
+                                el.child(
+                                    div()
+                                        .v_flex()
+                                        .gap_1()
+                                        .child(div().text_sm().child(label))
+                                        .child(Input::new(&self.sk_input)),
+                                )
+                            })
+                            .child(theme::caption(cx, KEYRING_NOTE))
+                        })
+                        .when(self.selected_source.default_region.is_some(), |el| {
+                            el.child(
                                 div()
                                     .v_flex()
                                     .gap_1()
-                                    .child(div().text_sm().child("Account Name"))
-                                    .child(Input::new(&self.name_input)),
+                                    .child(div().text_sm().child("Region"))
+                                    .child(Input::new(&self.region_input)),
                             )
-                            // A source with no billing API in this build has
-                            // nothing to sign, so the form does not ask for a
-                            // secret it would only file away unused. Its bill
-                            // arrives through Import instead.
-                            .when(self.selected_source.fetches_from_api(), |el| {
-                                el.when(self.selected_source.local_credentials.is_some(), |el| {
-                                    el.child(self.render_credential_choice(cx))
-                                })
-                                .when(!self.use_system_credentials, |el| {
-                                    el.child(
-                                        div()
-                                            .v_flex()
-                                            .gap_1()
-                                            .child(
-                                                div()
-                                                    .text_sm()
-                                                    .child(self.selected_source.access_key_label),
-                                            )
-                                            .child(Input::new(&self.ak_input)),
-                                    )
-                                    .when_some(
-                                        self.selected_source.secret_key_label,
-                                        |el, label| {
-                                            el.child(
-                                                div()
-                                                    .v_flex()
-                                                    .gap_1()
-                                                    .child(div().text_sm().child(label))
-                                                    .child(Input::new(&self.sk_input)),
-                                            )
-                                        },
-                                    )
-                                    .child(theme::caption(cx, KEYRING_NOTE))
-                                })
-                                .when(self.selected_source.default_region.is_some(), |el| {
-                                    el.child(
-                                        div()
-                                            .v_flex()
-                                            .gap_1()
-                                            .child(div().text_sm().child("Region"))
-                                            .child(Input::new(&self.region_input)),
-                                    )
-                                })
-                                // An AWS account can be backed by its own
-                                // Data Exports (FOCUS) export instead of
-                                // Cost Explorer: the export is resource-level
-                                // and free to read, the API is neither.
-                                .when(
-                                    self.selected_source.id == "AWS",
-                                    |el| {
-                                        el.child(
-                                            div()
-                                                .v_flex()
-                                                .gap_1()
-                                                .child(div().text_sm().child("Data export S3 URI"))
-                                                .child(Input::new(&self.export_uri_input))
-                                                .child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(theme::text_muted(cx))
-                                                        .child(
-                                                            "Optional. A FOCUS 1.2 export from \
+                        })
+                        // An AWS account can be backed by its own
+                        // Data Exports (FOCUS) export instead of
+                        // Cost Explorer: the export is resource-level
+                        // and free to read, the API is neither.
+                        .when(self.selected_source.id == "AWS", |el| {
+                            el.child(
+                                div()
+                                    .v_flex()
+                                    .gap_1()
+                                    .child(div().text_sm().child("Data export S3 URI"))
+                                    .child(Input::new(&self.export_uri_input))
+                                    .child(
+                                        div().text_xs().text_color(theme::text_muted(cx)).child(
+                                            "Optional. A FOCUS 1.2 export from \
                                                          Billing and Cost Management → Data \
                                                          Exports. When set, the bill is read \
                                                          from S3 and Cost Explorer is not called.",
-                                                        ),
-                                                ),
-                                        )
-                                    },
-                                )
-                            })
-                            .when_some(
-                                self.selected_source
-                                    .bill_file
-                                    .filter(|_| !self.selected_source.fetches_from_api()),
-                                |el, format| {
-                                    el.child(
-                                        div().text_sm().text_color(theme::text_muted(cx)).child(
-                                            format!(
-                                                "No credentials needed: this source is read \
+                                        ),
+                                    ),
+                            )
+                        })
+                    })
+                    .when_some(
+                        self.selected_source
+                            .bill_file
+                            .filter(|_| !self.selected_source.fetches_from_api()),
+                        |el, format| {
+                            el.child(div().text_sm().text_color(theme::text_muted(cx)).child(
+                                format!(
+                                    "No credentials needed: this source is read \
                                                  from its {}. Save the account, then use \
                                                  Import. ({})",
-                                                format.display_name, format.origin_hint
-                                            ),
-                                        ),
-                                    )
-                                },
-                            )
-                            // Offered whether or not a key was seen when the
-                            // dialog opened: that look decides only whether
-                            // "Use this machine's credentials" starts ticked,
-                            // and an app launched from Finder inherits no
-                            // shell variables, so the button looks again —
-                            // environment, then credentials file — when
-                            // clicked.
-                            .when(
-                                self.selected_source.local_credentials.is_some()
-                                    && !self.use_system_credentials,
-                                |el| {
-                                    el.child(
-                                        div()
-                                            .h_flex()
-                                            .gap_2()
-                                            .justify_between()
-                                            .items_center()
-                                            .child(self.render_fill_status(cx))
-                                            .child(
-                                                Button::new("fill-from-system")
-                                                    .label("Fill from system")
-                                                    .ghost()
-                                                    .tooltip(
-                                                        "Read the credentials this machine \
+                                    format.display_name, format.origin_hint
+                                ),
+                            ))
+                        },
+                    )
+                    // Offered whether or not a key was seen when the
+                    // dialog opened: that look decides only whether
+                    // "Use this machine's credentials" starts ticked,
+                    // and an app launched from Finder inherits no
+                    // shell variables, so the button looks again —
+                    // environment, then credentials file — when
+                    // clicked.
+                    .when(
+                        self.selected_source.local_credentials.is_some()
+                            && !self.use_system_credentials,
+                        |el| {
+                            el.child(
+                                div()
+                                    .h_flex()
+                                    .gap_2()
+                                    .justify_between()
+                                    .items_center()
+                                    .child(self.render_fill_status(cx))
+                                    .child(
+                                        Button::new("fill-from-system")
+                                            .label("Fill from system")
+                                            .ghost()
+                                            .tooltip(
+                                                "Read the credentials this machine \
                                                          already has, from the environment or \
                                                          the provider's credentials file",
-                                                    )
-                                                    .on_click(cx.listener(
-                                                        |this, _, window, cx| {
-                                                            this.fill_from_system(window, cx);
-                                                        },
-                                                    )),
-                                            ),
-                                    )
-                                },
-                            ),
-                    )
-                    // Error message
+                                            )
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.fill_from_system(window, cx);
+                                            })),
+                                    ),
+                            )
+                        },
+                    ),
+            )
+            .footer(
+                DialogFooter::new()
+                    .gap_2()
+                    // Beside the buttons rather than at the end of the body,
+                    // which scrolls: an error below the fold reads as a
+                    // button that did nothing.
                     .when_some(self.dialog_error.clone(), |el, error| {
                         el.child(
                             div()
-                                .flex_shrink_0()
+                                .flex_1()
+                                .min_w_0()
                                 .text_sm()
+                                .line_height(relative(1.4))
                                 .text_color(theme::danger(cx))
                                 .child(error),
                         )
                     })
-                    // Buttons
                     .child(
-                        div()
-                            .flex_shrink_0()
-                            .h_flex()
-                            .gap_2()
-                            .justify_end()
-                            .child(Button::new("cancel").label("Cancel").ghost().on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.hide_add_dialog(cx);
-                                }),
-                            ))
-                            .child(
-                                Button::new("save")
-                                    .label("Save")
-                                    .primary()
-                                    .disabled(self.saving)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.save_account(cx);
-                                    })),
-                            ),
+                        Button::new("cancel")
+                            .label("Cancel")
+                            .ghost()
+                            .on_click(|_, window, cx| window.dispatch_action(Box::new(Cancel), cx)),
                     )
-                    .with_animation(
-                        "add-account-dialog-enter",
-                        theme::dialog_enter_animation(),
-                        |this, delta| this.opacity(delta).mt(px(10.0 * (1.0 - delta))),
+                    .child(
+                        Button::new("save")
+                            .label("Save")
+                            .primary()
+                            .disabled(self.saving)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.save_account(window, cx);
+                            })),
                     ),
             )
-            .into_any_element()
     }
 
     /// The delete confirmation: names what goes and that there is no undo.
     /// Deleting an account offers its billing history too, and says what
     /// happens to it either way — kept history still counts in every total.
-    /// Modeled on the rules page's delete dialog, scrim included.
-    fn render_delete_confirm(&self, cx: &Context<Self>) -> AnyElement {
+    fn delete_confirm(&mut self, alert: AlertDialog, cx: &mut Context<Self>) -> AlertDialog {
         let Some(pending) = &self.pending_delete else {
-            return div().size_0().into_any_element();
+            return alert;
         };
         let (PendingDelete::Account(id) | PendingDelete::History(id)) = pending;
-        let deleting = self.deleting_ids.contains(id);
         let currency = self
             .accounts_data
             .as_ref()
@@ -1957,130 +1836,56 @@ impl AccountsView {
             _ => None,
         };
 
-        div()
-            .id("delete-account-scrim")
-            .absolute()
-            .top_0()
-            .left_0()
-            .w_full()
-            .h_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(theme::scrim(cx))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.cancel_delete(cx);
-                }),
+        let view = cx.entity().downgrade();
+
+        alert
+            .title(title)
+            .description(body)
+            .button_props(
+                DialogButtonProps::default()
+                    .ok_text("Delete")
+                    .ok_variant(ButtonVariant::Danger)
+                    .show_cancel(true),
             )
-            .child(
-                div()
-                    .id("delete-account-dialog")
-                    // occlude: clicks on the panel must not reach the
-                    // dismiss-on-click scrim behind it.
-                    .occlude()
-                    .key_context(ACCOUNT_DIALOG_CONTEXT)
-                    .track_focus(&self.dialog_focus)
-                    .on_action(cx.listener(|this, _: &CloseAccountDialog, _, cx| {
-                        this.cancel_delete(cx);
-                        cx.stop_propagation();
-                    }))
-                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                        if event.keystroke.key == "escape" {
-                            this.cancel_delete(cx);
-                            cx.stop_propagation();
-                        }
-                    }))
-                    .w_112()
-                    .p_6()
-                    .rounded_xl()
-                    .bg(theme::card_bg(cx))
-                    .border_1()
-                    .border_color(theme::card_border(cx))
-                    .text_color(theme::text_primary(cx))
-                    .shadow_lg()
-                    .v_flex()
-                    .gap_4()
-                    .child(
-                        div()
-                            .h_flex()
-                            .justify_between()
-                            .items_center()
-                            .child(div().text_lg().font_weight(FontWeight::BOLD).child(title))
-                            .child(
-                                Button::new("close-delete-account")
-                                    .icon(IconName::Close)
-                                    .ghost()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.cancel_delete(cx);
-                                    })),
-                            ),
+            .on_ok(move |_, _, cx| {
+                view.update(cx, |this, cx| this.confirm_delete(cx)).ok();
+                true
+            })
+            .on_close(cx.listener(|this, _, _, cx| {
+                this.pending_delete = None;
+                cx.notify();
+            }))
+            .when_some(history_choice, |el, history| {
+                let consequence = if self.delete_history {
+                    format!(
+                        "{} and its raw payloads are removed too.",
+                        history_summary(history, currency)
                     )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme::text_muted(cx))
-                            .child(body),
+                } else {
+                    format!(
+                        "{} stays in the ledger and keeps counting in every total.",
+                        history_summary(history, currency)
                     )
-                    .when_some(history_choice, |el, history| {
-                        let consequence = if self.delete_history {
-                            format!(
-                                "{} and its raw payloads are removed too.",
-                                history_summary(history, currency)
-                            )
-                        } else {
-                            format!(
-                                "{} stays in the ledger and keeps counting in every total.",
-                                history_summary(history, currency)
-                            )
-                        };
-                        el.child(
-                            div()
-                                .v_flex()
-                                .gap_1()
-                                .child(
-                                    Checkbox::new("delete-account-history")
-                                        .label("Also delete its billing history")
-                                        .checked(self.delete_history)
-                                        .on_click(cx.listener(|this, checked: &bool, _, cx| {
-                                            this.delete_history = *checked;
-                                            cx.notify();
-                                        })),
-                                )
-                                .child(theme::caption(cx, consequence)),
+                };
+                el.child(
+                    div()
+                        .v_flex()
+                        .gap_1()
+                        // Apart from the description: a choice, not more of
+                        // the same sentence.
+                        .pt_3()
+                        .child(
+                            Checkbox::new("delete-account-history")
+                                .label("Also delete its billing history")
+                                .checked(self.delete_history)
+                                .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                    this.delete_history = *checked;
+                                    cx.notify();
+                                })),
                         )
-                    })
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_2()
-                            .justify_end()
-                            .child(
-                                Button::new("cancel-delete-account")
-                                    .label("Cancel")
-                                    .ghost()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.cancel_delete(cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("confirm-delete-account")
-                                    .label("Delete")
-                                    .danger()
-                                    .disabled(deleting)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.confirm_delete(cx);
-                                    })),
-                            ),
-                    )
-                    .with_animation(
-                        "delete-account-dialog-enter",
-                        theme::dialog_enter_animation(),
-                        |this, delta| this.opacity(delta).mt(px(10.0 * (1.0 - delta))),
-                    ),
-            )
-            .into_any_element()
+                        .child(theme::caption(cx, consequence)),
+                )
+            })
     }
 
     fn render_messages(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -2220,7 +2025,8 @@ fn render_state(state: data::AccountState, cx: &App) -> Div {
 impl Render for AccountsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if std::mem::take(&mut self.open_add_dialog_requested) {
-            self.show_add_dialog(window, cx);
+            // After this frame: opening a dialog updates `Root`.
+            cx.defer_in(window, |this, window, cx| this.show_add_dialog(window, cx));
         }
         div()
             .size_full()
@@ -2238,13 +2044,11 @@ impl Render for AccountsView {
                     .overflow_y_scrollbar()
                     .child(self.render_header(cx))
                     .child(self.render_messages(cx))
-                    .child(self.render_health_card(cx))
                     .child(self.render_accounts_table(cx))
+                    .child(self.render_health_card(cx))
                     .child(self.render_orphaned_histories(cx))
                     .child(self.render_bottom_cards(cx)),
             )
-            .child(self.render_add_dialog(cx))
-            .child(self.render_delete_confirm(cx))
     }
 }
 
@@ -2256,7 +2060,7 @@ impl Render for AccountsView {
 // issue-row rendering is `pub(super)` so the account detail page renders
 // its findings the same way.
 
-/// The untagged-spend nag's data: the period's usage with no business-line
+/// The untagged-usage finding's data: the period's usage with no business-line
 /// tag, its share of all usage, and the largest services behind it.
 struct UntaggedSummary {
     /// The severity the ledger gave the untagged-usage check — a warning
@@ -2271,13 +2075,13 @@ struct UntaggedSummary {
 
 /// Everything the Data health card renders.
 struct AccountsHealth {
-    /// The period's findings, untagged usage excepted (it has its own
-    /// section), worst severity first. Findings the user dismissed are
+    /// The period's findings, untagged usage excepted (it carries its
+    /// services, so it has its own type), worst severity first. Findings the user dismissed are
     /// already filtered out.
     issues: Vec<DataQualityIssue>,
     untagged: Option<UntaggedSummary>,
     /// The dismissal keys of everything shown — every issue row's
-    /// `{kind}:{billing_period}` plus the untagged nag's
+    /// `{kind}:{billing_period}` plus the untagged finding's
     /// `untagged_usage:{period}` — so the card's Dismiss button can
     /// persist them all in one click.
     dismiss_keys: Vec<String>,
@@ -2312,7 +2116,7 @@ fn load_health() -> anyhow::Result<AccountsHealth> {
     for label in &periods {
         let period_issues = query::data_quality_issues(label, data::BUSINESS_LINE_TAG)?;
         let (usage, _) = query::usage_and_credits(label)?;
-        // A dismissed untagged nag takes its period out of the nag's
+        // A dismissed untagged finding takes its period out of its
         // totals entirely — amount, share denominator, and service list.
         let untagged_dismissed = dismissed.contains(&format!(
             "{}:{}",
@@ -2337,7 +2141,9 @@ fn load_health() -> anyhow::Result<AccountsHealth> {
             }
             if issue.kind == DataQualityKind::UntaggedUsage {
                 untagged_amount += issue.affected_amount.unwrap_or(0.0);
-                if severity_rank(issue.severity) < severity_rank(untagged_severity) {
+                if data_health::severity_rank(issue.severity)
+                    < data_health::severity_rank(untagged_severity)
+                {
                     untagged_severity = issue.severity;
                 }
             } else {
@@ -2347,8 +2153,8 @@ fn load_health() -> anyhow::Result<AccountsHealth> {
         }
     }
 
-    // Untagged usage renders in its own nag section, not the generic list.
-    issues.sort_by_key(|issue| severity_rank(issue.severity));
+    // Untagged usage is summed across periods above, not listed per period.
+    issues.sort_by_key(|issue| data_health::severity_rank(issue.severity));
     top_services.sort_by(|a, b| b.1.total_cmp(&a.1));
     top_services.truncate(3);
 
@@ -2370,180 +2176,88 @@ fn load_health() -> anyhow::Result<AccountsHealth> {
     })
 }
 
-/// Worst-first ordering key for a severity.
-pub(super) fn severity_rank(severity: IssueSeverity) -> u8 {
-    match severity {
-        IssueSeverity::Critical => 0,
-        IssueSeverity::Warning => 1,
-        IssueSeverity::Info => 2,
-    }
-}
-
-/// A severity's icon and tint/ink pair, mirroring the alerts page's badges:
-/// critical in the alert tint, warning in the warning colours, info quiet.
-pub(super) fn issue_severity_style(severity: IssueSeverity, cx: &App) -> (IconName, Hsla, Hsla) {
-    match severity {
-        IssueSeverity::Critical => (IconName::CircleX, theme::alert_tint(cx), theme::danger(cx)),
-        IssueSeverity::Warning => (
-            IconName::TriangleAlert,
-            theme::warning_bg(cx),
-            theme::warning_text(cx),
-        ),
-        IssueSeverity::Info => (IconName::Info, theme::sidebar_bg(cx), theme::text_muted(cx)),
-    }
-}
-
-/// One data-quality issue: a severity icon badge, the check's message, and
-/// the reporting-currency amount behind it when the check could sum one
-/// (unconverted charges cannot — their currencies do not mix).
-pub(super) fn render_issue_row(issue: &DataQualityIssue, currency: &str, cx: &App) -> Div {
-    issue_row(
-        issue.severity,
-        issue.message.clone(),
-        issue.affected_amount,
-        currency,
-        cx,
-    )
-}
-
-/// [`render_issue_row`] from its parts, for a page that holds findings in
-/// its own row type — Overview's strip — so every page draws a finding
-/// the same way.
-pub(super) fn issue_row(
-    severity: IssueSeverity,
-    message: impl Into<SharedString>,
-    affected_amount: Option<f64>,
-    currency: &str,
-    cx: &App,
-) -> Div {
-    let (icon, bg, fg) = issue_severity_style(severity, cx);
-    let message: SharedString = message.into();
-    div()
-        .h_flex()
-        .items_center()
-        .gap_3()
-        .py_2()
-        .border_t_1()
-        .border_color(theme::card_border(cx))
-        .child(
-            div()
-                .flex_shrink_0()
-                .size_8()
-                .rounded_full()
-                .bg(bg)
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(Icon::new(icon).size_4().text_color(fg)),
-        )
-        .child(
-            div()
-                .flex_1()
-                // min_w_0 so a long message wraps instead of pushing the
-                // amount out of the card.
-                .min_w_0()
-                .text_sm()
-                .text_color(theme::text_primary(cx))
-                .child(message),
-        )
-        .when_some(affected_amount, |el, amount| {
-            el.child(
-                div()
-                    .flex_shrink_0()
-                    .text_sm()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme::text_primary(cx))
-                    .child(fmt::amount(amount, currency)),
-            )
-        })
-}
-
-/// The untagged-spend nag: how much usage carries no business-line tag, the
-/// largest services behind it, and where to fix it. Tinted in the check's
-/// severity, so a warning share reads louder than an informational one.
-fn render_untagged_nag(untagged: &UntaggedSummary, currency: &str, cx: &App) -> Div {
-    let (icon, bg, fg) = issue_severity_style(untagged.severity, cx);
+/// The untagged-usage finding: a finding row like the others, then the
+/// largest services behind it and where to fix it, inset to the message
+/// column so the card keeps one leading edge.
+fn render_untagged_finding(untagged: &UntaggedSummary, currency: &str, cx: &App) -> Div {
     div()
         .v_flex()
-        .gap_2()
-        .p_3()
-        .rounded_md()
-        .bg(bg)
-        .child(
-            div()
-                .h_flex()
-                .items_center()
-                .gap_2()
-                .child(Icon::new(icon).size_4().text_color(fg))
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(fg)
-                        .child(format!(
-                            "{} of usage is untagged this period ({:.1}% of all usage)",
-                            fmt::amount(untagged.amount, currency),
-                            untagged.share * 100.0
-                        )),
-                ),
-        )
+        .child(data_health::issue_row(
+            untagged.severity,
+            format!(
+                "Usage with no '{}' tag ({:.1}% of the period's usage)",
+                data::BUSINESS_LINE_TAG,
+                untagged.share * 100.0
+            ),
+            Some(untagged.amount),
+            currency,
+            cx,
+        ))
         .child(
             div()
                 .v_flex()
-                .children(untagged.top_services.iter().map(|(name, amount)| {
-                    div()
-                        .h_flex()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .text_sm()
-                                .text_color(theme::text_primary(cx))
-                                .child(name.clone()),
-                        )
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .text_sm()
-                                .text_color(theme::text_primary(cx))
-                                .child(fmt::amount(*amount, currency)),
-                        )
-                })),
+                .gap_2()
+                // The finding row's icon slot (size_8) plus its gap (gap_3),
+                // so the details start on the message's edge.
+                .pl_11()
+                .pb_2()
+                .child(div().v_flex().children(untagged.top_services.iter().map(
+                    |(name, amount)| {
+                        div()
+                            .h_flex()
+                            .items_center()
+                            .gap_2()
+                            .text_sm()
+                            .text_color(theme::text_muted(cx))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .child(name.clone()),
+                            )
+                            .child(div().flex_shrink_0().child(fmt::amount(*amount, currency)))
+                    },
+                )))
+                .child(theme::caption(
+                    cx,
+                    format!(
+                        "Tag these resources with '{}' at your provider so their spend \
+                         lands on a business line.",
+                        data::BUSINESS_LINE_TAG
+                    ),
+                ))
+                // The template lives on the Query page, which the browser
+                // demo does not offer: there is no SQL engine under it.
+                .when(cfg!(not(target_family = "wasm")), |el| {
+                    el.child(
+                        div().flex().child(
+                            Button::new("open-untagged-query")
+                                .label("Open Query template")
+                                .outline()
+                                .small()
+                                .tooltip("Unallocated spend by service")
+                                .on_click(|_, _, cx| {
+                                    crate::app::navigate_to(crate::app::CurrentView::Query, cx)
+                                }),
+                        ),
+                    )
+                }),
         )
-        .child(theme::caption(
-            cx,
-            format!(
-                "Tag these resources with '{}' at your provider so their spend lands on a \
-                 business line.{}",
-                data::BUSINESS_LINE_TAG,
-                // The template it names lives on the Query page, which the
-                // browser demo does not offer — there is no SQL engine under
-                // it for a template to run against.
-                if cfg!(target_family = "wasm") {
-                    String::new()
-                } else {
-                    " The Query page's 'Unallocated spend by service' template lists \
-                     everything untagged."
-                        .to_string()
-                }
-            ),
-        ))
-        .when(cfg!(not(target_family = "wasm")), |el| {
-            el.child(
-                div().child(
-                    Button::new("open-untagged-query")
-                        .label("Open the Query template →")
-                        .link()
-                        .small()
-                        .text_color(theme::accent(cx))
-                        .on_click(|_, _, cx| {
-                            crate::app::navigate_to(crate::app::CurrentView::Query, cx)
-                        }),
-                ),
-            )
-        })
+}
+
+/// A row of the Data health card.
+enum Finding<'a> {
+    Issue(&'a DataQualityIssue),
+    Untagged(&'a UntaggedSummary),
+}
+
+impl Finding<'_> {
+    fn severity(&self) -> IssueSeverity {
+        match self {
+            Finding::Issue(issue) => issue.severity,
+            Finding::Untagged(untagged) => untagged.severity,
+        }
+    }
 }

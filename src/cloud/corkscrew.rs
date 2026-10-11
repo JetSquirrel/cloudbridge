@@ -33,6 +33,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Result};
 use sha2::{Digest, Sha256};
 
+use super::http;
 use super::SourceContext;
 use crate::config::get_app_data_dir;
 
@@ -245,10 +246,7 @@ fn install_into(dir: &Path) -> Result<()> {
 }
 
 fn download(url: &str) -> Result<Vec<u8>> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(300)))
-        .build()
-        .into();
+    let agent = http::strict_agent(Duration::from_secs(300));
     let mut response = agent
         .get(url)
         .call()

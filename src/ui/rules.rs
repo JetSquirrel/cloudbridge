@@ -3,10 +3,11 @@
 use chrono::{DateTime, Utc};
 use gpui_kit::component::{
     button::*,
+    dialog::{AlertDialog, Cancel, Dialog, DialogButtonProps, DialogFooter},
     input::{Input, InputState},
     skeleton::Skeleton,
     switch::*,
-    Disableable as _, IconName, Sizable as _, StyledExt,
+    Disableable as _, Sizable as _, StyledExt, WindowExt as _,
 };
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -16,12 +17,7 @@ use crate::alerts::{self, RuleView};
 use crate::cloud::BudgetStatus;
 use crate::ui::theme::CardOutline as _;
 
-use super::{data, fmt, theme};
-
-actions!(rules, [CloseRulesDialog]);
-
-/// Key context both dialogs share, so Escape closes whichever is open.
-const RULES_DIALOG_CONTEXT: &str = "RulesDialog";
+use super::{data, dialogs, fmt, theme};
 
 /// One selectable rule kind in the "New rule" dialog.
 struct RuleKindSpec {
@@ -82,9 +78,8 @@ pub struct RulesView {
     load_generation: u64,
     /// The last load, toggle or delete failure, if any.
     error: Option<String>,
-    /// Focus anchor both dialogs track, so Escape reaches them.
-    dialog_focus: FocusHandle,
-    /// Whether the "New rule" dialog is open.
+    /// Whether the "New rule" dialog is open, so a create that lands after
+    /// the dialog was dismissed does not close some other dialog.
     show_new_dialog: bool,
     /// Validation or creation failure inside the dialog.
     dialog_error: Option<String>,
@@ -113,8 +108,6 @@ pub struct RulesView {
     budget_error: Option<String>,
     /// The custom rule awaiting delete confirmation, if any.
     pending_delete: Option<String>,
-    /// A delete is in flight.
-    deleting: bool,
 }
 
 impl RulesView {
@@ -127,19 +120,6 @@ impl RulesView {
         let budget_amount_input = cx.new(|cx| InputState::new(window, cx).placeholder("500"));
         let budget_threshold_input = cx.new(|cx| InputState::new(window, cx).placeholder("80"));
 
-        // Escape-to-close for the dialogs. gpui-component's own Cancel
-        // action is crate-private, so the dialogs get their own action and
-        // context. Registered once: bind_keys appends, and the view may be
-        // rebuilt on every navigation.
-        static BIND_KEYS: std::sync::Once = std::sync::Once::new();
-        BIND_KEYS.call_once(|| {
-            cx.bind_keys([KeyBinding::new(
-                "escape",
-                CloseRulesDialog,
-                Some(RULES_DIALOG_CONTEXT),
-            )]);
-        });
-
         Self {
             data: None,
             budgets: Vec::new(),
@@ -147,7 +127,6 @@ impl RulesView {
             loading: false,
             load_generation: 0,
             error: None,
-            dialog_focus: cx.focus_handle(),
             show_new_dialog: false,
             dialog_error: None,
             creating: false,
@@ -166,7 +145,6 @@ impl RulesView {
             saving_budget: false,
             budget_error: None,
             pending_delete: None,
-            deleting: false,
         }
     }
 
@@ -280,11 +258,15 @@ impl RulesView {
         self.show_new_dialog = true;
         self.dialog_error = None;
         self.error = None;
-        self.dialog_focus.focus(window, cx);
         self.set_kind(RULE_KINDS[0].kind, window, cx);
+        dialogs::open(window, cx, |this, dialog, window, cx| {
+            this.new_rule_dialog(dialog, window, cx)
+        });
     }
 
-    fn hide_new_dialog(&mut self, cx: &mut Context<Self>) {
+    /// The dialog was dismissed (Escape, Cancel, the close button or the
+    /// backdrop), or the page closed it after a create.
+    fn new_dialog_closed(&mut self, cx: &mut Context<Self>) {
         self.show_new_dialog = false;
         self.dialog_error = None;
         cx.notify();
@@ -386,7 +368,12 @@ impl RulesView {
 
     /// Create the rule off-thread, evaluate right away so a condition that
     /// already holds fires immediately, then reload the list.
-    fn submit_new_rule(&mut self, cx: &mut Context<Self>) {
+    fn submit_new_rule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Enter confirms the dialog too, so a second submit can arrive
+        // while the first is in flight.
+        if self.creating {
+            return;
+        }
         let name = self.name_input.read(cx).value().trim().to_string();
         let config = match self.config_from_inputs(cx) {
             Ok(config) => config,
@@ -402,7 +389,7 @@ impl RulesView {
         cx.notify();
 
         let kind = self.selected_kind;
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let result = smol::unblock(move || {
                 data::create_rule(kind, &name, config).map_err(|e| e.to_string())
             })
@@ -411,23 +398,23 @@ impl RulesView {
                 let _ = smol::unblock(data::evaluate_rules).await;
             }
 
-            cx.update(|cx| {
-                this.update(cx, |this, cx| {
-                    this.creating = false;
-                    match result {
-                        Ok(_) => {
-                            this.show_new_dialog = false;
-                            this.dialog_error = None;
-                            this.load(cx);
+            this.update_in(cx, |this, window, cx| {
+                this.creating = false;
+                match result {
+                    Ok(_) => {
+                        if this.show_new_dialog {
+                            window.close_dialog(cx);
                         }
-                        Err(e) => {
-                            this.dialog_error = Some(e);
-                            cx.notify();
-                        }
+                        this.new_dialog_closed(cx);
+                        this.load(cx);
                     }
-                })
-                .ok();
-            });
+                    Err(e) => {
+                        this.dialog_error = Some(e);
+                        cx.notify();
+                    }
+                }
+            })
+            .ok();
         })
         .detach();
     }
@@ -552,13 +539,9 @@ impl RulesView {
 
     fn ask_delete(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         self.pending_delete = Some(id);
-        self.dialog_focus.focus(window, cx);
-        cx.notify();
-    }
-
-    fn cancel_delete(&mut self, cx: &mut Context<Self>) {
-        self.pending_delete = None;
-        cx.notify();
+        dialogs::open_alert(window, cx, |this, alert, _, cx| {
+            this.delete_confirm(alert, cx)
+        });
     }
 
     fn confirm_delete(&mut self, cx: &mut Context<Self>) {
@@ -566,16 +549,12 @@ impl RulesView {
             return;
         };
 
-        self.deleting = true;
-        cx.notify();
-
         cx.spawn(async move |this, cx| {
             let result =
                 smol::unblock(move || data::delete_rule(&id).map_err(|e| e.to_string())).await;
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
-                    this.deleting = false;
                     if let Err(e) = result {
                         this.error = Some(format!("Could not delete the rule: {e}"));
                     }
@@ -848,11 +827,15 @@ impl RulesView {
             }))
     }
 
-    fn render_new_dialog(&self, cx: &Context<Self>) -> AnyElement {
-        if !self.show_new_dialog {
-            return div().size_0().into_any_element();
-        }
-
+    /// The "New rule" dialog: kind, name and the kind's parameters. Enter
+    /// creates, like the Create rule button; the dialog stays open until the
+    /// create lands, so a validation error shows where it was typed.
+    fn new_rule_dialog(
+        &mut self,
+        dialog: Dialog,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Dialog {
         let parameters =
             match self.selected_kind {
                 alerts::RULE_COST_ANOMALY => div()
@@ -995,259 +978,110 @@ impl RulesView {
                 ),
             };
 
-        div()
-            .id("new-rule-scrim")
-            .absolute()
-            .top_0()
-            .left_0()
-            .w_full()
-            .h_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(theme::scrim(cx))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.hide_new_dialog(cx);
-                }),
-            )
+        let view = cx.entity().downgrade();
+        dialog
+            .title("New rule")
+            .w(rems(32.).to_pixels(window.rem_size()))
+            .max_h(rems(37.5))
+            .on_close(cx.listener(|this, _, _, cx| this.new_dialog_closed(cx)))
+            .on_ok(move |_, window, cx| {
+                view.update(cx, |this, cx| this.submit_new_rule(window, cx))
+                    .ok();
+                false
+            })
             .child(
                 div()
-                    .id("new-rule-dialog")
-                    // occlude: clicks on the panel must not reach the
-                    // dismiss-on-click scrim behind it.
-                    .occlude()
-                    .key_context(RULES_DIALOG_CONTEXT)
-                    .track_focus(&self.dialog_focus)
-                    .on_action(cx.listener(|this, _: &CloseRulesDialog, _, cx| {
-                        this.hide_new_dialog(cx);
-                        cx.stop_propagation();
-                    }))
-                    // When an input inside is focused, its own Escape
-                    // binding wins the keystroke but re-propagates, so the
-                    // raw key is caught here on the bubble.
-                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                        if event.keystroke.key == "escape" {
-                            this.hide_new_dialog(cx);
-                            cx.stop_propagation();
-                        }
-                    }))
-                    .w_128()
-                    .max_h(rems(37.5))
-                    .p_6()
-                    .rounded_xl()
-                    .bg(theme::card_bg(cx))
-                    .border_1()
-                    .border_color(theme::card_border(cx))
-                    .text_color(theme::text_primary(cx))
-                    .shadow_lg()
                     .v_flex()
                     .gap_4()
                     .child(
                         div()
-                            .flex_shrink_0()
-                            .h_flex()
-                            .justify_between()
-                            .items_center()
-                            .child(
-                                div()
-                                    .text_xl()
-                                    .font_weight(FontWeight::BOLD)
-                                    .child("New rule"),
-                            )
-                            .child(
-                                Button::new("close-new-rule")
-                                    .icon(IconName::Close)
-                                    .ghost()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.hide_new_dialog(cx);
-                                    })),
-                            ),
-                    )
-                    // The body scrolls so the footer buttons below stay
-                    // reachable no matter how tall the parameters grow.
-                    .child(
-                        div()
-                            .id("new-rule-body")
-                            .flex_1()
-                            .min_h_0()
                             .v_flex()
-                            .gap_4()
-                            .overflow_y_scroll()
-                            .child(
-                                div()
-                                    .v_flex()
-                                    .gap_1()
-                                    .child(div().text_sm().child("Kind"))
-                                    .child(self.render_kind_selector(cx)),
-                            )
-                            .child(
-                                div()
-                                    .v_flex()
-                                    .gap_1()
-                                    .child(div().text_sm().child("Name"))
-                                    .child(Input::new(&self.name_input)),
-                            )
-                            .child(parameters)
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme::text_muted(cx))
-                                    .child("The rule is enabled on creation."),
-                            )
-                            .when_some(self.dialog_error.clone(), |el, error| {
-                                el.child(div().text_sm().text_color(theme::danger(cx)).child(error))
-                            }),
+                            .gap_1()
+                            .child(div().text_sm().child("Kind"))
+                            .child(self.render_kind_selector(cx)),
                     )
                     .child(
                         div()
-                            .flex_shrink_0()
-                            .h_flex()
-                            .gap_2()
-                            .justify_end()
-                            .child(
-                                Button::new("cancel-new-rule")
-                                    .label("Cancel")
-                                    .ghost()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.hide_new_dialog(cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("save-new-rule")
-                                    .label("Create rule")
-                                    .primary()
-                                    .disabled(self.creating)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.submit_new_rule(cx);
-                                    })),
-                            ),
+                            .v_flex()
+                            .gap_1()
+                            .child(div().text_sm().child("Name"))
+                            .child(Input::new(&self.name_input)),
                     )
-                    .with_animation(
-                        "new-rule-dialog-enter",
-                        theme::dialog_enter_animation(),
-                        |this, delta| this.opacity(delta).mt(px(10.0 * (1.0 - delta))),
+                    .child(parameters)
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::text_muted(cx))
+                            .child("The rule is enabled on creation."),
                     ),
             )
-            .into_any_element()
+            .footer(
+                DialogFooter::new()
+                    .gap_2()
+                    // Beside the buttons rather than at the end of the body,
+                    // which scrolls: an error below the fold reads as a
+                    // button that did nothing.
+                    .when_some(self.dialog_error.clone(), |el, error| {
+                        el.child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_sm()
+                                .line_height(relative(1.4))
+                                .text_color(theme::danger(cx))
+                                .child(error),
+                        )
+                    })
+                    .child(
+                        Button::new("cancel-new-rule")
+                            .label("Cancel")
+                            .ghost()
+                            .on_click(|_, window, cx| window.dispatch_action(Box::new(Cancel), cx)),
+                    )
+                    .child(
+                        Button::new("save-new-rule")
+                            .label("Create rule")
+                            .primary()
+                            .disabled(self.creating)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.submit_new_rule(window, cx);
+                            })),
+                    ),
+            )
     }
 
-    fn render_delete_confirm(&self, cx: &Context<Self>) -> AnyElement {
-        let Some(id) = &self.pending_delete else {
-            return div().size_0().into_any_element();
-        };
-
+    /// Confirm deleting the pending rule, by name. Escape and Cancel leave
+    /// it be.
+    fn delete_confirm(&mut self, alert: AlertDialog, cx: &mut Context<Self>) -> AlertDialog {
         let name = self
-            .data
+            .pending_delete
             .as_ref()
-            .and_then(|data| data.rules.iter().find(|rule| &rule.id == id))
-            .map(|rule| rule.name.clone())
+            .and_then(|id| {
+                self.data
+                    .as_ref()
+                    .and_then(|data| data.rules.iter().find(|rule| &rule.id == id))
+            })
+            .map(|rule| format!("\u{201c}{}\u{201d}", rule.name))
             .unwrap_or_else(|| "this rule".to_string());
+        let view = cx.entity().downgrade();
 
-        div()
-            .id("delete-rule-scrim")
-            .absolute()
-            .top_0()
-            .left_0()
-            .w_full()
-            .h_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(theme::scrim(cx))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.cancel_delete(cx);
-                }),
+        alert
+            .title(format!("Delete {name}?"))
+            .description("Its past alerts stay; the rule stops running.")
+            .button_props(
+                DialogButtonProps::default()
+                    .ok_text("Delete")
+                    .ok_variant(ButtonVariant::Danger)
+                    .show_cancel(true),
             )
-            .child(
-                div()
-                    .id("delete-rule-dialog")
-                    // occlude: clicks on the panel must not reach the
-                    // dismiss-on-click scrim behind it.
-                    .occlude()
-                    .key_context(RULES_DIALOG_CONTEXT)
-                    .track_focus(&self.dialog_focus)
-                    .on_action(cx.listener(|this, _: &CloseRulesDialog, _, cx| {
-                        this.cancel_delete(cx);
-                        cx.stop_propagation();
-                    }))
-                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                        if event.keystroke.key == "escape" {
-                            this.cancel_delete(cx);
-                            cx.stop_propagation();
-                        }
-                    }))
-                    .w_112()
-                    .p_6()
-                    .rounded_xl()
-                    .bg(theme::card_bg(cx))
-                    .border_1()
-                    .border_color(theme::card_border(cx))
-                    .text_color(theme::text_primary(cx))
-                    .shadow_lg()
-                    .v_flex()
-                    .gap_4()
-                    .child(
-                        div()
-                            .h_flex()
-                            .justify_between()
-                            .items_center()
-                            .child(
-                                div()
-                                    .text_lg()
-                                    .font_weight(FontWeight::BOLD)
-                                    .child("Delete rule"),
-                            )
-                            .child(
-                                Button::new("close-delete-rule")
-                                    .icon(IconName::Close)
-                                    .ghost()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.cancel_delete(cx);
-                                    })),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme::text_muted(cx))
-                            .child(format!(
-                                "Delete \"{name}\"? Its past alerts stay; the rule stops running."
-                            )),
-                    )
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_2()
-                            .justify_end()
-                            .child(
-                                Button::new("cancel-delete-rule")
-                                    .label("Cancel")
-                                    .ghost()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.cancel_delete(cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("confirm-delete-rule")
-                                    .label("Delete")
-                                    .danger()
-                                    .disabled(self.deleting)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.confirm_delete(cx);
-                                    })),
-                            ),
-                    )
-                    .with_animation(
-                        "delete-rule-dialog-enter",
-                        theme::dialog_enter_animation(),
-                        |this, delta| this.opacity(delta).mt(px(10.0 * (1.0 - delta))),
-                    ),
-            )
-            .into_any_element()
+            .on_ok(move |_, _, cx| {
+                view.update(cx, |this, cx| this.confirm_delete(cx)).ok();
+                true
+            })
+            .on_close(cx.listener(|this, _, _, cx| {
+                this.pending_delete = None;
+                cx.notify();
+            }))
     }
 }
 
@@ -1271,7 +1105,7 @@ impl Render for RulesView {
             .child(
                 Button::new("new-rule")
                     .primary()
-                    .label("New rule")
+                    .label("New rule…")
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.show_new_dialog(window, cx);
                     })),
@@ -1380,7 +1214,5 @@ impl Render for RulesView {
             .bg(theme::app_bg(cx))
             .child(header)
             .child(body)
-            .child(self.render_new_dialog(cx))
-            .child(self.render_delete_confirm(cx))
     }
 }

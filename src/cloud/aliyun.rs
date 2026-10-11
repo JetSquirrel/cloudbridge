@@ -8,6 +8,7 @@ use sha1::Sha1;
 use std::collections::BTreeMap;
 
 use super::deduction;
+use super::http;
 use super::raw::RawPart;
 use super::{BillingPeriod, BillingSource, Fetched, Normalized, RawBatch};
 use crate::ledger::Charge;
@@ -118,11 +119,7 @@ impl AliyunCloudService {
         let url = format!("https://business.aliyuncs.com/?{}", query);
 
         // Send request
-        let agent = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .timeout_global(Some(std::time::Duration::from_secs(30)))
-            .build()
-            .new_agent();
+        let agent = http::agent(http::API_TIMEOUT);
 
         let response = agent
             .get(&url)
@@ -276,9 +273,8 @@ pub fn normalize(batch: &RawBatch) -> Result<Normalized> {
 }
 
 // ==================== Response Structs ====================
-// Note: These fields are used for serde deserialization of Alibaba Cloud API responses.
-// Some fields may not be directly read in the code, but are needed for correct JSON parsing.
-// Using #[allow(dead_code)] to suppress warnings.
+// Only the fields the code reads are declared; serde skips the rest of the
+// response.
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -289,18 +285,13 @@ struct AliyunErrorResponse {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
-#[allow(dead_code)]
 struct BillOverviewResponse {
-    code: Option<String>,
-    message: Option<String>,
     data: Option<BillOverviewData>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
-#[allow(dead_code)]
 struct BillOverviewData {
-    account_id: Option<String>,
     items: Option<BillOverviewItems>,
 }
 
@@ -313,12 +304,9 @@ struct BillOverviewItems {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
-#[allow(dead_code)]
 struct BillOverviewItem {
     product_code: Option<String>,
     product_name: Option<String>,
-    /// `Subscription` (prepaid) or `PayAsYouGo`.
-    subscription_type: Option<String>,
     /// What was charged, after every deduction below.
     pretax_amount: Option<f64>,
     /// What it would have cost before any of them.

@@ -289,7 +289,7 @@ pub struct ChangeDecomposition {
 }
 
 /// How bad one data-quality finding is; declaration order is severity
-/// order, so `Critical` sorts last ascending and the strip reverses.
+/// order, so `Critical` sorts last ascending and the card reverses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DataQualitySeverity {
     Info,
@@ -298,7 +298,7 @@ pub enum DataQualitySeverity {
 }
 
 impl DataQualitySeverity {
-    /// The ledger's severity, for drawing a strip row with the same
+    /// The ledger's severity, for drawing a card row with the same
     /// finding row the Accounts page uses.
     pub fn issue_severity(self) -> query::IssueSeverity {
         match self {
@@ -309,7 +309,7 @@ impl DataQualitySeverity {
     }
 }
 
-/// One row of the data-quality warnings strip.
+/// One row of the Overview Data health card.
 pub struct DataQualityRow {
     /// The dismissal key, `{kind}:{billing_period}`; the Dismiss button
     /// stores it so the finding stays hidden for its period.
@@ -351,7 +351,7 @@ pub struct OverviewData {
     pub chart_benchmark: Option<f64>,
     /// Data-quality findings for the current period, worst severity first;
     /// empty when the period is clean (or the check failed — a missing
-    /// health strip must not take the page down).
+    /// Data health card must not take the page down).
     pub data_quality: Vec<DataQualityRow>,
     /// The header caption's range part; the view appends the currency.
     pub window_caption: String,
@@ -645,7 +645,7 @@ fn load_overview_window(range: Range, now: DateTime<Utc>) -> Result<OverviewData
         drives_between(since, until, provider, service)
     })?;
 
-    // The strip reports the current period's health regardless of which
+    // The Data health card reports the current period's health regardless of which
     // window the page shows.
     let data_quality = load_data_quality(&BillingPeriod::containing(now).label());
 
@@ -973,12 +973,12 @@ pub(crate) fn dismissed_quality_keys() -> std::collections::HashSet<String> {
     })
 }
 
-/// The data-quality strip rows for a period, worst severity first. The
+/// The Data health card rows for a period, worst severity first. The
 /// check is additive page decoration: a failed check logs and yields an
-/// empty strip rather than taking the page down.
+/// empty card rather than taking the page down.
 ///
 /// Findings the user already dismissed for this period are filtered out
-/// here, at the data layer, so a refresh cannot resurrect them — the strip
+/// here, at the data layer, so a refresh cannot resurrect them — the card
 /// reappears only when a load surfaces a finding that is new (a different
 /// kind, or a new period).
 fn load_data_quality(billing_period: &str) -> Vec<DataQualityRow> {
@@ -991,7 +991,7 @@ fn load_data_quality(billing_period: &str) -> Vec<DataQualityRow> {
     data_quality_rows(billing_period, issues, &dismissed)
 }
 
-/// The strip rows of a set of findings: dismissal keys assigned, dismissed
+/// The card rows of a set of findings: dismissal keys assigned, dismissed
 /// findings dropped, severity mapped, Critical first.
 fn data_quality_rows(
     billing_period: &str,

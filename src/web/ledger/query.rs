@@ -29,7 +29,7 @@ pub use crate::model::{
     DailyTotal, DataQualityIssue, DataQualityKind, ForecastBands, InventoryResource,
     InventoryScope, IssueSeverity, LedgerAccount, ModelTokenSummary, MovementKind, PeriodForecast,
     PeriodOverPeriod, ResourceCost, ResourceUsage, ServiceDailyTotal, ServiceMovement,
-    ServiceTagUsage, TopResource, UntaggedCharge, UntaggedServiceUsage,
+    ServiceTagUsage, TopResource, UntaggedServiceUsage,
 };
 
 /// The bucket a charge with no value for the tag key lands in, as the view's
@@ -254,11 +254,6 @@ pub(crate) fn total_for_period_of(_conn: &Connection, billing_period: &str) -> R
     total_for_period(billing_period)
 }
 
-/// Charges of one period grouped by service, largest first.
-pub fn service_breakdown(key: &PeriodKey) -> Result<Vec<(String, f64)>> {
-    breakdown_by(key, BreakdownDim::Service)
-}
-
 /// Charges of one period grouped by `dim`, largest first.
 pub fn breakdown_by(key: &PeriodKey, dim: BreakdownDim) -> Result<Vec<(String, f64)>> {
     read(|all| {
@@ -273,21 +268,6 @@ pub fn breakdown_by(key: &PeriodKey, dim: BreakdownDim) -> Result<Vec<(String, f
         );
 
         totals_by_bucket(&rows, |row| bucket_of(row, dim))
-    })
-}
-
-/// Charges of one period grouped by `(provider, service)`, largest first.
-pub fn provider_service_totals(billing_period: &str) -> Result<Vec<(String, String, f64)>> {
-    read(|all| {
-        let rows = selected(
-            all,
-            &Scope {
-                billing_period: Some(billing_period),
-                ..Default::default()
-            },
-        );
-
-        totals_by_provider_service(&rows)
     })
 }
 
@@ -434,43 +414,6 @@ pub fn resource_usage_costs(billing_period: &str) -> Result<Vec<ResourceCost>> {
 
 // ==================== Daily and monthly series ====================
 
-/// Daily charge totals for an account since an instant, oldest first.
-pub fn daily_totals(
-    provider: &str,
-    account_id: &str,
-    since: DateTime<Utc>,
-) -> Result<Vec<DailyTotal>> {
-    read(|all| {
-        let rows = selected(
-            all,
-            &Scope {
-                provider: Some(provider),
-                account_id: Some(account_id),
-                since: Some(since),
-                ..Default::default()
-            },
-        );
-
-        totals_by_day(&rows)
-    })
-}
-
-/// Daily charge totals across every provider and account since an instant,
-/// oldest first.
-pub fn daily_totals_all(since: DateTime<Utc>) -> Result<Vec<DailyTotal>> {
-    read(|all| {
-        let rows = selected(
-            all,
-            &Scope {
-                since: Some(since),
-                ..Default::default()
-            },
-        );
-
-        totals_by_day(&rows)
-    })
-}
-
 /// [`daily_totals_all`] for a single account.
 pub fn daily_usage_of(
     provider: &str,
@@ -512,13 +455,8 @@ pub fn daily_usage_all(since: DateTime<Utc>) -> Result<Vec<DailyTotal>> {
 }
 
 /// Daily charge totals per `(provider, service)` since an instant, oldest
-/// first — the input to cost-anomaly detection.
-pub fn daily_totals_by_service(since: DateTime<Utc>) -> Result<Vec<ServiceDailyTotal>> {
-    service_daily_totals(None, since)
-}
-
-/// [`daily_totals_by_service`] against a caller's own handle, as
-/// [`crate::alerts`] reads it.
+/// first — the input to cost-anomaly detection. Takes a caller's handle
+/// for the desktop signature, as [`crate::alerts`] reads it.
 pub(crate) fn daily_totals_by_service_of(
     _conn: &Connection,
     since: DateTime<Utc>,
@@ -526,7 +464,7 @@ pub(crate) fn daily_totals_by_service_of(
     service_daily_totals(None, since)
 }
 
-/// [`daily_totals_by_service`] for a single account.
+/// [`daily_totals_by_service_of`] for a single account.
 ///
 /// The cross-account read groups across accounts and exposes no account
 /// column, so an account-scoped anomaly rule needs its own read of the same
@@ -768,29 +706,8 @@ pub fn service_usage_of_between(
 
 // ==================== Tag breakdowns ====================
 
-/// Charges of one period grouped by one tag's value, largest first.
-///
-/// `tags` is JSON object text; a charge with no tags column, an empty value,
-/// or no `tag_key` in it counts toward `'Unallocated'` — the row the
-/// attribution page hangs its explainer card on.
-pub fn tag_breakdown(billing_period: &str, tag_key: &str) -> Result<Vec<(String, f64)>> {
-    tag_totals(billing_period, tag_key, None, false)
-}
-
-/// [`tag_breakdown`] narrowed to one provider and service: which tag values
-/// that spend drives. Same `'Unallocated'` bucket as the period-wide
-/// breakdown.
-pub fn service_tag_breakdown(
-    billing_period: &str,
-    provider: &str,
-    service: &str,
-    tag_key: &str,
-) -> Result<Vec<(String, f64)>> {
-    tag_totals(billing_period, tag_key, Some((provider, service)), false)
-}
-
-/// [`tag_breakdown`] against a caller's own handle, and optionally scoped to
-/// one service, as [`crate::alerts`] reads it.
+/// Charges of one period grouped by one tag's value, largest first, and
+/// optionally scoped to one service, as [`crate::alerts`] reads it.
 pub(crate) fn tag_breakdown_of(
     _conn: &Connection,
     billing_period: &str,
@@ -801,22 +718,10 @@ pub(crate) fn tag_breakdown_of(
 }
 
 /// Usage of one period grouped by one tag's value, largest first — like
-/// [`tag_breakdown`], same `'Unallocated'` bucketing, but Usage rows only, so
+/// [`tag_breakdown_of`], same `'Unallocated'` bucketing, but Usage rows only, so
 /// a credit does not shrink the bucket it would have offset.
 pub fn tag_usage_breakdown(billing_period: &str, tag_key: &str) -> Result<Vec<(String, f64)>> {
     tag_totals(billing_period, tag_key, None, true)
-}
-
-/// [`tag_usage_breakdown`] narrowed to one provider and service: which tag
-/// values that usage drives. Same `'Unallocated'` bucket as the period-wide
-/// breakdown.
-pub fn service_tag_usage_breakdown(
-    billing_period: &str,
-    provider: &str,
-    service: &str,
-    tag_key: &str,
-) -> Result<Vec<(String, f64)>> {
-    tag_totals(billing_period, tag_key, Some((provider, service)), true)
 }
 
 /// [`tag_usage_breakdown`] over a charge-time window `[since, until)` instead
@@ -893,7 +798,7 @@ fn tag_totals(
 /// Usage of one period grouped by `(provider, service, tag_value)` in a
 /// single pass, largest first — the attribution page's N+1 killer: filtering
 /// the rows of one `(provider, service)` gives exactly what
-/// [`service_tag_usage_breakdown`] returns for it, so a page that shows every
+/// [`tag_usage_breakdown`] narrowed to that service would return, so a page that shows every
 /// service no longer reads once per service.
 pub fn tag_usage_breakdown_by_service(
     billing_period: &str,
@@ -929,37 +834,7 @@ pub fn tag_usage_breakdown_by_service(
 
 // ==================== Untagged usage ====================
 
-/// The largest charges of a period that carry no value for `tag_key`, biggest
-/// first — the rows behind the Unallocated explainer card.
-pub fn untagged_detail(
-    billing_period: &str,
-    tag_key: &str,
-    limit: usize,
-) -> Result<Vec<UntaggedCharge>> {
-    read(|all| {
-        let mut rows: Vec<UntaggedCharge> = all
-            .iter()
-            .filter(|row| row.billing_period == billing_period && untagged(row, tag_key))
-            .filter_map(|row| {
-                let amount = row.billed_cost_base?;
-                (amount > 0.0).then(|| UntaggedCharge {
-                    provider: row.provider.clone(),
-                    service: row.service_name.clone(),
-                    description: row.charge_description.clone(),
-                    amount,
-                })
-            })
-            .collect();
-        rows.sort_by(|a, b| b.amount.total_cmp(&a.amount));
-        rows.truncate(limit);
-
-        rows
-    })
-}
-
-/// Untagged usage of a period summed per provider, largest first — the
-/// aggregate form of [`untagged_detail`], for callers that need the
-/// per-provider sums and not the per-charge list.
+/// Untagged usage of a period summed per provider, largest first.
 pub fn untagged_totals_by_provider(
     billing_period: &str,
     tag_key: &str,
@@ -975,9 +850,9 @@ pub fn untagged_totals_by_provider(
     })
 }
 
-/// Untagged usage of a period grouped by `(provider, service)`, largest first
-/// — the roll-up behind [`untagged_detail`]'s per-charge list, so three small
-/// charges of one service read as the one row the UI acts on.
+/// Untagged usage of a period grouped by `(provider, service)`, largest
+/// first, so three small charges of one service read as the one row the UI
+/// acts on.
 pub fn untagged_usage_by_service(
     billing_period: &str,
     tag_key: &str,
@@ -1011,17 +886,6 @@ pub fn untagged_usage_by_service(
         rows.truncate(limit);
 
         rows
-    })
-}
-
-/// How many charges could not be converted, because no rate covers their
-/// currency. They are missing from every converted total.
-pub fn unconverted_charges(billing_period: &str) -> Result<i64> {
-    read(|all| {
-        all.iter()
-            .filter(|row| row.billing_period == billing_period)
-            .filter(|row| row.billed_cost.is_some() && row.billed_cost_base.is_none())
-            .count() as i64
     })
 }
 
@@ -1181,17 +1045,7 @@ pub fn api_fetches_this_month() -> Result<i64> {
 }
 
 /// Mean daily burn of a balance-reporting account over the last `days`, in
-/// the balance's own currency.
-///
-/// Computed from the drops between consecutive balance observations — a rise
-/// is a top-up, not consumption. `None` when the history holds fewer than two
-/// observations, because then burn is unknowable.
-pub fn balance_burn(provider: &str, account_id: &str, days: i64) -> Result<Option<f64>> {
-    burn_of(provider, account_id, days)
-}
-
-/// [`balance_burn`] against a caller's own handle, as [`crate::alerts`] reads
-/// it.
+/// the balance's own currency, as [`crate::alerts`] reads it.
 pub(crate) fn balance_burn_of(
     _conn: &Connection,
     provider: &str,

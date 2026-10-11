@@ -5,17 +5,10 @@
 //! Dark"), loaded through `ThemeRegistry`, and every function here reads the
 //! corresponding `cx.theme()` token so call sites stay one-line.
 
-// Consumed by the page agents as each redesigned page lands.
-#![allow(dead_code)]
-
-use std::time::Duration;
-
-use gpui_kit::component::animation::cubic_bezier;
 use gpui_kit::component::button::{Button, ButtonCustomVariant};
 use gpui_kit::component::{ActiveTheme, StyledExt, Theme, ThemeRegistry};
 use gpui_kit::{
-    div, rems, Animation, App, Div, FontWeight, Hsla, IntoElement, ParentElement, SharedString,
-    Styled,
+    div, rems, App, Div, FontWeight, Hsla, IntoElement, ParentElement, SharedString, Styled,
 };
 
 /// Name of the light theme in `themes/cloudbridge.json`.
@@ -110,22 +103,10 @@ fn deepened(color: Hsla, by: f32) -> Hsla {
     }
 }
 
-/// Accent while pressed: one step deeper than hover, so a held click reads
-/// as pressure rather than a second hover.
-pub fn accent_pressed(cx: &App) -> Hsla {
-    deepened(accent_hover(cx), 0.05)
-}
-
 /// Neutral surface while pressed (outline buttons, range pills, filter
 /// chips): one step deeper than the sidebar hover wash.
 pub fn surface_pressed(cx: &App) -> Hsla {
     deepened(sidebar_bg(cx), 0.04)
-}
-
-/// The entrance every dialog shares: a 150ms ease-out fade with a slight
-/// rise, so no dialog can drift from the others.
-pub fn dialog_enter_animation() -> Animation {
-    Animation::new(Duration::from_millis(150)).with_easing(cubic_bezier(0.0, 0.0, 0.2, 1.0))
 }
 
 /// Text on the accent color.
@@ -133,12 +114,31 @@ pub fn on_accent(cx: &App) -> Hsla {
     cx.theme().primary_foreground
 }
 
+/// A status color washed out for use behind text. Derived rather than read
+/// from a theme's `*.light` slot: themes fill that slot with anything from a
+/// pale wash to a saturated swatch (Default Light's red), and text laid over
+/// the saturated kind is unreadable.
+fn tint(color: Hsla) -> Hsla {
+    color.opacity(0.14)
+}
+
+/// A status color made dark enough (light enough, in a dark theme) to read
+/// as text on its own [`tint`].
+fn ink(color: Hsla, cx: &App) -> Hsla {
+    let l = if cx.theme().mode.is_dark() {
+        color.l.max(0.7)
+    } else {
+        color.l.min(0.32)
+    };
+    Hsla { l, ..color }
+}
+
 /// Critical/alert tint background, used to highlight alert cards and badges.
 ///
-/// Intentionally the same token as `danger_bg`, but a different semantic
+/// Intentionally the same color as `danger_bg`, but a different semantic
 /// slot: this one is for alert severity, not error states.
 pub fn alert_tint(cx: &App) -> Hsla {
-    cx.theme().red_light
+    tint(cx.theme().red)
 }
 
 /// Primary text: warm near-black.
@@ -163,12 +163,12 @@ pub fn grey(cx: &App) -> Hsla {
 
 /// Warning badge background (yellow tint).
 pub fn warning_bg(cx: &App) -> Hsla {
-    cx.theme().yellow_light
+    tint(cx.theme().yellow)
 }
 
 /// Warning badge text.
 pub fn warning_text(cx: &App) -> Hsla {
-    cx.theme().yellow
+    ink(cx.theme().yellow, cx)
 }
 
 /// Error text (failures, destructive confirmations).
@@ -178,10 +178,10 @@ pub fn danger(cx: &App) -> Hsla {
 
 /// Error banner tint, used behind failure/error banners.
 ///
-/// Intentionally the same token as `alert_tint`, but a different semantic
+/// Intentionally the same color as `alert_tint`, but a different semantic
 /// slot: this one is for error states, not alert severity highlighting.
 pub fn danger_bg(cx: &App) -> Hsla {
-    cx.theme().red_light
+    tint(cx.theme().red)
 }
 
 /// Success banner text.
@@ -191,12 +191,7 @@ pub fn success(cx: &App) -> Hsla {
 
 /// Success banner tint.
 pub fn success_bg(cx: &App) -> Hsla {
-    cx.theme().green_light
-}
-
-/// Modal overlay scrim: dark, half-opaque.
-pub fn scrim(cx: &App) -> Hsla {
-    cx.theme().overlay
+    tint(cx.theme().green)
 }
 
 /// Lighter olive: extra sankey-cycle color so the olive-toned lines stay
