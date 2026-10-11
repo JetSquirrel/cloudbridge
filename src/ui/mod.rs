@@ -7,6 +7,7 @@ pub mod attribution;
 pub mod chart;
 pub mod data;
 mod data_health;
+mod dialogs;
 pub mod fmt;
 pub mod insights;
 pub mod models;

@@ -765,6 +765,9 @@ impl Render for CloudBridgeApp {
                     )
                     .child(self.render_status_bar(cx)),
             )
+            // The pages open their dialogs through `Root`, which keeps them
+            // but does not draw them; the window's first view does.
+            .children(Root::render_dialog_layer(window, cx))
     }
 }
 
