@@ -127,11 +127,8 @@ fn daily_totals_all_of(conn: &Connection, since: DateTime<Utc>) -> Result<Vec<Da
 }
 
 /// Daily charge totals per `(provider, service)` since an instant, oldest
-/// first — the input to cost-anomaly detection.
-pub fn daily_totals_by_service(since: DateTime<Utc>) -> Result<Vec<ServiceDailyTotal>> {
-    with_connection_ref(|conn| daily_totals_by_service_of(conn, since))
-}
-
+/// first — the input to cost-anomaly detection. Takes the caller's own
+/// handle, as [`crate::alerts`] reads it.
 pub(crate) fn daily_totals_by_service_of(
     conn: &Connection,
     since: DateTime<Utc>,
@@ -262,29 +259,13 @@ fn provider_service_totals_of(
     )
 }
 
-/// Charges of one period grouped by one tag's value, largest first.
+/// Charges of one period grouped by one tag's value, largest first,
+/// optionally narrowed to one `(provider, service)`. Takes the caller's own
+/// handle, as [`crate::alerts`] reads it.
 ///
 /// `tags` is JSON object text; a charge with no tags column, an empty
 /// value, or no `tag_key` in it counts toward `'Unallocated'` — that is
 /// the row the attribution page hangs its explainer card on.
-pub fn tag_breakdown(billing_period: &str, tag_key: &str) -> Result<Vec<(String, f64)>> {
-    with_connection_ref(|conn| tag_breakdown_of(conn, billing_period, tag_key, None))
-}
-
-/// [`tag_breakdown`] narrowed to one provider and service: which tag
-/// values that spend drives. Same `'Unallocated'` bucket as the period-wide
-/// breakdown.
-pub fn service_tag_breakdown(
-    billing_period: &str,
-    provider: &str,
-    service: &str,
-    tag_key: &str,
-) -> Result<Vec<(String, f64)>> {
-    with_connection_ref(|conn| {
-        tag_breakdown_of(conn, billing_period, tag_key, Some((provider, service)))
-    })
-}
-
 pub(crate) fn tag_breakdown_of(
     conn: &Connection,
     billing_period: &str,
@@ -859,24 +840,10 @@ fn provider_service_usage_between_of(
 }
 
 /// Usage of one period grouped by one tag's value, largest first — like
-/// [`tag_breakdown`], same `'Unallocated'` bucketing, but Usage rows
+/// [`tag_breakdown_of`], same `'Unallocated'` bucketing, but Usage rows
 /// only, so a credit does not shrink the bucket it would have offset.
 pub fn tag_usage_breakdown(billing_period: &str, tag_key: &str) -> Result<Vec<(String, f64)>> {
     with_connection_ref(|conn| tag_usage_breakdown_of(conn, billing_period, tag_key, None))
-}
-
-/// [`tag_usage_breakdown`] narrowed to one provider and service: which
-/// tag values that usage drives. Same `'Unallocated'` bucket as the
-/// period-wide breakdown.
-pub fn service_tag_usage_breakdown(
-    billing_period: &str,
-    provider: &str,
-    service: &str,
-    tag_key: &str,
-) -> Result<Vec<(String, f64)>> {
-    with_connection_ref(|conn| {
-        tag_usage_breakdown_of(conn, billing_period, tag_key, Some((provider, service)))
-    })
 }
 
 fn tag_usage_breakdown_of(
@@ -1092,15 +1059,12 @@ fn api_fetches_this_month_of(conn: &Connection) -> Result<i64> {
 }
 
 /// Mean daily burn of a balance-reporting account over the last `days`,
-/// in the balance's own currency.
+/// in the balance's own currency. Takes the caller's own handle, as
+/// [`crate::alerts`] reads it.
 ///
 /// Computed from the drops between consecutive balance observations — a
 /// rise is a top-up, not consumption. `None` when the history holds fewer
 /// than two observations, because then burn is unknowable.
-pub fn balance_burn(provider: &str, account_id: &str, days: i64) -> Result<Option<f64>> {
-    with_connection_ref(|conn| balance_burn_of(conn, provider, account_id, days))
-}
-
 pub(crate) fn balance_burn_of(
     conn: &Connection,
     provider: &str,
@@ -1849,7 +1813,7 @@ fn resource_usage_quantities_of(
 /// Usage of one period grouped by `(provider, service, tag_value)` in a
 /// single round-trip, largest first — the attribution page's N+1 killer:
 /// filtering the rows of one `(provider, service)` gives exactly what
-/// [`service_tag_usage_breakdown`] returns for it, so a page that shows
+/// [`tag_usage_breakdown`] narrowed to that service would return, so a page that shows
 /// every service no longer queries once per service.
 pub fn tag_usage_breakdown_by_service(
     billing_period: &str,

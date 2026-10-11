@@ -433,7 +433,7 @@ fn detect_breach_with_lag(
     })
 }
 
-/// [`query::daily_totals_by_service`] for a single account, read through the
+/// [`query::daily_totals_by_service_of`] for a single account, read through the
 /// evaluation's own ledger connection rather than the global one.
 fn daily_totals_for_account_of(
     conn: &Connection,

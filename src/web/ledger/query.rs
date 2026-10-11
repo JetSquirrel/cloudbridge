@@ -512,13 +512,8 @@ pub fn daily_usage_all(since: DateTime<Utc>) -> Result<Vec<DailyTotal>> {
 }
 
 /// Daily charge totals per `(provider, service)` since an instant, oldest
-/// first — the input to cost-anomaly detection.
-pub fn daily_totals_by_service(since: DateTime<Utc>) -> Result<Vec<ServiceDailyTotal>> {
-    service_daily_totals(None, since)
-}
-
-/// [`daily_totals_by_service`] against a caller's own handle, as
-/// [`crate::alerts`] reads it.
+/// first — the input to cost-anomaly detection. Takes a caller's handle
+/// for the desktop signature, as [`crate::alerts`] reads it.
 pub(crate) fn daily_totals_by_service_of(
     _conn: &Connection,
     since: DateTime<Utc>,
@@ -526,7 +521,7 @@ pub(crate) fn daily_totals_by_service_of(
     service_daily_totals(None, since)
 }
 
-/// [`daily_totals_by_service`] for a single account.
+/// [`daily_totals_by_service_of`] for a single account.
 ///
 /// The cross-account read groups across accounts and exposes no account
 /// column, so an account-scoped anomaly rule needs its own read of the same
@@ -768,29 +763,8 @@ pub fn service_usage_of_between(
 
 // ==================== Tag breakdowns ====================
 
-/// Charges of one period grouped by one tag's value, largest first.
-///
-/// `tags` is JSON object text; a charge with no tags column, an empty value,
-/// or no `tag_key` in it counts toward `'Unallocated'` — the row the
-/// attribution page hangs its explainer card on.
-pub fn tag_breakdown(billing_period: &str, tag_key: &str) -> Result<Vec<(String, f64)>> {
-    tag_totals(billing_period, tag_key, None, false)
-}
-
-/// [`tag_breakdown`] narrowed to one provider and service: which tag values
-/// that spend drives. Same `'Unallocated'` bucket as the period-wide
-/// breakdown.
-pub fn service_tag_breakdown(
-    billing_period: &str,
-    provider: &str,
-    service: &str,
-    tag_key: &str,
-) -> Result<Vec<(String, f64)>> {
-    tag_totals(billing_period, tag_key, Some((provider, service)), false)
-}
-
-/// [`tag_breakdown`] against a caller's own handle, and optionally scoped to
-/// one service, as [`crate::alerts`] reads it.
+/// Charges of one period grouped by one tag's value, largest first, and
+/// optionally scoped to one service, as [`crate::alerts`] reads it.
 pub(crate) fn tag_breakdown_of(
     _conn: &Connection,
     billing_period: &str,
@@ -801,22 +775,10 @@ pub(crate) fn tag_breakdown_of(
 }
 
 /// Usage of one period grouped by one tag's value, largest first — like
-/// [`tag_breakdown`], same `'Unallocated'` bucketing, but Usage rows only, so
+/// [`tag_breakdown_of`], same `'Unallocated'` bucketing, but Usage rows only, so
 /// a credit does not shrink the bucket it would have offset.
 pub fn tag_usage_breakdown(billing_period: &str, tag_key: &str) -> Result<Vec<(String, f64)>> {
     tag_totals(billing_period, tag_key, None, true)
-}
-
-/// [`tag_usage_breakdown`] narrowed to one provider and service: which tag
-/// values that usage drives. Same `'Unallocated'` bucket as the period-wide
-/// breakdown.
-pub fn service_tag_usage_breakdown(
-    billing_period: &str,
-    provider: &str,
-    service: &str,
-    tag_key: &str,
-) -> Result<Vec<(String, f64)>> {
-    tag_totals(billing_period, tag_key, Some((provider, service)), true)
 }
 
 /// [`tag_usage_breakdown`] over a charge-time window `[since, until)` instead
@@ -893,7 +855,7 @@ fn tag_totals(
 /// Usage of one period grouped by `(provider, service, tag_value)` in a
 /// single pass, largest first — the attribution page's N+1 killer: filtering
 /// the rows of one `(provider, service)` gives exactly what
-/// [`service_tag_usage_breakdown`] returns for it, so a page that shows every
+/// [`tag_usage_breakdown`] narrowed to that service would return, so a page that shows every
 /// service no longer reads once per service.
 pub fn tag_usage_breakdown_by_service(
     billing_period: &str,
@@ -1181,17 +1143,7 @@ pub fn api_fetches_this_month() -> Result<i64> {
 }
 
 /// Mean daily burn of a balance-reporting account over the last `days`, in
-/// the balance's own currency.
-///
-/// Computed from the drops between consecutive balance observations — a rise
-/// is a top-up, not consumption. `None` when the history holds fewer than two
-/// observations, because then burn is unknowable.
-pub fn balance_burn(provider: &str, account_id: &str, days: i64) -> Result<Option<f64>> {
-    burn_of(provider, account_id, days)
-}
-
-/// [`balance_burn`] against a caller's own handle, as [`crate::alerts`] reads
-/// it.
+/// the balance's own currency, as [`crate::alerts`] reads it.
 pub(crate) fn balance_burn_of(
     _conn: &Connection,
     provider: &str,

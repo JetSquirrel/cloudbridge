@@ -13,7 +13,7 @@
 //! [`NORMALIZED_VIEW`] and its ASOF fx join — the rollup aggregates the
 //! view, never the raw table — so a change of reporting currency
 //! invalidates every stored `*_base` amount. That is the one drift
-//! [`is_current`] checks for, and `schema::apply_reporting_currency`
+//! [`is_current_of`] checks for, and `schema::apply_reporting_currency`
 //! rebuilds on it.
 
 use anyhow::{anyhow, Result};
@@ -39,18 +39,6 @@ pub fn refresh_for_period(key: &PeriodKey) -> Result<usize> {
 /// wrong) and as the repair for anything the incremental path missed.
 pub fn rebuild_all() -> Result<usize> {
     with_connection_ref(rebuild_all_of)
-}
-
-/// Whether the rollup reflects the ledger as `reporting_currency` reads it.
-///
-/// False when any row was built for another currency, and when the ledger
-/// holds charges the rollup has none of — a ledger that predates the
-/// rollup table, or one whose refreshes never ran, reads as stale rather
-/// than as an honest zero. What this does not track is finer drift inside
-/// an otherwise current rollup; the per-batch refresh and
-/// [`rebuild_all`] are the answer to that.
-pub fn is_current(reporting_currency: &str) -> Result<bool> {
-    with_connection_ref(|conn| is_current_of(conn, reporting_currency))
 }
 
 /// Rebuild the rollup when [`is_current_of`] says it has drifted from the
@@ -94,6 +82,14 @@ pub(crate) fn rebuild_all_of(conn: &Connection) -> Result<usize> {
     })
 }
 
+/// Whether the rollup reflects the ledger as `reporting_currency` reads it.
+///
+/// False when any row was built for another currency, and when the ledger
+/// holds charges the rollup has none of — a ledger that predates the
+/// rollup table, or one whose refreshes never ran, reads as stale rather
+/// than as an honest zero. What this does not track is finer drift inside
+/// an otherwise current rollup; the per-batch refresh and
+/// [`rebuild_all`] are the answer to that.
 pub(crate) fn is_current_of(conn: &Connection, reporting_currency: &str) -> Result<bool> {
     let foreign_rows: i64 = conn.query_row(
         "SELECT count(*) FROM daily_cost_rollup WHERE reporting_currency <> ?",

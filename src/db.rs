@@ -896,35 +896,9 @@ pub fn delete_budget(account_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Get budget status (compares budget with current costs)
-pub fn get_budget_status(account_id: &str) -> Result<Option<BudgetStatus>> {
-    // Get budget
-    let budget = match get_budget(account_id)? {
-        Some(b) => b,
-        None => return Ok(None),
-    };
-
-    // Get account info
-    let accounts = get_all_accounts()?;
-    let account = accounts
-        .iter()
-        .find(|a| a.id == account_id)
-        .ok_or_else(|| anyhow::anyhow!("Account not found"))?;
-
-    let alert_live = has_live_budget_alert(account_id)?;
-    budget_status_of(
-        &budget,
-        account,
-        BillingPeriod::containing(Utc::now()),
-        alert_live,
-    )
-    .map(Some)
-}
-
-/// The status of one budget against its account — the body of
-/// [`get_budget_status`], with the account row and the live-alert check
-/// taken as arguments so [`get_all_budget_statuses`] can read them once for
-/// the whole list.
+/// The status of one budget against its account, with the account row and
+/// the live-alert check taken as arguments so [`get_all_budget_statuses`]
+/// can read them once for the whole list.
 fn budget_status_of(
     budget: &BudgetInfo,
     account: &CloudAccount,
@@ -965,22 +939,8 @@ fn budget_status_of(
     })
 }
 
-/// Whether any open or snoozed budget-rule event names this account.
-fn has_live_budget_alert(account_id: &str) -> Result<bool> {
-    with_connection(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT count(*) FROM alert_event e
-             JOIN alert_rule r ON r.id = e.rule_id
-             WHERE r.kind = 'budget' AND e.status IN ('open', 'snoozed')
-               AND e.dedupe_key LIKE 'budget|' || ? || '|%'",
-        )?;
-        let count: i64 = stmt.query_row(params![account_id], |row| row.get(0))?;
-        Ok(count > 0)
-    })
-}
-
-/// Accounts named by any open or snoozed budget-rule event — one read for
-/// the whole list, where [`has_live_budget_alert`] answers for one account.
+/// Accounts named by any open or snoozed budget-rule event, in one read for
+/// the whole list.
 fn live_budget_alert_accounts() -> Result<HashSet<String>> {
     with_connection(|conn| {
         let mut stmt = conn.prepare(
@@ -1003,7 +963,7 @@ fn live_budget_alert_accounts() -> Result<HashSet<String>> {
 pub fn get_all_budget_statuses() -> Result<Vec<BudgetStatus>> {
     let budgets = get_all_budgets()?;
     // Read the accounts and the live budget alerts once for the whole list,
-    // not per budget through `get_budget_status`.
+    // not per budget.
     let accounts = get_all_accounts()?;
     let alerted = live_budget_alert_accounts()?;
     let period = BillingPeriod::containing(Utc::now());

@@ -48,9 +48,10 @@ impl CryptoManager {
 
     /// Encrypt data
     ///
-    /// Unused since secrets moved to the OS keyring; kept as the counterpart of
-    /// `decrypt`, which still reads legacy encrypted blobs during migration.
-    #[allow(dead_code)]
+    /// Unused since secrets moved to the OS keyring; `decrypt` still reads
+    /// legacy encrypted blobs during migration, and the tests encrypt the
+    /// blobs it reads.
+    #[cfg(test)]
     pub fn encrypt(&self, plaintext: &str) -> Result<String> {
         let mut nonce_bytes = [0u8; NONCE_SIZE];
         rand::rng().fill_bytes(&mut nonce_bytes);

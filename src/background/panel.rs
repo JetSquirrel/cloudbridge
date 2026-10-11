@@ -29,6 +29,10 @@ const GAP: f32 = 6.;
 #[derive(Debug)]
 pub(super) enum Anchor {
     /// Hanging under a menu bar icon, kept on the icon's screen.
+    ///
+    /// Only macOS can say where its icon is; elsewhere nothing builds this,
+    /// but the placement tests still run there.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Below {
         icon: Bounds<Pixels>,
         screen: Bounds<Pixels>,

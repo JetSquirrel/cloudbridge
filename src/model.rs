@@ -10,11 +10,6 @@
 //! findings a query returns belong to the question, not to the store that
 //! answered it, so the result types live here too.
 
-// The types mirror the FOCUS columns a bill is stored in, so they carry the
-// whole vocabulary — a charge category, a cost basis — whether or not every
-// path through the application constructs each variant.
-#![allow(dead_code)]
-
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 

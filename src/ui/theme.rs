@@ -107,12 +107,6 @@ fn deepened(color: Hsla, by: f32) -> Hsla {
     }
 }
 
-/// Accent while pressed: one step deeper than hover, so a held click reads
-/// as pressure rather than a second hover.
-pub fn accent_pressed(cx: &App) -> Hsla {
-    deepened(accent_hover(cx), 0.05)
-}
-
 /// Neutral surface while pressed (outline buttons, range pills, filter
 /// chips): one step deeper than the sidebar hover wash.
 pub fn surface_pressed(cx: &App) -> Hsla {
