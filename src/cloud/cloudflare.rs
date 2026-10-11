@@ -20,6 +20,7 @@ use serde::Deserialize;
 use std::collections::{BTreeSet, HashSet};
 
 use super::cloudflare_analytics::{self as analytics, Meter, PART_ANALYTICS_PREFIX};
+use super::http;
 use super::raw::RawPart;
 use super::{BillingPeriod, BillingSource, Fetched, Normalized, RawBatch};
 use crate::ledger::Charge;
@@ -62,11 +63,7 @@ impl CloudflareService {
         }
 
         let url = format!("{}/accounts/{}{}", API_BASE, self.account_id, path);
-        let agent = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .timeout_global(Some(std::time::Duration::from_secs(30)))
-            .build()
-            .new_agent();
+        let agent = http::agent(http::API_TIMEOUT);
 
         let response = agent
             .get(&url)
@@ -104,11 +101,7 @@ impl CloudflareService {
     /// GraphQL reports a refused field or a missing permission in the
     /// body's `errors`, not the status, so the body is kept either way.
     fn graphql(&self, body: &str) -> Result<String> {
-        let agent = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .timeout_global(Some(std::time::Duration::from_secs(30)))
-            .build()
-            .new_agent();
+        let agent = http::agent(http::API_TIMEOUT);
         agent
             .post(&format!("{API_BASE}/graphql"))
             .header("Content-Type", "application/json")

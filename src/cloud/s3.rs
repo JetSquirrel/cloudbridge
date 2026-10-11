@@ -10,6 +10,7 @@
 //! All functions are blocking; callers run them off the UI thread like
 //! every other fetch.
 
+use super::http;
 use anyhow::{anyhow, Result};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
@@ -190,11 +191,7 @@ impl S3Client {
             payload_hash: "UNSIGNED-PAYLOAD",
         });
 
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .timeout_global(Some(std::time::Duration::from_secs(60)))
-            .build()
-            .into();
+        let agent = http::agent(std::time::Duration::from_secs(60));
         let mut response = agent
             .get(&url)
             .header("x-amz-date", &amz_date)

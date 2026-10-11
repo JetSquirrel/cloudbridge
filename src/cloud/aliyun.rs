@@ -8,6 +8,7 @@ use sha1::Sha1;
 use std::collections::BTreeMap;
 
 use super::deduction;
+use super::http;
 use super::raw::RawPart;
 use super::{BillingPeriod, BillingSource, Fetched, Normalized, RawBatch};
 use crate::ledger::Charge;
@@ -118,11 +119,7 @@ impl AliyunCloudService {
         let url = format!("https://business.aliyuncs.com/?{}", query);
 
         // Send request
-        let agent = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .timeout_global(Some(std::time::Duration::from_secs(30)))
-            .build()
-            .new_agent();
+        let agent = http::agent(http::API_TIMEOUT);
 
         let response = agent
             .get(&url)

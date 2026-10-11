@@ -6,6 +6,7 @@ use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+use super::http;
 use super::raw::RawPart;
 use super::s3::{S3Client, S3Uri};
 use super::{aws_focus, BillingPeriod, BillingSource, Fetched, Normalized, PayloadFile, RawBatch};
@@ -298,10 +299,7 @@ impl AwsCloudService {
 
         // ureq waits forever by default; a stalled STS would leave the
         // credential test spinning with nothing to report.
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .timeout_global(Some(std::time::Duration::from_secs(30)))
-            .build()
-            .into();
+        let agent = http::strict_agent(http::API_TIMEOUT);
 
         let response = agent
             .get(&url)
@@ -365,11 +363,7 @@ impl AwsCloudService {
 
         // Do not treat a 4xx/5xx as a transport error, so the response body
         // makes it into the log — Cost Explorer explains itself there.
-        let agent = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .timeout_global(Some(std::time::Duration::from_secs(30)))
-            .build()
-            .new_agent();
+        let agent = http::agent(http::API_TIMEOUT);
 
         tracing::debug!("Sending Cost Explorer request: {}", url);
 
