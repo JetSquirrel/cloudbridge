@@ -270,7 +270,7 @@ impl AccountDetailView {
             return card.child(
                 div()
                     .v_flex()
-                    .gap_1()
+                    .gap_2()
                     .items_start()
                     .child(theme::caption(
                         cx,
@@ -279,10 +279,9 @@ impl AccountDetailView {
                     ))
                     .child(
                         Button::new("go-to-accounts")
-                            .label("Go to Accounts → Import")
-                            .link()
+                            .label("Open Accounts")
+                            .outline()
                             .small()
-                            .text_color(theme::accent(cx))
                             .on_click(|_, _, cx| {
                                 crate::app::navigate_to(crate::app::CurrentView::Accounts, cx)
                             }),
@@ -428,9 +427,8 @@ impl AccountDetailView {
                     el.child(
                         Button::new("dismiss-health-section")
                             .label("Dismiss")
-                            .link()
+                            .ghost()
                             .small()
-                            .text_color(theme::text_muted(cx))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if let Err(e) = data::dismiss_quality_issues(&dismiss_keys) {
                                     tracing::warn!(

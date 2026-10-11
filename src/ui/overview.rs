@@ -931,17 +931,13 @@ fn render_stats(cx: &App, d: &data::OverviewData) -> impl IntoElement {
                 cx,
                 "OPEN ALERTS",
                 stats.open_alerts.to_string(),
-                Button::new("open-alerts")
-                    .label(format!(
-                        "{} critical, {} warning →",
-                        stats.critical_alerts, stats.warning_alerts
-                    ))
-                    .link()
-                    .small()
-                    .text_color(theme::accent(cx))
-                    .on_click(|_, _, cx| {
-                        crate::app::navigate_to(crate::app::CurrentView::Alerts, cx)
-                    }),
+                // Plain text like the other cards' footers, so the four
+                // stay on one baseline; the sidebar's Alerts entry, badge
+                // included, is the way there.
+                div().text_color(theme::text_muted(cx)).child(format!(
+                    "{} critical, {} warning",
+                    stats.critical_alerts, stats.warning_alerts
+                )),
             )
             .when(stats.open_alerts > 0, |el| el.bg(theme::alert_tint(cx))),
         )

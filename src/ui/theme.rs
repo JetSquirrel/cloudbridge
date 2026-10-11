@@ -5,9 +5,6 @@
 //! Dark"), loaded through `ThemeRegistry`, and every function here reads the
 //! corresponding `cx.theme()` token so call sites stay one-line.
 
-// Consumed by the page agents as each redesigned page lands.
-#![allow(dead_code)]
-
 use std::time::Duration;
 
 use gpui_kit::component::animation::cubic_bezier;
