@@ -428,16 +428,6 @@ pub struct ServiceDailyTotal {
     pub amount: f64,
 }
 
-/// One of the largest charges of a period that carries no value for a tag.
-#[derive(Debug, Clone, PartialEq)]
-pub struct UntaggedCharge {
-    pub provider: String,
-    pub service: Option<String>,
-    pub description: Option<String>,
-    /// In the reporting currency.
-    pub amount: f64,
-}
-
 /// Untagged Usage charges of a period rolled up to one `(provider,
 /// service)` row — what the Unallocated explainer card lists.
 #[derive(Debug, Clone, PartialEq)]
