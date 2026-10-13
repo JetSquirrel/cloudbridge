@@ -59,7 +59,7 @@ impl DeepSeekService {
             .header("Accept", "application/json")
             .header("Authorization", &format!("Bearer {}", self.api_key))
             .call()
-            .map_err(|e| anyhow!("Failed to call DeepSeek API: {}", e))?;
+            .map_err(|e| http::request_failed("Failed to call DeepSeek API", e))?;
 
         response
             .into_body()

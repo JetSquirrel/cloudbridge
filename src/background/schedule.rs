@@ -8,12 +8,15 @@
 //! refresh interval's to decide. An account that keeps failing is backed
 //! off ([`super::backoff`]), and its first failure is announced.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::time::Duration;
 
 use chrono::Utc;
 use gpui_kit::*;
 
+use crate::cloud::http::{self, FailureKind};
+
+use super::backoff::{Failure, Hold};
 use super::summary::{AlertLine, Summary};
 use super::{notify, Status};
 
@@ -49,11 +52,10 @@ pub(super) fn run_once(status: Entity<Status>, fetch: bool, manual: bool, cx: &m
         return;
     }
     tracing::debug!("Background refresh (fetch: {fetch}, manual: {manual})");
-    let now = Utc::now();
-    let waiting: HashSet<String> = if manual {
-        HashSet::new()
+    let holds: HashMap<String, Hold> = if manual {
+        HashMap::new()
     } else {
-        status.read(cx).backoff.waiting(now)
+        status.read(cx).backoff.holds()
     };
     status.update(cx, |status, cx| {
         status.refreshing = true;
@@ -63,7 +65,7 @@ pub(super) fn run_once(status: Entity<Status>, fetch: bool, manual: bool, cx: &m
     cx.spawn(async move |cx| {
         let (fetched, summary) = smol::unblock(move || {
             let fetched = if fetch {
-                fetch_due_accounts(&waiting)
+                fetch_due_accounts(&holds)
             } else {
                 Fetched::default()
             };
@@ -83,15 +85,16 @@ pub(super) fn run_once(status: Entity<Status>, fetch: bool, manual: bool, cx: &m
                 for tried in fetched.accounts {
                     match tried.error {
                         None => status.backoff.succeeded(&tried.id),
-                        Some(error) => {
-                            if status.backoff.failed(
-                                &tried.id,
-                                &tried.name,
-                                error.clone(),
-                                now,
-                                cap,
-                            ) {
-                                newly_failing.push((tried.name, error));
+                        Some((kind, message)) => {
+                            let failure = Failure {
+                                account_id: tried.id,
+                                name: tried.name.clone(),
+                                credentials: tried.credentials,
+                                kind,
+                                message: message.clone(),
+                            };
+                            if status.backoff.failed(failure, now, cap) {
+                                newly_failing.push((tried.name, message));
                             }
                         }
                     }
@@ -159,12 +162,14 @@ struct Fetched {
 struct Tried {
     id: String,
     name: String,
-    error: Option<String>,
+    credentials: Option<String>,
+    error: Option<(Option<FailureKind>, String)>,
 }
 
 /// Fetch every account with an API channel, as Refresh does, except the
-/// ones `waiting` out a backoff. Blocking.
-fn fetch_due_accounts(waiting: &HashSet<String>) -> Fetched {
+/// ones a backoff still `holds`. Blocking.
+fn fetch_due_accounts(holds: &HashMap<String, Hold>) -> Fetched {
+    let now = Utc::now();
     let mut fetched = Fetched::default();
     let accounts = match crate::db::get_all_accounts() {
         Ok(accounts) => accounts,
@@ -175,7 +180,9 @@ fn fetch_due_accounts(waiting: &HashSet<String>) -> Fetched {
     };
     let due = accounts.iter().filter(|account| {
         account.enabled
-            && !waiting.contains(&account.id)
+            && !holds
+                .get(&account.id)
+                .is_some_and(|hold| hold.applies_to(account, now))
             && account
                 .descriptor()
                 .is_some_and(|source| source.fetches_from_api())
@@ -186,11 +193,12 @@ fn fetch_due_accounts(waiting: &HashSet<String>) -> Fetched {
                 fetched.ingested |= !outcome.ingested.is_empty();
                 None
             }
-            Err(e) => Some(e.to_string()),
+            Err(e) => Some((http::kind_of(&e), e.to_string())),
         };
         fetched.accounts.push(Tried {
             id: account.id.clone(),
             name: account.name.clone(),
+            credentials: account.access_key_hint.clone(),
             error,
         });
     }

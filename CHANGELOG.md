@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Each finding's amount appears once, in the amount column, rather than
   again unformatted in its sentence.
 - Dismiss on Overview and Accounts is a quiet button rather than a link.
+- The background refresh tells a refused key from a passing fault. When a
+  provider rejects an account's credentials or permissions, the account
+  waits a full refresh interval before the next try instead of 15 minutes,
+  doubling; asking again would change nothing. A timeout, throttling or a
+  provider outage is still retried after 15 minutes. Either wait ends as
+  soon as the account is given new credentials or refreshes from the
+  window, so a fixed account is watched again at once.
 
 ### Fixed
 - The app icon had a white square behind it, visible as a rim in the Dock

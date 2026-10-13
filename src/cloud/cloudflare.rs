@@ -70,7 +70,7 @@ impl CloudflareService {
             .header("Accept", "application/json")
             .header("Authorization", &format!("Bearer {}", self.api_token))
             .call()
-            .map_err(|e| anyhow!("Cloudflare API request failed: {}", e))?;
+            .map_err(|e| http::request_failed("Cloudflare API request failed", e))?;
 
         let status = response.status().as_u16();
         let body = response
@@ -87,10 +87,13 @@ impl CloudflareService {
             )
         })?;
         if status >= 400 || !envelope.success {
-            return Err(anyhow!(
-                "Cloudflare API request failed: HTTP {} - {}",
+            return Err(http::status_failed(
                 status,
-                envelope.error_text()
+                format!(
+                    "Cloudflare API request failed: HTTP {} - {}",
+                    status,
+                    envelope.error_text()
+                ),
             ));
         }
 
@@ -107,7 +110,7 @@ impl CloudflareService {
             .header("Content-Type", "application/json")
             .header("Authorization", &format!("Bearer {}", self.api_token))
             .send(body)
-            .map_err(|e| anyhow!("Cloudflare GraphQL request failed: {}", e))?
+            .map_err(|e| http::request_failed("Cloudflare GraphQL request failed", e))?
             .into_body()
             .read_to_string()
             .map_err(|e| anyhow!("Failed to read Cloudflare GraphQL response: {}", e))

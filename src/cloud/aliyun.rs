@@ -124,7 +124,7 @@ impl AliyunCloudService {
         let response = agent
             .get(&url)
             .call()
-            .map_err(|e| anyhow!("Alibaba Cloud API request failed: {}", e))?;
+            .map_err(|e| http::request_failed("Alibaba Cloud API request failed", e))?;
 
         let status = response.status().as_u16();
         let body = response
@@ -137,10 +137,12 @@ impl AliyunCloudService {
 
         if status >= 400 {
             tracing::error!("Alibaba Cloud API error (HTTP {}): {}", status, body);
-            return Err(anyhow!(
-                "Alibaba Cloud API request failed: HTTP {} - {}",
+            return Err(http::status_failed(
                 status,
-                body
+                format!(
+                    "Alibaba Cloud API request failed: HTTP {} - {}",
+                    status, body
+                ),
             ));
         }
 
