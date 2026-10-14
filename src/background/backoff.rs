@@ -7,6 +7,12 @@
 //! try, up to the refresh interval, and a success clears it. A manual
 //! Refresh does not wait: someone pressed it.
 //!
+//! A failure the provider classed as [`Denied`](FailureKind::Denied) — a
+//! revoked key, a missing permission — does not double from a tick: asking
+//! again changes nothing, so it waits the whole interval. Any wait ends
+//! early when the account changes under it: refreshed from the window, or
+//! given new credentials, since either may mean the fault is gone.
+//!
 //! A fetch the provider answered and the ingest then lost is bounded by the
 //! ingest itself (see `ingest::PAID_FETCHES`); this bounds everything else.
 
@@ -15,6 +21,8 @@ use std::collections::HashMap;
 use chrono::{DateTime, Duration, Utc};
 
 use super::schedule::TICK;
+use crate::cloud::http::FailureKind;
+use crate::cloud::CloudAccount;
 
 /// The accounts that are failing, by account id.
 #[derive(Default)]
@@ -25,49 +33,78 @@ pub struct Backoff {
 struct Streak {
     name: String,
     failures: u32,
-    next_try: DateTime<Utc>,
+    hold: Hold,
     last_error: String,
 }
 
-impl Backoff {
-    /// Whether an account is waiting out its backoff at `now`.
-    pub fn is_waiting(&self, account_id: &str, now: DateTime<Utc>) -> bool {
-        self.failing
-            .get(account_id)
-            .is_some_and(|streak| now < streak.next_try)
-    }
+/// One failed refresh of an account.
+pub struct Failure {
+    pub account_id: String,
+    pub name: String,
+    /// The account's credential hint when it failed, to notice new ones.
+    pub credentials: Option<String>,
+    pub kind: Option<FailureKind>,
+    pub message: String,
+}
 
+/// What a failing account waits out before it is tried again.
+#[derive(Clone)]
+pub struct Hold {
+    failed_at: DateTime<Utc>,
+    next_try: DateTime<Utc>,
+    credentials: Option<String>,
+}
+
+impl Hold {
+    /// Whether `account` is still waiting at `now`. Not once it has synced
+    /// since it failed, or holds different credentials: what failed may
+    /// not fail any more.
+    pub fn applies_to(&self, account: &CloudAccount, now: DateTime<Utc>) -> bool {
+        now < self.next_try
+            && !account
+                .last_synced_at
+                .is_some_and(|synced| synced > self.failed_at)
+            && account.access_key_hint == self.credentials
+    }
+}
+
+impl Backoff {
     /// Record a failed refresh. Returns whether it starts a streak — the
     /// one failure worth telling someone about; the rest are the same news.
-    pub fn failed(
-        &mut self,
-        account_id: &str,
-        name: &str,
-        error: String,
-        now: DateTime<Utc>,
-        cap: Duration,
-    ) -> bool {
+    pub fn failed(&mut self, failure: Failure, now: DateTime<Utc>, cap: Duration) -> bool {
         let streak = self
             .failing
-            .entry(account_id.to_string())
+            .entry(failure.account_id)
             .or_insert_with(|| Streak {
-                name: name.to_string(),
+                name: failure.name,
                 failures: 0,
-                next_try: now,
+                hold: Hold {
+                    failed_at: now,
+                    next_try: now,
+                    credentials: None,
+                },
                 last_error: String::new(),
             });
         streak.failures += 1;
-        streak.next_try = now + delay(streak.failures, cap);
-        streak.last_error = error;
+        let wait = match failure.kind {
+            Some(FailureKind::Denied) => cap,
+            _ => delay(streak.failures, cap),
+        };
+        streak.hold = Hold {
+            failed_at: now,
+            next_try: now + wait,
+            credentials: failure.credentials,
+        };
+        streak.last_error = failure.message;
         streak.failures == 1
     }
 
-    /// The accounts waiting out their backoff at `now`.
-    pub fn waiting(&self, now: DateTime<Utc>) -> std::collections::HashSet<String> {
+    /// Each failing account's hold, for the schedule to check against the
+    /// accounts as they are when it runs.
+    pub fn holds(&self) -> HashMap<String, Hold> {
         self.failing
             .iter()
-            .filter(|(_, streak)| now < streak.next_try)
-            .map(|(id, _)| id.clone())
+            .map(|(id, streak)| (id.clone(), streak.hold.clone()))
             .collect()
     }
 
@@ -101,8 +138,35 @@ fn delay(failures: u32, cap: Duration) -> Duration {
 mod tests {
     use super::*;
 
+    const KEY: &str = "AKIA…WXYZ";
+
     fn day() -> Duration {
         Duration::hours(24)
+    }
+
+    /// An account that has never synced, holding `credentials`.
+    fn prod(credentials: &str) -> CloudAccount {
+        let mut account = crate::demo_data::account("aws", "a", "Prod", Utc::now());
+        account.last_synced_at = None;
+        account.access_key_hint = Some(credentials.to_string());
+        account
+    }
+
+    fn failure(kind: Option<FailureKind>, message: &str) -> Failure {
+        Failure {
+            account_id: "a".to_string(),
+            name: "Prod".to_string(),
+            credentials: Some(KEY.to_string()),
+            kind,
+            message: message.to_string(),
+        }
+    }
+
+    fn is_waiting(backoff: &Backoff, account: &CloudAccount, now: DateTime<Utc>) -> bool {
+        backoff
+            .holds()
+            .get(&account.id)
+            .is_some_and(|hold| hold.applies_to(account, now))
     }
 
     #[test]
@@ -115,37 +179,74 @@ mod tests {
     /// 96 a tick every 15 minutes would make.
     #[test]
     fn a_day_of_failures_is_a_handful_of_tries() {
+        let account = prod(KEY);
         let start = Utc::now();
         let mut backoff = Backoff::default();
         let mut tries = 0;
         let mut now = start;
         while now < start + day() {
-            if !backoff.is_waiting("a", now) {
+            if !is_waiting(&backoff, &account, now) {
                 tries += 1;
-                backoff.failed("a", "Prod", "throttled".to_string(), now, day());
+                let throttled = failure(Some(FailureKind::Temporary), "throttled");
+                backoff.failed(throttled, now, day());
             }
             now += Duration::from_std(TICK).unwrap();
         }
         assert!(tries <= 8, "{tries} tries in a day");
     }
 
+    /// Asking again with credentials the provider refused changes nothing.
     #[test]
-    fn only_the_first_failure_of_a_streak_is_news() {
+    fn a_refusal_waits_the_whole_interval() {
+        let account = prod(KEY);
         let now = Utc::now();
         let mut backoff = Backoff::default();
-        assert!(backoff.failed("a", "Prod", "denied".to_string(), now, day()));
-        assert!(!backoff.failed("a", "Prod", "denied".to_string(), now, day()));
+        backoff.failed(failure(Some(FailureKind::Denied), "denied"), now, day());
+        assert!(is_waiting(&backoff, &account, now + Duration::hours(23)));
+        assert!(!is_waiting(&backoff, &account, now + day()));
+    }
+
+    #[test]
+    fn new_credentials_end_the_wait() {
+        let now = Utc::now();
+        let mut backoff = Backoff::default();
+        backoff.failed(failure(Some(FailureKind::Denied), "denied"), now, day());
+        let rotated = prod("AKIA…NEW1");
+        assert!(!is_waiting(&backoff, &rotated, now + Duration::minutes(5)));
+    }
+
+    /// Fixed and refreshed from the window, it is watched again at once.
+    #[test]
+    fn a_sync_since_the_failure_ends_the_wait() {
+        let now = Utc::now();
+        let mut backoff = Backoff::default();
+        backoff.failed(failure(Some(FailureKind::Denied), "denied"), now, day());
+        let mut account = prod(KEY);
+        account.last_synced_at = Some(now - Duration::hours(1));
+        assert!(is_waiting(&backoff, &account, now + Duration::minutes(5)));
+        account.last_synced_at = Some(now + Duration::minutes(1));
+        assert!(!is_waiting(&backoff, &account, now + Duration::minutes(5)));
+    }
+
+    #[test]
+    fn only_the_first_failure_of_a_streak_is_news() {
+        let account = prod(KEY);
+        let now = Utc::now();
+        let mut backoff = Backoff::default();
+        assert!(backoff.failed(failure(None, "denied"), now, day()));
+        assert!(!backoff.failed(failure(None, "denied"), now, day()));
         backoff.succeeded("a");
-        assert!(!backoff.is_waiting("a", now));
-        assert!(backoff.failed("a", "Prod", "denied".to_string(), now, day()));
+        assert!(!is_waiting(&backoff, &account, now));
+        assert!(backoff.failed(failure(None, "denied"), now, day()));
     }
 
     #[test]
     fn a_waiting_account_still_reads_as_failing() {
+        let account = prod(KEY);
         let now = Utc::now();
         let mut backoff = Backoff::default();
-        backoff.failed("a", "Prod", "denied".to_string(), now, day());
-        assert!(backoff.is_waiting("a", now + Duration::minutes(5)));
+        backoff.failed(failure(None, "denied"), now, day());
+        assert!(is_waiting(&backoff, &account, now + Duration::minutes(5)));
         assert_eq!(backoff.failures(), ["Prod: denied"]);
     }
 }

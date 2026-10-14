@@ -308,7 +308,7 @@ impl AwsCloudService {
             .header("X-Amz-Content-Sha256", &payload_hash)
             .header("Host", &host)
             .call()
-            .map_err(|e| anyhow!("STS request failed: {}", e))?;
+            .map_err(|e| http::request_failed("STS request failed", e))?;
 
         let body = response
             .into_body()
@@ -378,7 +378,7 @@ impl AwsCloudService {
             .send(&payload)
             .map_err(|e| {
                 tracing::error!("Cost Explorer request error details: {:?}", e);
-                anyhow!("Cost Explorer request failed: {}", e)
+                http::request_failed("Cost Explorer request failed", e)
             })?;
 
         let status = response.status().as_u16();
@@ -890,20 +890,39 @@ impl BillingSource for AwsCloudService {
 /// errors a new account meets first — a key without the permission, and an
 /// account whose Cost Explorer has no data yet — say what to do; anything
 /// else keeps the service's own body.
+///
+/// Classified from the body's exception name, not the status: Cost
+/// Explorer answers a refused key and a throttled caller alike with 400.
 fn cost_explorer_error(status: u16, body: &str) -> anyhow::Error {
-    if body.contains("AccessDeniedException") {
-        anyhow!(
-            "this access key may not call Cost Explorer. Attach a policy allowing \
-             ce:GetCostAndUsage to its IAM user — see \
-             https://cloudbridge.jetsquirrel.cloud/policies.html#aws-cost-explorer"
-        )
-    } else if body.contains("DataUnavailableException") {
-        anyhow!(
-            "Cost Explorer has no data for this account yet. It is enabled from the \
-             Billing console and takes up to 24 hours to prepare the first data."
-        )
+    const DENIED: [&str; 3] = [
+        "AccessDeniedException",
+        "UnrecognizedClientException",
+        "InvalidSignatureException",
+    ];
+    const TEMPORARY: [&str; 2] = ["ThrottlingException", "LimitExceededException"];
+    let kind = if DENIED.iter().any(|name| body.contains(name)) {
+        Some(http::FailureKind::Denied)
+    } else if TEMPORARY.iter().any(|name| body.contains(name)) {
+        Some(http::FailureKind::Temporary)
     } else {
-        anyhow!("Cost Explorer request failed: HTTP {} - {}", status, body)
+        http::status_kind(status)
+    };
+    let message = cost_explorer_message(status, body);
+    http::failure(kind, message)
+}
+
+fn cost_explorer_message(status: u16, body: &str) -> String {
+    if body.contains("AccessDeniedException") {
+        "this access key may not call Cost Explorer. Attach a policy allowing \
+         ce:GetCostAndUsage to its IAM user — see \
+         https://cloudbridge.jetsquirrel.cloud/policies.html#aws-cost-explorer"
+            .to_string()
+    } else if body.contains("DataUnavailableException") {
+        "Cost Explorer has no data for this account yet. It is enabled from the \
+         Billing console and takes up to 24 hours to prepare the first data."
+            .to_string()
+    } else {
+        format!("Cost Explorer request failed: HTTP {} - {}", status, body)
     }
 }
 
@@ -1014,6 +1033,31 @@ mod tests {
         assert_eq!(
             other.to_string(),
             "Cost Explorer request failed: HTTP 500 - boom"
+        );
+    }
+
+    /// Every one of these is a 400; only the exception name says whether
+    /// waiting helps.
+    #[test]
+    fn cost_explorer_errors_say_who_has_to_act() {
+        use http::{kind_of, FailureKind};
+        let kind = |body: &str| kind_of(&cost_explorer_error(400, body));
+        assert_eq!(
+            kind(r#"{"__type":"AccessDeniedException"}"#),
+            Some(FailureKind::Denied)
+        );
+        assert_eq!(
+            kind(r#"{"__type":"UnrecognizedClientException"}"#),
+            Some(FailureKind::Denied)
+        );
+        assert_eq!(
+            kind(r#"{"__type":"ThrottlingException"}"#),
+            Some(FailureKind::Temporary)
+        );
+        assert_eq!(kind(r#"{"__type":"DataUnavailableException"}"#), None);
+        assert_eq!(
+            kind_of(&cost_explorer_error(503, "unavailable")),
+            Some(FailureKind::Temporary)
         );
     }
 

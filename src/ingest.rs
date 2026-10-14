@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Condvar, LazyLock, Mutex};
 
 use crate::cloud::billfile::BillFileFormat;
+use crate::cloud::http;
 use crate::cloud::raw::{self, RawBatch, RawPart};
 use crate::cloud::registry::SourceDescriptor;
 use crate::cloud::{BillingPeriod, CloudAccount, Normalized, SourceContext};
@@ -167,7 +168,10 @@ pub fn refresh_account(account: &CloudAccount, force: bool) -> Result<RefreshOut
                 tracing::info!("{}", e);
                 outcome.skipped_fresh.push(period.label());
             }
-            Err(e) => failures.push(anyhow!("{}: {}", period.label(), e)),
+            Err(e) => failures.push(http::failure(
+                http::kind_of(&e),
+                format!("{}: {}", period.label(), e),
+            )),
         }
     }
 
@@ -191,15 +195,26 @@ pub fn refresh_account(account: &CloudAccount, force: bool) -> Result<RefreshOut
     match failures.len() {
         0 => Ok(outcome),
         1 => Err(failures.remove(0)),
-        _ => Err(anyhow!(
-            "{}",
+        _ => Err(http::failure(
+            shared_kind(&failures),
             failures
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
-                .join("; ")
+                .join("; "),
         )),
     }
+}
+
+/// The kind every one of `failures` has, if they agree. Both periods are
+/// fetched with the same credentials, so a refusal is usually both; when
+/// they differ, no one remedy covers the account.
+fn shared_kind(failures: &[anyhow::Error]) -> Option<http::FailureKind> {
+    let first = http::kind_of(failures.first()?)?;
+    failures[1..]
+        .iter()
+        .all(|failure| http::kind_of(failure) == Some(first))
+        .then_some(first)
 }
 
 /// How long a fetched period stays fresh: the `refresh_interval_hours`
