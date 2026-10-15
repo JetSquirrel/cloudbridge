@@ -12,6 +12,7 @@ pub mod fmt;
 pub mod insights;
 pub mod models;
 pub mod overview;
+pub mod palette;
 pub mod query;
 pub mod rules;
 pub mod settings;

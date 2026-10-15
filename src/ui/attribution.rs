@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use chrono::Utc;
+use gpui_kit::component::breadcrumb::{Breadcrumb, BreadcrumbItem};
 use gpui_kit::component::{button::*, skeleton::Skeleton, Sizable as _, StyledExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -15,6 +16,23 @@ use crate::cloud::BillingPeriod;
 use crate::ledger::query::{self, BreakdownDim};
 use crate::ui::theme::CardOutline as _;
 use crate::{db, ingest};
+
+actions!(
+    attribution,
+    [
+        /// Highlight the next treemap tile, in size order.
+        NextTile,
+        /// Highlight the previous treemap tile.
+        PreviousTile,
+        /// Open the highlighted tile: split it by the next dimension.
+        OpenTile,
+        /// Back from an opened tile to the whole dimension.
+        CloseTile,
+    ]
+);
+
+/// The key context of the treemap pane, where its keys apply.
+const TREEMAP_CONTEXT: &str = "AttributionTreemap";
 
 /// Sankey drawing constants.
 const SANKEY_HEIGHT: f32 = 420.0;
@@ -241,6 +259,77 @@ impl DrillDim {
             DrillDim::ServiceCategory => &drilldown.prev_by_category,
         }
     }
+
+    /// The breadcrumb's first crumb: the whole dimension, before a tile
+    /// was opened.
+    fn all_label(self) -> &'static str {
+        match self {
+            DrillDim::Tag => "All business lines",
+            DrillDim::Service => "All services",
+            DrillDim::Region => "All regions",
+            DrillDim::ServiceCategory => "All categories",
+        }
+    }
+
+    /// What an opened bucket of this dimension splits into, in the words
+    /// the card uses for it: the noun, its table header and its 'Other'
+    /// footnote. A service opens into its resources; a region or a
+    /// category into its services.
+    fn inner_noun(self) -> &'static str {
+        match self {
+            DrillDim::Service => "resource",
+            _ => "service",
+        }
+    }
+
+    fn inner_header(self) -> &'static str {
+        match self {
+            DrillDim::Service => "RESOURCE",
+            _ => "SERVICE",
+        }
+    }
+
+    fn inner_other_caption(self) -> &'static str {
+        match self {
+            DrillDim::Service => "Charges with no resource read as 'Other'.",
+            _ => DrillDim::Service.other_caption(),
+        }
+    }
+
+    /// This dimension's `(bucket, inner bucket, amount)` rows, current and
+    /// previous period.
+    fn pairs(self, drilldown: &DrilldownData) -> &[(String, String, f64)] {
+        match self {
+            DrillDim::Tag => &[],
+            DrillDim::Service => &drilldown.service_resources,
+            DrillDim::Region => &drilldown.region_services,
+            DrillDim::ServiceCategory => &drilldown.category_services,
+        }
+    }
+
+    fn prev_pairs(self, drilldown: &DrilldownData) -> &[(String, String, f64)] {
+        match self {
+            DrillDim::Tag => &[],
+            DrillDim::Service => &drilldown.prev_service_resources,
+            DrillDim::Region => &drilldown.prev_region_services,
+            DrillDim::ServiceCategory => &drilldown.prev_category_services,
+        }
+    }
+}
+
+/// A breakdown's `(bucket, amount)` rows.
+type Buckets = Vec<(String, f64)>;
+
+/// One opened bucket's inner rows, largest first.
+fn within(pairs: &[(String, String, f64)], bucket: &str) -> Vec<(String, f64)> {
+    let mut rows: Vec<(String, f64)> = pairs
+        .iter()
+        .filter(|(outer, _, _)| outer == bucket)
+        .map(|(_, inner, amount)| (inner.clone(), *amount))
+        .collect();
+    // Ties by name: the pairs come out of a map, in no order of their own.
+    rows.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    rows
 }
 
 /// How the non-tag breakdown card presents its buckets: the MoM heat
@@ -283,6 +372,13 @@ pub struct AttributionView {
     /// Treemap hover state (tile under the mouse + the canvas's per-frame
     /// tile-bounds cell); drives the hover outline and tooltip.
     treemap_hover: chart::TreemapHover,
+    /// The bucket the treemap opened, split by the dimension's inner one;
+    /// `None` shows the whole dimension. Cleared by a dimension switch,
+    /// and by a reload whose data no longer has the bucket.
+    opened: Option<String>,
+    /// Focus for the treemap pane, so its keys reach it: the arrows move
+    /// the highlighted tile, Enter opens it, Escape goes back.
+    treemap_focus: FocusHandle,
     /// Why the last load failed, if it did.
     error: Option<String>,
     /// Whether a load is in flight.
@@ -293,13 +389,25 @@ pub struct AttributionView {
 }
 
 impl AttributionView {
-    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
+    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let context = Some(TREEMAP_CONTEXT);
+        cx.bind_keys([
+            KeyBinding::new("right", NextTile, context),
+            KeyBinding::new("down", NextTile, context),
+            KeyBinding::new("left", PreviousTile, context),
+            KeyBinding::new("up", PreviousTile, context),
+            KeyBinding::new("enter", OpenTile, context),
+            KeyBinding::new("escape", CloseTile, context),
+            KeyBinding::new("backspace", CloseTile, context),
+        ]);
         Self {
             data: None,
             drilldown: None,
             dim: DrillDim::Tag,
             breakdown_mode: BreakdownMode::Map,
             treemap_hover: chart::TreemapHover::new(),
+            opened: None,
+            treemap_focus: cx.focus_handle().tab_stop(true),
             error: None,
             loading: false,
             load_generation: 0,
@@ -346,6 +454,14 @@ impl AttributionView {
                 }
                 match outcome {
                     Ok((loaded, drilldown)) => {
+                        // An opened bucket survives a reload that still
+                        // has it, so a refresh does not throw the reader
+                        // back out.
+                        if let Some(bucket) = &view.opened {
+                            if !view.dim.rows(&drilldown).iter().any(|(b, _)| b == bucket) {
+                                view.opened = None;
+                            }
+                        }
                         view.data = Some(loaded);
                         view.drilldown = Some(drilldown);
                         view.error = None;
@@ -407,6 +523,7 @@ impl AttributionView {
                                     // Every dimension's data loads up
                                     // front, so a switch is instant.
                                     this.dim = *dim;
+                                    this.opened = None;
                                     this.treemap_hover.clear();
                                     cx.notify();
                                 }
@@ -752,9 +869,90 @@ impl AttributionView {
             )
     }
 
+    /// The rows the breakdown card shows, current and previous period: the
+    /// dimension's buckets, or the opened bucket split by its inner one.
+    fn level_rows(&self, drilldown: &DrilldownData) -> (Buckets, Buckets) {
+        match &self.opened {
+            None => (
+                self.dim.rows(drilldown).to_vec(),
+                self.dim.prev_rows(drilldown).to_vec(),
+            ),
+            Some(bucket) => (
+                within(self.dim.pairs(drilldown), bucket),
+                within(self.dim.prev_pairs(drilldown), bucket),
+            ),
+        }
+    }
+
+    /// The treemap's tiles at the current level, as it draws them.
+    fn level_tiles(&self) -> Vec<chart::TreemapItem> {
+        let Some(drilldown) = &self.drilldown else {
+            return Vec::new();
+        };
+        let (current, previous) = self.level_rows(drilldown);
+        chart::top_tiles(treemap_items(&current, &previous), chart::TILE_CAP)
+    }
+
+    /// Whether the tile at `index` opens: only at the top level, and not
+    /// the folded "<N> more" tile, which is many buckets rather than one.
+    fn tile_opens(&self, index: usize, tiles: &[chart::TreemapItem]) -> bool {
+        let folded = self.drilldown.as_ref().is_some_and(|drilldown| {
+            self.dim.rows(drilldown).len() > chart::TILE_CAP && index == chart::TILE_CAP
+        });
+        self.opened.is_none() && index < tiles.len() && !folded
+    }
+
+    /// Open the tile at `index`, if it opens.
+    fn open_tile(&mut self, index: usize, cx: &mut Context<Self>) {
+        let tiles = self.level_tiles();
+        if self.tile_opens(index, &tiles) {
+            self.opened = Some(tiles[index].label.clone());
+            self.treemap_hover.clear();
+            cx.notify();
+        }
+    }
+
+    /// Back to the whole dimension.
+    fn close_tile(&mut self, cx: &mut Context<Self>) {
+        if self.opened.take().is_some() {
+            self.treemap_hover.clear();
+            cx.notify();
+        }
+    }
+
+    /// Move the highlighted tile by `step`, wrapping; the first press from
+    /// no highlight lands on the largest tile, or the smallest going back.
+    fn step_tile(&mut self, step: isize, cx: &mut Context<Self>) {
+        let count = self.level_tiles().len() as isize;
+        if count == 0 {
+            return;
+        }
+        let next = match self.treemap_hover.index() {
+            Some(index) => (index as isize + step).rem_euclid(count),
+            None if step > 0 => 0,
+            None => count - 1,
+        };
+        self.treemap_hover.set(Some(next as usize));
+        cx.notify();
+    }
+
+    /// The breadcrumb over an opened tile: the whole dimension, which goes
+    /// back, then the bucket on show.
+    fn render_breadcrumb(&self, bucket: &str, cx: &mut Context<Self>) -> impl IntoElement {
+        let view = cx.entity().downgrade();
+        Breadcrumb::new()
+            .child(
+                BreadcrumbItem::new(self.dim.all_label()).on_click(move |_, _, cx| {
+                    view.update(cx, |this, cx| this.close_tile(cx)).ok();
+                }),
+            )
+            .child(BreadcrumbItem::new(bucket.to_string()))
+    }
+
     /// The flat breakdown of the selected non-tag dimension: the MoM heat
     /// treemap by default, or one row per bucket, largest first, with a
-    /// share bar against the dimension's total.
+    /// share bar against the dimension's total. Either shows the opened
+    /// bucket's split instead, under a breadcrumb back.
     fn render_breakdown_card(
         &self,
         window: &Window,
@@ -763,9 +961,10 @@ impl AttributionView {
         dim: DrillDim,
         currency: &str,
     ) -> impl IntoElement {
-        let rows = dim.rows(drilldown);
+        let (rows, previous) = self.level_rows(drilldown);
         let has_other = rows.iter().any(|(label, _)| label == "Other");
         let selected = self.breakdown_mode;
+        let opened = self.opened.clone();
         let card = theme::card(cx).w_full().p_5().v_flex().gap_4().child(
             div()
                 .h_flex()
@@ -803,63 +1002,104 @@ impl AttributionView {
                         })),
                 ),
         );
+        let card = match &opened {
+            Some(bucket) => card.child(self.render_breadcrumb(bucket, cx)),
+            None => card,
+        };
 
         if rows.is_empty() {
             return card.child(theme::caption(cx, "No usage in this period."));
         }
 
+        let (header, other_caption) = if opened.is_some() {
+            (dim.inner_header(), dim.inner_other_caption())
+        } else {
+            (dim.bucket_header(), dim.other_caption())
+        };
         match self.breakdown_mode {
-            BreakdownMode::Map => {
-                card.child(self.render_treemap_pane(window, cx, drilldown, dim, currency))
-            }
+            BreakdownMode::Map => card
+                .child(self.render_treemap_pane(window, cx, &rows, &previous, currency))
+                .when(opened.is_none(), |el| {
+                    el.child(theme::caption(
+                        cx,
+                        format!("Click a tile to split it by {}.", dim.inner_noun()),
+                    ))
+                }),
             BreakdownMode::Table => card
                 .child(
                     div()
                         .h_flex()
                         .items_center()
                         .pb_2()
-                        .child(
-                            theme::header_cell(cx, dim.bucket_header())
-                                .flex_1()
-                                .min_w_0(),
-                        )
+                        .child(theme::header_cell(cx, header).flex_1().min_w_0())
                         .child(theme::header_cell(cx, "AMOUNT").w_24().text_right())
                         .child(theme::header_cell(cx, "SHARE").w_32().px_2()),
                 )
                 .child(div().v_flex().children(rows.iter().map(|(label, amount)| {
-                    breakdown_row(cx, label, *amount, total(rows), currency)
+                    breakdown_row(cx, label, *amount, total(&rows), currency)
                 })))
-                .when(has_other, |el| {
-                    el.child(theme::caption(cx, dim.other_caption()))
-                }),
+                .when(has_other, |el| el.child(theme::caption(cx, other_caption))),
         }
     }
 
     /// The treemap heatmap pane: tile area is the bucket's current cost,
     /// tile color its MoM move. The wrapper maps the mouse position to a
     /// tile via the canvas's published bounds; the overlay draws the
-    /// hovered-tile outline and the tooltip on top.
+    /// highlighted tile's outline and the tooltip on top. The mouse and the
+    /// arrow keys move the same highlight; a click or Enter opens a tile,
+    /// Escape or the breadcrumb goes back.
     fn render_treemap_pane(
         &self,
         window: &Window,
         cx: &mut Context<Self>,
-        drilldown: &DrilldownData,
-        dim: DrillDim,
+        rows: &[(String, f64)],
+        previous: &[(String, f64)],
         currency: &str,
     ) -> impl IntoElement {
-        let items = chart::top_tiles(
-            treemap_items(dim.rows(drilldown), dim.prev_rows(drilldown)),
-            chart::TILE_CAP,
-        );
+        let items = chart::top_tiles(treemap_items(rows, previous), chart::TILE_CAP);
+        let pointer_opens = self
+            .treemap_hover
+            .index()
+            .is_some_and(|index| self.tile_opens(index, &items));
         div()
             .id("treemap-pane")
             .w_full()
             .relative()
+            .track_focus(&self.treemap_focus)
+            .key_context(TREEMAP_CONTEXT)
+            .when(pointer_opens, |el| el.cursor_pointer())
+            .on_action(cx.listener(|this, _: &NextTile, _, cx| this.step_tile(1, cx)))
+            .on_action(cx.listener(|this, _: &PreviousTile, _, cx| this.step_tile(-1, cx)))
+            .on_action(cx.listener(|this, _: &OpenTile, _, cx| {
+                if let Some(index) = this.treemap_hover.index() {
+                    this.open_tile(index, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CloseTile, _, cx| {
+                // At the top level there is nothing to close; let Escape
+                // and Backspace mean what they mean further up.
+                if this.opened.is_some() {
+                    this.close_tile(cx);
+                } else {
+                    cx.propagate();
+                }
+            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    this.treemap_focus.focus(window, cx);
+                    let x: f32 = event.position.x.into();
+                    let y: f32 = event.position.y.into();
+                    if let Some(index) = this.treemap_hover.tile_at(x, y) {
+                        this.open_tile(index, cx);
+                    }
+                }),
+            )
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
                 let x: f32 = event.position.x.into();
                 let y: f32 = event.position.y.into();
                 let hit = this.treemap_hover.tile_at(x, y);
-                if hit != this.treemap_hover.index() {
+                if hit.is_some() && hit != this.treemap_hover.index() {
                     this.treemap_hover.set(hit);
                     cx.notify();
                 }
@@ -1186,6 +1426,15 @@ struct DrilldownData {
     prev_by_service: Vec<(String, f64)>,
     prev_by_region: Vec<(String, f64)>,
     prev_by_category: Vec<(String, f64)>,
+    /// Each dimension's buckets split by the one a treemap tile opens into,
+    /// as `(bucket, inner bucket, amount)`, with the previous period's for
+    /// the opened level's heat.
+    service_resources: Vec<(String, String, f64)>,
+    region_services: Vec<(String, String, f64)>,
+    category_services: Vec<(String, String, f64)>,
+    prev_service_resources: Vec<(String, String, f64)>,
+    prev_region_services: Vec<(String, String, f64)>,
+    prev_category_services: Vec<(String, String, f64)>,
     top_resources: Vec<query::TopResource>,
 }
 
@@ -1201,8 +1450,36 @@ fn load_drilldown() -> Result<DrilldownData> {
     let mut prev_by_region = Vec::new();
     let mut prev_by_category = Vec::new();
     let mut top_resources = Vec::new();
+    // (outer, inner, current pairs, previous pairs), one per dimension. A
+    // service can hold thousands of resources, so the cross-account sums
+    // are keyed rather than searched.
+    let mut splits = [
+        (
+            BreakdownDim::Service,
+            BreakdownDim::Resource,
+            PairSums::new(),
+            PairSums::new(),
+        ),
+        (
+            BreakdownDim::Region,
+            BreakdownDim::Service,
+            PairSums::new(),
+            PairSums::new(),
+        ),
+        (
+            BreakdownDim::ServiceCategory,
+            BreakdownDim::Service,
+            PairSums::new(),
+            PairSums::new(),
+        ),
+    ];
     for account in db::get_all_accounts()? {
         let key = ingest::period_key(&account, &period);
+        let prev_key = ingest::period_key(&account, &previous);
+        for (outer, inner, current, prior) in &mut splits {
+            merge_pairs(current, query::breakdown_within(&key, *outer, *inner)?);
+            merge_pairs(prior, query::breakdown_within(&prev_key, *outer, *inner)?);
+        }
         merge_buckets(
             &mut by_service,
             query::breakdown_by(&key, BreakdownDim::Service)?,
@@ -1215,7 +1492,6 @@ fn load_drilldown() -> Result<DrilldownData> {
             &mut by_category,
             query::breakdown_by(&key, BreakdownDim::ServiceCategory)?,
         );
-        let prev_key = ingest::period_key(&account, &previous);
         merge_buckets(
             &mut prev_by_service,
             query::breakdown_by(&prev_key, BreakdownDim::Service)?,
@@ -1236,8 +1512,16 @@ fn load_drilldown() -> Result<DrilldownData> {
     }
     top_resources.sort_by(|a, b| b.amount.total_cmp(&a.amount));
     top_resources.truncate(TOP_RESOURCE_COUNT);
+    let [(_, _, service_resources, prev_service_resources), (_, _, region_services, prev_region_services), (_, _, category_services, prev_category_services)] =
+        splits;
 
     Ok(DrilldownData {
+        service_resources: pair_rows(service_resources),
+        region_services: pair_rows(region_services),
+        category_services: pair_rows(category_services),
+        prev_service_resources: pair_rows(prev_service_resources),
+        prev_region_services: pair_rows(prev_region_services),
+        prev_category_services: pair_rows(prev_category_services),
         by_service,
         by_region,
         by_category,
@@ -1257,6 +1541,23 @@ fn merge_buckets(into: &mut Vec<(String, f64)>, rows: Vec<(String, f64)>) {
             None => into.push((label, amount)),
         }
     }
+}
+
+/// Cross-account sums of `(bucket, inner bucket)` pairs.
+type PairSums = HashMap<(String, String), f64>;
+
+/// [`merge_buckets`] for `(bucket, inner bucket)` pairs.
+fn merge_pairs(into: &mut PairSums, rows: Vec<(String, String, f64)>) {
+    for (outer, inner, amount) in rows {
+        *into.entry((outer, inner)).or_insert(0.0) += amount;
+    }
+}
+
+/// The summed pairs as rows; [`within`] orders each bucket's own.
+fn pair_rows(sums: PairSums) -> Vec<(String, String, f64)> {
+    sums.into_iter()
+        .map(|((outer, inner), amount)| (outer, inner, amount))
+        .collect()
 }
 
 /// A breakdown's grand total, the share bars' denominator.

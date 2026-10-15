@@ -686,6 +686,10 @@ pub enum BreakdownDim {
     Service,
     Region,
     ServiceCategory,
+    /// A resource's display name, falling back to its id; a charge with no
+    /// resource reads as `'Other'`. Only ever a second level — the
+    /// Attribution treemap's resources inside a service.
+    Resource,
 }
 
 /// One of a period's costliest resources.
