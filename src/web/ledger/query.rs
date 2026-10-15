@@ -212,6 +212,12 @@ fn bucket_of(row: &NormalizedRow, dim: BreakdownDim) -> String {
             .service_category
             .clone()
             .unwrap_or_else(|| crate::service_category::UNCATEGORIZED.to_string()),
+        BreakdownDim::Resource => row
+            .resource_name
+            .clone()
+            .filter(|name| !name.is_empty())
+            .or_else(|| row.resource_id.clone())
+            .unwrap_or_else(|| "Other".to_string()),
     }
 }
 
@@ -268,6 +274,31 @@ pub fn breakdown_by(key: &PeriodKey, dim: BreakdownDim) -> Result<Vec<(String, f
         );
 
         totals_by_bucket(&rows, |row| bucket_of(row, dim))
+    })
+}
+
+/// Charges of one period grouped by `outer` and, inside each of its
+/// buckets, by `inner`, as `(outer, inner, amount)`, largest first.
+pub fn breakdown_within(
+    key: &PeriodKey,
+    outer: BreakdownDim,
+    inner: BreakdownDim,
+) -> Result<Vec<(String, String, f64)>> {
+    read(|all| {
+        let rows = selected(
+            all,
+            &Scope {
+                provider: Some(&key.provider),
+                account_id: Some(&key.account_id),
+                billing_period: Some(&key.billing_period),
+                ..Default::default()
+            },
+        );
+
+        totals_by_bucket(&rows, |row| (bucket_of(row, outer), bucket_of(row, inner)))
+            .into_iter()
+            .map(|((outer, inner), amount)| (outer, inner, amount))
+            .collect()
     })
 }
 

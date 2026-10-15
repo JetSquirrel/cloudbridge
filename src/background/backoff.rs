@@ -124,6 +124,15 @@ impl Backoff {
         failures.sort();
         failures
     }
+
+    /// Each failing account's last reason, by account id, for the window's
+    /// Accounts table to mark the row it belongs to.
+    pub fn reasons(&self) -> HashMap<String, String> {
+        self.failing
+            .iter()
+            .map(|(id, streak)| (id.clone(), streak.last_error.clone()))
+            .collect()
+    }
 }
 
 /// The wait after the `failures`-th failure in a row: one tick, then
@@ -248,5 +257,9 @@ mod tests {
         backoff.failed(failure(None, "denied"), now, day());
         assert!(is_waiting(&backoff, &account, now + Duration::minutes(5)));
         assert_eq!(backoff.failures(), ["Prod: denied"]);
+        assert_eq!(
+            backoff.reasons().get("a").map(String::as_str),
+            Some("denied")
+        );
     }
 }

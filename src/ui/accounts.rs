@@ -7,6 +7,7 @@ use gpui_kit::component::{
     dialog::{AlertDialog, Cancel, Dialog, DialogButtonProps, DialogFooter},
     input::{Input, InputState},
     scroll::ScrollableElement,
+    tooltip::Tooltip,
     *,
 };
 use gpui_kit::prelude::FluentBuilder;
@@ -130,6 +131,11 @@ pub struct AccountsView {
     /// it opens if the machine has a key for the source, so a machine set
     /// up for the CLI needs nothing typed and nothing kept.
     use_system_credentials: bool,
+    /// Re-renders the table when the background schedule's status changes,
+    /// so a row's refresh failure shows up and clears without a reload.
+    /// Taken on the first load: the schedule starts after the stores open.
+    #[cfg(not(target_family = "wasm"))]
+    refresh_status: Option<Subscription>,
 }
 
 /// Where a typed key goes, said where it is typed.
@@ -201,6 +207,37 @@ impl AccountsView {
             region_input,
             export_uri_input,
             selected_source: default_source,
+            #[cfg(not(target_family = "wasm"))]
+            refresh_status: None,
+        }
+    }
+
+    /// Watch the background schedule's status, once it exists.
+    fn watch_refresh_status(&mut self, cx: &mut Context<Self>) {
+        #[cfg(not(target_family = "wasm"))]
+        if self.refresh_status.is_none() {
+            if let Some(status) = cx
+                .try_global::<crate::background::GlobalStatus>()
+                .map(|global| global.0.clone())
+            {
+                self.refresh_status = Some(cx.observe(&status, |_, _, cx| cx.notify()));
+            }
+        }
+        #[cfg(target_family = "wasm")]
+        let _ = cx;
+    }
+
+    /// Why the background schedule's last try at this account failed, while
+    /// it is still failing. The browser has no schedule.
+    fn refresh_failure(&self, account_id: &str, cx: &App) -> Option<String> {
+        #[cfg(not(target_family = "wasm"))]
+        return cx
+            .try_global::<crate::background::GlobalStatus>()
+            .and_then(|global| global.0.read(cx).failing.get(account_id).cloned());
+        #[cfg(target_family = "wasm")]
+        {
+            let _ = (account_id, cx);
+            None
         }
     }
 
@@ -209,6 +246,7 @@ impl AccountsView {
     /// visit, so construction — and window opening — stays cheap and the
     /// hidden pages do not race the visible one for the ledger at startup.
     pub fn ensure_loaded(&mut self, cx: &mut Context<Self>) {
+        self.watch_refresh_status(cx);
         if self.accounts_data.is_none() && !self.loading_data {
             self.load_accounts(cx);
             self.load_data(cx);
@@ -247,6 +285,7 @@ impl AccountsView {
     /// the table data while a load is already in flight. Existing data
     /// stays on screen while the reload runs — no loading flash.
     pub fn reload(&mut self, cx: &mut Context<Self>) {
+        self.watch_refresh_status(cx);
         self.load_accounts(cx);
         if !self.loading_data {
             self.load_data(cx);
@@ -1210,6 +1249,9 @@ impl AccountsView {
             .last_sync
             .map(fmt::relative_time)
             .unwrap_or_else(|| "never".to_string());
+        // `last_sync` is the last success; a failure since then shows
+        // under it, with the provider's reason on hover.
+        let failure = self.refresh_failure(&row.id, cx);
 
         let detail_id = row.id.clone();
 
@@ -1303,9 +1345,28 @@ impl AccountsView {
             .child(
                 div()
                     .w(rems(COLUMN_REMS[4]))
+                    .v_flex()
                     .text_sm()
                     .text_color(theme::text_muted(cx))
-                    .child(last_sync),
+                    .child(last_sync)
+                    .when_some(failure, |el, reason| {
+                        el.child(
+                            div()
+                                .id(SharedString::from(format!("refresh-failure-{}", row.id)))
+                                .flex()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(theme::danger(cx))
+                                        .child("Failing"),
+                                )
+                                .tooltip(move |window, cx| {
+                                    Tooltip::new(format!("Background refresh failing: {reason}"))
+                                        .build(window, cx)
+                                }),
+                        )
+                    }),
             )
             .child(
                 div()

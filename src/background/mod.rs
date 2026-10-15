@@ -35,6 +35,8 @@ mod panel;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod tray;
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use gpui_kit::*;
 
@@ -81,6 +83,10 @@ pub struct Status {
     /// The accounts that are failing to refresh, as `name: reason` —
     /// including those the schedule is backing off from.
     pub failures: Vec<String>,
+    /// The same failing accounts as account id to reason, for the window to
+    /// mark each one's row. A failure that belongs to no account is only in
+    /// `failures`.
+    pub failing: HashMap<String, String>,
     announcer: Announcer,
     backoff: backoff::Backoff,
 }
@@ -100,6 +106,7 @@ pub fn start(started_at: DateTime<Utc>, cx: &mut App) {
         refreshing: false,
         last_run: None,
         failures: Vec::new(),
+        failing: HashMap::new(),
         announcer: Announcer::new(started_at),
         backoff: backoff::Backoff::default(),
     });
