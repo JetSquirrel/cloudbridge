@@ -673,7 +673,11 @@ fn read_zip_member(path: &Path, bytes: &[u8], format: &BillFileFormat) -> Result
         )
     })?;
 
-    let names: Vec<String> = archive.file_names().map(str::to_string).collect();
+    let names: Vec<String> = archive
+        .file_names()
+        .map(|name| name.map(|name| name.into_owned()))
+        .collect::<std::result::Result<_, _>>()
+        .map_err(|e| anyhow!("Cannot read file names in {}: {}", path.display(), e))?;
     let wanted: Vec<&str> = names
         .iter()
         .map(String::as_str)

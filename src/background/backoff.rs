@@ -61,9 +61,9 @@ impl Hold {
     /// not fail any more.
     pub fn applies_to(&self, account: &CloudAccount, now: DateTime<Utc>) -> bool {
         now < self.next_try
-            && !account
+            && account
                 .last_synced_at
-                .is_some_and(|synced| synced > self.failed_at)
+                .is_none_or(|synced| synced <= self.failed_at)
             && account.access_key_hint == self.credentials
     }
 }
