@@ -11,6 +11,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Settings → Background → Keep running in the menu bar.** On by default,
   as before. Off, the menu bar icon goes at once, closing the window quits,
   and a login launch opens the window instead of starting hidden.
+- **Command palette.** ⌘K (Ctrl+K on Windows and Linux), or Search… at the
+  top of the sidebar, searches every page, every account and the Reload
+  and Add account commands. Each page shows its shortcut beside it, so the
+  palette is also the list of keyboard shortcuts.
+- **Attribution's treemap opens a tile.** In the Service, Region and
+  Category views, clicking a tile, or highlighting it with the arrow keys
+  and pressing Enter, splits it one level down: a service into its
+  resources, a region or a category into its services. The breadcrumb
+  above, Escape or Backspace goes back. The table view follows the same
+  level.
+- **Accounts marks an account the background refresh keeps failing on.**
+  "Failing" sits under its last-fetch time, with the provider's reason on
+  hover, and the status bar says how many accounts are failing instead of
+  when the others last synced. It clears with the account's next success.
+- **Settings → About → Copy system info**, for a bug report: version,
+  platform, the settings that change fetching and display, which kinds of
+  source are configured, and the data folder's path. No account names,
+  keys or amounts.
 
 ### Changed
 - The menu bar title is the month's spend alone. Open alerts put an

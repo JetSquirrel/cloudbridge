@@ -102,6 +102,7 @@ pub(super) fn run_once(status: Entity<Status>, fetch: bool, manual: bool, cx: &m
                 status.refreshing = false;
                 status.last_run = Some(now);
                 status.failures = status.backoff.failures();
+                status.failing = status.backoff.reasons();
                 status.failures.extend(fetched.failures);
                 let announce = match summary {
                     Ok(summary) => {

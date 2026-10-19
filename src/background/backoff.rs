@@ -61,9 +61,9 @@ impl Hold {
     /// not fail any more.
     pub fn applies_to(&self, account: &CloudAccount, now: DateTime<Utc>) -> bool {
         now < self.next_try
-            && !account
+            && account
                 .last_synced_at
-                .is_some_and(|synced| synced > self.failed_at)
+                .is_none_or(|synced| synced <= self.failed_at)
             && account.access_key_hint == self.credentials
     }
 }
@@ -123,6 +123,15 @@ impl Backoff {
             .collect();
         failures.sort();
         failures
+    }
+
+    /// Each failing account's last reason, by account id, for the window's
+    /// Accounts table to mark the row it belongs to.
+    pub fn reasons(&self) -> HashMap<String, String> {
+        self.failing
+            .iter()
+            .map(|(id, streak)| (id.clone(), streak.last_error.clone()))
+            .collect()
     }
 }
 
@@ -248,5 +257,9 @@ mod tests {
         backoff.failed(failure(None, "denied"), now, day());
         assert!(is_waiting(&backoff, &account, now + Duration::minutes(5)));
         assert_eq!(backoff.failures(), ["Prod: denied"]);
+        assert_eq!(
+            backoff.reasons().get("a").map(String::as_str),
+            Some("denied")
+        );
     }
 }

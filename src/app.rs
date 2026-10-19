@@ -3,6 +3,8 @@
 use std::collections::HashSet;
 
 use chrono::Utc;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::command::CommandState;
 use gpui_kit::component::*;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -29,6 +31,7 @@ actions!(
         SwitchToSettings,
         SwitchToAccountDetail,
         ReloadCurrentView,
+        OpenCommandPalette,
     ]
 );
 
@@ -182,6 +185,9 @@ pub struct CloudBridgeApp {
     /// would stop at the window root and never reach the shortcut
     /// listeners in `render`.
     focus_handle: FocusHandle,
+    /// The command palette's query, highlight and focus; the shell opens it
+    /// in a dialog on ⌘K.
+    palette: Entity<CommandState>,
     /// The stores are open and pages may load. The browser seeds its
     /// ledger before the window opens, so it starts `true` there; the
     /// desktop opens the window first and flips it when init finishes.
@@ -229,7 +235,8 @@ impl CloudBridgeApp {
         // showed), ⌘9 the Models page and ⌘0 Insights — each added after
         // the first eight were handed out, so they take the free digits
         // rather than renumbering shortcuts a release already taught — and
-        // ⌘R reloads the page on screen.
+        // ⌘R reloads the page on screen. ⌘K opens the command palette, which
+        // lists every one of these beside its shortcut.
         // `secondary` is ⌘ on macOS and Ctrl elsewhere — `cmd` would be the
         // Windows key there, whose digit and R chords the OS keeps for
         // itself. No key context, so they fire regardless of which page or
@@ -247,7 +254,9 @@ impl CloudBridgeApp {
             KeyBinding::new("secondary-9", SwitchToModels, None),
             KeyBinding::new("secondary-0", SwitchToInsights, None),
             KeyBinding::new("secondary-r", ReloadCurrentView, None),
+            KeyBinding::new("secondary-k", OpenCommandPalette, None),
         ]);
+        let palette = cx.new(|cx| CommandState::new(window, cx));
 
         // Start with focus on the shell, and take it back whenever the
         // focused element leaves the tree — a page's dialog closing leaves
@@ -277,6 +286,7 @@ impl CloudBridgeApp {
             }
             if opened {
                 this.stores_ready = true;
+                this.watch_refresh_status(cx);
             }
             if let Some((view, payload)) = target {
                 // The detail page's payload names the account before the
@@ -312,6 +322,7 @@ impl CloudBridgeApp {
             settings_view,
             activated_views: HashSet::new(),
             focus_handle,
+            palette,
             stores_ready: cfg!(target_family = "wasm"),
             _subscriptions: vec![observer, focus_lost],
         };
@@ -413,6 +424,41 @@ impl CloudBridgeApp {
             .update(cx, |state, cx| state.navigate(view, cx));
     }
 
+    /// Re-render the status bar whenever the background schedule's status
+    /// changes. The schedule starts right after the stores open, so the
+    /// shell looks for it then; the browser has none.
+    fn watch_refresh_status(&mut self, cx: &mut Context<Self>) {
+        #[cfg(not(target_family = "wasm"))]
+        if let Some(status) = cx
+            .try_global::<crate::background::GlobalStatus>()
+            .map(|global| global.0.clone())
+        {
+            self._subscriptions
+                .push(cx.observe(&status, |_, _, cx| cx.notify()));
+        }
+        #[cfg(target_family = "wasm")]
+        let _ = cx;
+    }
+
+    /// Open the command palette over the current account list. The list is
+    /// a store read, so it lands off the UI thread first; before the stores
+    /// open there are no accounts to list, only pages and commands.
+    fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let ready = self.stores_ready;
+        cx.spawn_in(window, async move |this, cx| {
+            let accounts = if ready {
+                smol::unblock(|| crate::db::get_all_accounts().unwrap_or_default()).await
+            } else {
+                Vec::new()
+            };
+            this.update_in(cx, |this, window, cx| {
+                crate::ui::palette::open(&this.palette, accounts, window, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Reload the status bar's sync status and open-alert count.
     ///
     /// Both loaders are blocking DuckDB reads, so they run in
@@ -482,6 +528,25 @@ impl CloudBridgeApp {
                         cx,
                         format!("LOCAL LEDGER, V{}", env!("CARGO_PKG_VERSION")),
                     )),
+            )
+            // The palette's pointer entry; its tooltip teaches the shortcut.
+            .child(
+                Button::new("open-palette")
+                    .label("Search…")
+                    .icon(IconName::Search)
+                    .ghost()
+                    .small()
+                    .w_full()
+                    .justify_start()
+                    .text_color(theme::text_muted(cx))
+                    .tooltip_with_action(
+                        "Search pages, accounts and commands",
+                        &OpenCommandPalette,
+                        None,
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_palette(window, cx);
+                    })),
             )
             .child(self.nav_item(
                 "Overview",
@@ -636,7 +701,24 @@ impl CloudBridgeApp {
     fn render_status_bar(&self, cx: &App) -> impl IntoElement {
         let sync = self.app_state.read(cx).sync.as_ref();
 
+        // Accounts the background schedule keeps failing on outrank the
+        // sync line: "synced 5 min ago" is about the others.
+        #[cfg(not(target_family = "wasm"))]
+        let failing = cx
+            .try_global::<crate::background::GlobalStatus>()
+            .map(|global| global.0.read(cx).failing.len())
+            .unwrap_or(0);
+        #[cfg(target_family = "wasm")]
+        let failing = 0;
+
         let (text, dot_color) = match sync {
+            Some(_) if failing > 0 => (
+                match failing {
+                    1 => "1 account is failing to refresh. See Accounts.".to_string(),
+                    n => format!("{n} accounts are failing to refresh. See Accounts."),
+                },
+                theme::danger(cx),
+            ),
             Some(sync) => {
                 let synced = match sync.last_synced_at {
                     Some(at) => format!("Synced {}", fmt::relative_time(at)),
@@ -746,6 +828,9 @@ impl Render for CloudBridgeApp {
             }))
             .on_action(cx.listener(|this, _: &ReloadCurrentView, _, cx| {
                 this.reload_current(cx);
+            }))
+            .on_action(cx.listener(|this, _: &OpenCommandPalette, window, cx| {
+                this.open_palette(window, cx);
             }))
             .bg(theme::app_bg(cx))
             .text_color(theme::text_primary(cx))

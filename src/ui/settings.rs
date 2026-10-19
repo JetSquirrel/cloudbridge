@@ -68,6 +68,12 @@ pub struct SettingsView {
     /// `None` when it could not be read.
     #[cfg(not(target_family = "wasm"))]
     open_at_login: Option<bool>,
+    /// Bumped on every Copy system info; the button reads "Copied" while
+    /// `copied` holds the latest one, until its timer clears it.
+    #[cfg(not(target_family = "wasm"))]
+    copy_generation: u64,
+    #[cfg(not(target_family = "wasm"))]
+    copied: Option<u64>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -122,6 +128,10 @@ impl SettingsView {
             theme_select,
             #[cfg(not(target_family = "wasm"))]
             open_at_login: Self::read_open_at_login(),
+            #[cfg(not(target_family = "wasm"))]
+            copy_generation: 0,
+            #[cfg(not(target_family = "wasm"))]
+            copied: None,
             _subscriptions: vec![subscription],
         }
     }
@@ -465,6 +475,38 @@ impl SettingsView {
         .detach();
     }
 
+    /// Put [`system_info`] on the clipboard, for a bug report. The account
+    /// read is a store query, so it runs off the UI thread; the button says
+    /// "Copied" for two seconds once the text is there.
+    #[cfg(not(target_family = "wasm"))]
+    fn copy_system_info(&mut self, cx: &mut Context<Self>) {
+        let config = self.config.clone();
+        self.copy_generation += 1;
+        let generation = self.copy_generation;
+        cx.spawn(async move |this, cx| {
+            let info = smol::unblock(move || system_info(&config)).await;
+            let copied = this.update(cx, |this, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(info));
+                this.copied = Some(generation);
+                cx.notify();
+            });
+            if copied.is_err() {
+                return;
+            }
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(2))
+                .await;
+            this.update(cx, |this, cx| {
+                if this.copied == Some(generation) {
+                    this.copied = None;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn render_section(
         &self,
         title: &'static str,
@@ -703,9 +745,111 @@ impl Render for SettingsView {
                                         .child("Built with:"),
                                 )
                                 .child(div().child("GPUI + Rust")),
-                        ),
+                        )
+                        .map(|el| {
+                            #[cfg(not(target_family = "wasm"))]
+                            let el = el.child(
+                                div().pt_2().child(
+                                    Button::new("copy-system-info")
+                                        .label(if self.copied.is_some() {
+                                            "Copied"
+                                        } else {
+                                            "Copy system info"
+                                        })
+                                        .icon(if self.copied.is_some() {
+                                            IconName::Check
+                                        } else {
+                                            IconName::Copy
+                                        })
+                                        .small()
+                                        .custom(theme::outline_variant(cx))
+                                        .card_outline(cx)
+                                        .tooltip(
+                                            "Version, platform, settings, source types \
+                                             and the data folder's path, for a bug \
+                                             report. No account names, keys or amounts.",
+                                        )
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.copy_system_info(cx);
+                                        })),
+                                ),
+                            );
+                            el
+                        }),
                     cx,
                 ),
             )
     }
+}
+
+/// What a bug report needs to know about this install: version, platform,
+/// the settings that change what the app fetches and shows, and which
+/// kinds of source it reads. Nothing that identifies an account — no
+/// names, ids, keys or amounts — since the text is meant to be pasted
+/// into a public issue. Blocking: it reads the account list.
+#[cfg(not(target_family = "wasm"))]
+fn system_info(config: &AppConfig) -> String {
+    use std::collections::BTreeMap;
+
+    let mut lines = vec![
+        format!("CloudBridge {}", env!("CARGO_PKG_VERSION")),
+        format!(
+            "Platform: {} {}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        ),
+        format!(
+            "Theme: {}",
+            config
+                .theme
+                .name
+                .as_deref()
+                .unwrap_or(if config.theme.dark_mode {
+                    theme::DARK_THEME_NAME
+                } else {
+                    theme::LIGHT_THEME_NAME
+                })
+        ),
+        format!("Reporting currency: {}", config.reporting_currency),
+        format!("Refresh interval: {}h", config.refresh_interval_hours),
+        format!(
+            "Background refresh: {}",
+            if config.background_refresh {
+                "on"
+            } else {
+                "off"
+            }
+        ),
+    ];
+    match crate::db::get_all_accounts() {
+        Ok(accounts) => {
+            // Source id to (accounts, of which disabled).
+            let mut sources: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+            for account in &accounts {
+                let entry = sources.entry(account.source_id.as_str()).or_default();
+                entry.0 += 1;
+                if !account.enabled {
+                    entry.1 += 1;
+                }
+            }
+            let listed: Vec<String> = sources
+                .iter()
+                .map(|(source, (count, disabled))| match disabled {
+                    0 => format!("{source} x{count}"),
+                    disabled => format!("{source} x{count} ({disabled} disabled)"),
+                })
+                .collect();
+            lines.push(if listed.is_empty() {
+                "Sources: none".to_string()
+            } else {
+                format!("Sources: {}", listed.join(", "))
+            });
+        }
+        Err(e) => lines.push(format!("Sources: couldn't read ({e})")),
+    }
+    lines.push(match crate::config::get_app_data_dir() {
+        Ok(dir) => format!("Data folder: {}", dir.display()),
+        Err(e) => format!("Data folder: unknown ({e})"),
+    });
+    lines.join("\n")
 }
