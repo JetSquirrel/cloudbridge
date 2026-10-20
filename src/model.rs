@@ -686,10 +686,20 @@ pub enum BreakdownDim {
     Service,
     Region,
     ServiceCategory,
-    /// A resource's display name, falling back to its id; a charge with no
-    /// resource reads as `'Other'`. Only ever a second level — the
+    /// A resource's id; its name is display metadata, never its identity.
+    /// A charge with no resource reads as `'Other'`. Only a second level — the
     /// Attribution treemap's resources inside a service.
     Resource,
+}
+
+/// One signed child of a breakdown bucket. Resource children are keyed by
+/// id (`None` for unresourced charges), with names kept only for display.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BreakdownPart {
+    pub outer: String,
+    pub inner: Option<String>,
+    pub resource_name: Option<String>,
+    pub amount: f64,
 }
 
 /// One of a period's costliest resources.

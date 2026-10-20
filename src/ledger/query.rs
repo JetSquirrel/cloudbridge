@@ -12,7 +12,6 @@ use duckdb::{params, AccessMode, Config, Connection};
 use super::schema::{NORMALIZED_VIEW, TIMESTAMP_FORMAT};
 use super::{with_connection_ref, Channel, PeriodKey};
 use crate::analytics::{self, QualityCounts, TwoPeriodBuckets};
-use crate::model::BillingPeriod;
 pub use crate::model::{
     AdhocResult, Balance, BreakdownDim, CategoryDelta, CostChangeDecomposition, DailyModelTokens,
     DailyTotal, DataQualityIssue, DataQualityKind, ForecastBands, InventoryResource,
@@ -20,6 +19,7 @@ pub use crate::model::{
     PeriodOverPeriod, ResourceCost, ResourceUsage, ServiceDailyTotal, ServiceMovement,
     ServiceTagUsage, TopResource, UntaggedServiceUsage,
 };
+use crate::model::{BillingPeriod, BreakdownPart};
 
 /// Total charged in one billing period, in the reporting currency.
 pub fn period_total(key: &PeriodKey) -> Result<f64> {
@@ -1456,20 +1456,20 @@ impl BreakdownDim {
             Self::Service => "coalesce(service_name, 'Other')",
             Self::Region => "coalesce(region_id, 'Other')",
             Self::ServiceCategory => "coalesce(service_category, 'Uncategorized')",
-            Self::Resource => "coalesce(nullif(resource_name, ''), resource_id, 'Other')",
+            Self::Resource => "coalesce(nullif(resource_id, ''), 'Other')",
         }
     }
 }
 
 /// Charges of one period grouped by `outer` and, inside each of its
-/// buckets, by `inner`, as `(outer, inner, amount)`, largest first — the
-/// Attribution treemap's second level. A pair that nets to nothing is left
-/// out, as a bucket is in [`breakdown_by`].
+/// buckets, by `inner`, largest first — the
+/// Attribution treemap's second level. Keep negative children so credits
+/// reconcile to their parent's net total; only zero sums are omitted.
 pub fn breakdown_within(
     key: &PeriodKey,
     outer: BreakdownDim,
     inner: BreakdownDim,
-) -> Result<Vec<(String, String, f64)>> {
+) -> Result<Vec<BreakdownPart>> {
     with_connection_ref(|conn| breakdown_within_of(conn, key, outer, inner))
 }
 
@@ -1478,32 +1478,43 @@ fn breakdown_within_of(
     key: &PeriodKey,
     outer: BreakdownDim,
     inner: BreakdownDim,
-) -> Result<Vec<(String, String, f64)>> {
+) -> Result<Vec<BreakdownPart>> {
     let scope = Scope {
         provider: Some(&key.provider),
         account_id: Some(&key.account_id),
         billing_period: Some(&key.billing_period),
         ..Default::default()
     };
+    let inner_sql = if inner == BreakdownDim::Resource {
+        "nullif(resource_id, '')"
+    } else {
+        inner.bucket_sql()
+    };
+    let name_sql = if inner == BreakdownDim::Resource {
+        "min(nullif(resource_name, ''))"
+    } else {
+        "CAST(NULL AS VARCHAR)"
+    };
     let mut stmt = conn.prepare(&format!(
-        "SELECT {} AS outer_bucket, {} AS inner_bucket, sum(billed_cost_base) AS amount
+        "SELECT {} AS outer_bucket, {} AS inner_bucket, sum(billed_cost_base) AS amount, {name_sql}
          FROM {NORMALIZED_VIEW}
          WHERE {}
          GROUP BY outer_bucket, inner_bucket
-         HAVING amount > 0
+         HAVING amount <> 0
          ORDER BY amount DESC, outer_bucket, inner_bucket",
         outer.bucket_sql(),
-        inner.bucket_sql(),
+        inner_sql,
         scope.where_sql()
     ))?;
 
     let rows = stmt
         .query_map(duckdb::params_from_iter(scope.params()), |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, f64>(2)?,
-            ))
+            Ok(BreakdownPart {
+                outer: row.get(0)?,
+                inner: row.get(1)?,
+                amount: row.get(2)?,
+                resource_name: row.get(3)?,
+            })
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -3686,28 +3697,54 @@ mod tests {
                 },
                 Charge {
                     resource_id: Some("i-2".to_string()),
+                    resource_name: Some("web".to_string()),
                     ..charge("EC2", 4.0, "USD", 2)
                 },
                 Charge {
                     resource_id: Some("i-1".to_string()),
-                    resource_name: Some("web".to_string()),
+                    resource_name: Some("web-renamed".to_string()),
                     ..charge("EC2", 1.5, "USD", 3)
                 },
                 charge("S3", 0.75, "USD", 1),
+                charge("EC2", -2.0, "USD", 4),
             ],
         );
 
-        // Named resources read by name, unnamed ones by id, and a charge
-        // with no resource as 'Other'.
+        // Names do not merge IDs or split renamed resources. Unresourced
+        // credits remain signed children and reconcile with the parent.
         assert_eq!(
             breakdown_within_of(&conn, &aws(), BreakdownDim::Service, BreakdownDim::Resource)
                 .unwrap(),
             vec![
-                ("EC2".to_string(), "web".to_string(), 14.0),
-                ("EC2".to_string(), "i-2".to_string(), 4.0),
-                ("S3".to_string(), "Other".to_string(), 0.75),
+                BreakdownPart {
+                    outer: "EC2".into(),
+                    inner: Some("i-1".into()),
+                    resource_name: Some("web".into()),
+                    amount: 14.0
+                },
+                BreakdownPart {
+                    outer: "EC2".into(),
+                    inner: Some("i-2".into()),
+                    resource_name: Some("web".into()),
+                    amount: 4.0
+                },
+                BreakdownPart {
+                    outer: "S3".into(),
+                    inner: None,
+                    resource_name: None,
+                    amount: 0.75
+                },
+                BreakdownPart {
+                    outer: "EC2".into(),
+                    inner: None,
+                    resource_name: None,
+                    amount: -2.0
+                },
             ]
         );
+        let parts = breakdown_within_of(&conn, &aws(), BreakdownDim::Region, BreakdownDim::Service)
+            .unwrap();
+        assert_eq!(parts.iter().map(|part| part.amount).sum::<f64>(), 16.75);
     }
 
     /// 0.5.0's acceptance target: one query over the ledger answers what

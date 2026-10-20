@@ -703,11 +703,15 @@ impl AccountsView {
 
         cx.spawn(async move |this, cx| {
             let name = account.name.clone();
+            let account_id = account.id.clone();
             let outcome = smol::unblock(move || data::refresh_account(&account, false))
                 .await
                 .map_err(|e| e.to_string());
 
             cx.update(|cx| {
+                if outcome.is_ok() {
+                    crate::app::clear_account_failure(&account_id, cx);
+                }
                 this.update(cx, |this, cx| {
                     this.info = None;
                     match outcome {
@@ -767,6 +771,9 @@ impl AccountsView {
             .map_err(|e| e.to_string());
 
             cx.update(|cx| {
+                if outcome.is_ok() {
+                    crate::app::account_deleted(&account_id, cx);
+                }
                 this.update(cx, |this, cx| {
                     this.deleting_ids.remove(&account_id);
                     match outcome {

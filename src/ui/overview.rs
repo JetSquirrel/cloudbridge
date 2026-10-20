@@ -137,25 +137,32 @@ impl OverviewView {
 
         let range = self.range;
         cx.spawn(async move |this, cx| {
-            let result = smol::unblock(move || -> Result<_, String> {
-                let accounts = crate::db::get_all_accounts().map_err(|e| e.to_string())?;
+            let result = async {
+                let accounts = smol::unblock(crate::db::get_all_accounts)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let mut failures = Vec::new();
-                // Only a source with an API channel has anything to fetch;
-                // an account read from a bill file would only report, on
-                // every Refresh, that it has no API.
-                let fetchable = accounts.iter().filter(|account| {
+                // Publish each success as soon as it lands, even if another
+                // account is slow, the window closes, or loading the page fails.
+                for account in accounts.into_iter().filter(|account| {
                     account
                         .descriptor()
                         .is_some_and(|source| source.fetches_from_api())
-                });
-                for account in fetchable {
-                    if let Err(e) = data::refresh_account(account, force) {
-                        failures.push(format!("{}: {}", account.name, e));
+                }) {
+                    let id = account.id.clone();
+                    let name = account.name.clone();
+                    match smol::unblock(move || data::refresh_account(&account, force)).await {
+                        Ok(_) => {
+                            cx.update(|cx| crate::app::clear_account_failure(&id, cx));
+                        }
+                        Err(e) => failures.push(format!("{name}: {e}")),
                     }
                 }
-                let overview = data::load_overview(range).map_err(|e| e.to_string())?;
-                Ok((overview, failures))
-            })
+                let overview = smol::unblock(move || data::load_overview(range))
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok::<_, String>((overview, failures))
+            }
             .await;
 
             this.update(cx, |this, cx| {

@@ -16,7 +16,8 @@
 //! A fetch the provider answered and the ingest then lost is bounded by the
 //! ingest itself (see `ingest::PAID_FETCHES`); this bounds everything else.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use chrono::{DateTime, Duration, Utc};
 
@@ -28,6 +29,9 @@ use crate::cloud::CloudAccount;
 #[derive(Default)]
 pub struct Backoff {
     failing: HashMap<String, Streak>,
+    /// External recoveries/deletions invalidate results from an older pass.
+    invalidated_at: HashMap<String, Instant>,
+    removed: HashSet<String>,
 }
 
 struct Streak {
@@ -69,6 +73,30 @@ impl Hold {
 }
 
 impl Backoff {
+    /// Results from attempts started before a manual success or deletion
+    /// are stale. A later attempt still reports a genuine new failure.
+    pub fn is_current(&self, account_id: &str, started_at: Instant) -> bool {
+        !self.removed.contains(account_id)
+            && self
+                .invalidated_at
+                .get(account_id)
+                .is_none_or(|cleared| started_at > *cleared)
+    }
+
+    /// Account IDs are never reused. Even an attempt not yet started from
+    /// an old account-list snapshot must not resurrect a deleted account.
+    pub fn remove_account(&mut self, account_id: &str) {
+        self.removed.insert(account_id.to_string());
+        self.succeeded(account_id);
+    }
+
+    /// A manual success or deletion clears the failure and prevents an
+    /// already-running background attempt from putting it back.
+    pub fn invalidate(&mut self, account_id: &str, now: Instant) {
+        self.invalidated_at.insert(account_id.to_string(), now);
+        self.succeeded(account_id);
+    }
+
     /// Record a failed refresh. Returns whether it starts a streak — the
     /// one failure worth telling someone about; the rest are the same news.
     pub fn failed(&mut self, failure: Failure, now: DateTime<Utc>, cap: Duration) -> bool {

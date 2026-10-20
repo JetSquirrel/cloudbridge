@@ -12,6 +12,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use super::{chart, data, fmt, theme};
+use crate::analytics::breakdown::{self, Breakdown, Bucket};
 use crate::cloud::BillingPeriod;
 use crate::ledger::query::{self, BreakdownDim};
 use crate::ui::theme::CardOutline as _;
@@ -296,41 +297,28 @@ impl DrillDim {
         }
     }
 
-    /// This dimension's `(bucket, inner bucket, amount)` rows, current and
-    /// previous period.
-    fn pairs(self, drilldown: &DrilldownData) -> &[(String, String, f64)] {
+    /// This dimension's signed children, current and previous period.
+    fn pairs(self, drilldown: &DrilldownData) -> Option<&Breakdown> {
         match self {
-            DrillDim::Tag => &[],
-            DrillDim::Service => &drilldown.service_resources,
-            DrillDim::Region => &drilldown.region_services,
-            DrillDim::ServiceCategory => &drilldown.category_services,
+            DrillDim::Tag => None,
+            DrillDim::Service => Some(&drilldown.service_resources),
+            DrillDim::Region => Some(&drilldown.region_services),
+            DrillDim::ServiceCategory => Some(&drilldown.category_services),
         }
     }
 
-    fn prev_pairs(self, drilldown: &DrilldownData) -> &[(String, String, f64)] {
+    fn prev_pairs(self, drilldown: &DrilldownData) -> Option<&Breakdown> {
         match self {
-            DrillDim::Tag => &[],
-            DrillDim::Service => &drilldown.prev_service_resources,
-            DrillDim::Region => &drilldown.prev_region_services,
-            DrillDim::ServiceCategory => &drilldown.prev_category_services,
+            DrillDim::Tag => None,
+            DrillDim::Service => Some(&drilldown.prev_service_resources),
+            DrillDim::Region => Some(&drilldown.prev_region_services),
+            DrillDim::ServiceCategory => Some(&drilldown.prev_category_services),
         }
     }
 }
 
-/// A breakdown's `(bucket, amount)` rows.
-type Buckets = Vec<(String, f64)>;
-
-/// One opened bucket's inner rows, largest first.
-fn within(pairs: &[(String, String, f64)], bucket: &str) -> Vec<(String, f64)> {
-    let mut rows: Vec<(String, f64)> = pairs
-        .iter()
-        .filter(|(outer, _, _)| outer == bucket)
-        .map(|(_, inner, amount)| (inner.clone(), *amount))
-        .collect();
-    // Ties by name: the pairs come out of a map, in no order of their own.
-    rows.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    rows
-}
+/// A breakdown's signed rows, with identity separate from the label.
+type Buckets = Vec<Bucket>;
 
 /// How the non-tag breakdown card presents its buckets: the MoM heat
 /// treemap or the classic share table.
@@ -874,12 +862,26 @@ impl AttributionView {
     fn level_rows(&self, drilldown: &DrilldownData) -> (Buckets, Buckets) {
         match &self.opened {
             None => (
-                self.dim.rows(drilldown).to_vec(),
-                self.dim.prev_rows(drilldown).to_vec(),
+                self.dim
+                    .rows(drilldown)
+                    .iter()
+                    .map(Bucket::dimension)
+                    .collect(),
+                self.dim
+                    .prev_rows(drilldown)
+                    .iter()
+                    .map(Bucket::dimension)
+                    .collect(),
             ),
             Some(bucket) => (
-                within(self.dim.pairs(drilldown), bucket),
-                within(self.dim.prev_pairs(drilldown), bucket),
+                self.dim
+                    .pairs(drilldown)
+                    .map(|pairs| pairs.within(bucket))
+                    .unwrap_or_default(),
+                self.dim
+                    .prev_pairs(drilldown)
+                    .map(|pairs| pairs.within(bucket))
+                    .unwrap_or_default(),
             ),
         }
     }
@@ -962,7 +964,7 @@ impl AttributionView {
         currency: &str,
     ) -> impl IntoElement {
         let (rows, previous) = self.level_rows(drilldown);
-        let has_other = rows.iter().any(|(label, _)| label == "Other");
+        let has_other = rows.iter().any(|row| row.label == "Other");
         let selected = self.breakdown_mode;
         let opened = self.opened.clone();
         let card = theme::card(cx).w_full().p_5().v_flex().gap_4().child(
@@ -1016,9 +1018,40 @@ impl AttributionView {
         } else {
             (dim.bucket_header(), dim.other_caption())
         };
+        let totals = breakdown::totals(&rows);
+        let card = card.when(opened.is_some(), |el| {
+            el.child(theme::caption(
+                cx,
+                if totals.adjustments < 0.0 {
+                    format!(
+                        "Net {} = positive costs {} + credits / adjustments {}. {}",
+                        fmt::amount(totals.net, currency),
+                        fmt::amount(totals.positive, currency),
+                        fmt::amount(totals.adjustments, currency),
+                        if self.breakdown_mode == BreakdownMode::Map {
+                            "Tiles show positive costs; adjustments are listed below."
+                        } else {
+                            "Shares use the net total."
+                        }
+                    )
+                } else {
+                    format!("Net {}", fmt::amount(totals.net, currency))
+                },
+            ))
+        });
         match self.breakdown_mode {
             BreakdownMode::Map => card
                 .child(self.render_treemap_pane(window, cx, &rows, &previous, currency))
+                .when(totals.adjustments < 0.0, |el| {
+                    el.child(
+                        div()
+                            .v_flex()
+                            .child(theme::caption(cx, "Credits / adjustments (share of net)"))
+                            .children(rows.iter().filter(|row| row.amount < 0.0).map(|row| {
+                                breakdown_row(cx, &row.label, row.amount, totals.net, currency)
+                            })),
+                    )
+                })
                 .when(opened.is_none(), |el| {
                     el.child(theme::caption(
                         cx,
@@ -1033,11 +1066,24 @@ impl AttributionView {
                         .pb_2()
                         .child(theme::header_cell(cx, header).flex_1().min_w_0())
                         .child(theme::header_cell(cx, "AMOUNT").w_24().text_right())
-                        .child(theme::header_cell(cx, "SHARE").w_32().px_2()),
+                        .child(
+                            theme::header_cell(
+                                cx,
+                                if opened.is_some() {
+                                    "SHARE OF NET"
+                                } else {
+                                    "SHARE"
+                                },
+                            )
+                            .w_32()
+                            .px_2(),
+                        ),
                 )
-                .child(div().v_flex().children(rows.iter().map(|(label, amount)| {
-                    breakdown_row(cx, label, *amount, total(&rows), currency)
-                })))
+                .child(
+                    div().v_flex().children(rows.iter().map(|row| {
+                        breakdown_row(cx, &row.label, row.amount, totals.net, currency)
+                    })),
+                )
                 .when(has_other, |el| el.child(theme::caption(cx, other_caption))),
         }
     }
@@ -1052,8 +1098,8 @@ impl AttributionView {
         &self,
         window: &Window,
         cx: &mut Context<Self>,
-        rows: &[(String, f64)],
-        previous: &[(String, f64)],
+        rows: &[Bucket],
+        previous: &[Bucket],
         currency: &str,
     ) -> impl IntoElement {
         let items = chart::top_tiles(treemap_items(rows, previous), chart::TILE_CAP);
@@ -1427,14 +1473,14 @@ struct DrilldownData {
     prev_by_region: Vec<(String, f64)>,
     prev_by_category: Vec<(String, f64)>,
     /// Each dimension's buckets split by the one a treemap tile opens into,
-    /// as `(bucket, inner bucket, amount)`, with the previous period's for
-    /// the opened level's heat.
-    service_resources: Vec<(String, String, f64)>,
-    region_services: Vec<(String, String, f64)>,
-    category_services: Vec<(String, String, f64)>,
-    prev_service_resources: Vec<(String, String, f64)>,
-    prev_region_services: Vec<(String, String, f64)>,
-    prev_category_services: Vec<(String, String, f64)>,
+    /// preserving identity and signed amounts, with the previous period's
+    /// for the opened level's heat.
+    service_resources: Breakdown,
+    region_services: Breakdown,
+    category_services: Breakdown,
+    prev_service_resources: Breakdown,
+    prev_region_services: Breakdown,
+    prev_category_services: Breakdown,
     top_resources: Vec<query::TopResource>,
 }
 
@@ -1443,12 +1489,6 @@ struct DrilldownData {
 fn load_drilldown() -> Result<DrilldownData> {
     let period = BillingPeriod::containing(Utc::now());
     let previous = period.previous();
-    let mut by_service = Vec::new();
-    let mut by_region = Vec::new();
-    let mut by_category = Vec::new();
-    let mut prev_by_service = Vec::new();
-    let mut prev_by_region = Vec::new();
-    let mut prev_by_category = Vec::new();
     let mut top_resources = Vec::new();
     // (outer, inner, current pairs, previous pairs), one per dimension. A
     // service can hold thousands of resources, so the cross-account sums
@@ -1457,58 +1497,42 @@ fn load_drilldown() -> Result<DrilldownData> {
         (
             BreakdownDim::Service,
             BreakdownDim::Resource,
-            PairSums::new(),
-            PairSums::new(),
+            Breakdown::default(),
+            Breakdown::default(),
         ),
         (
             BreakdownDim::Region,
             BreakdownDim::Service,
-            PairSums::new(),
-            PairSums::new(),
+            Breakdown::default(),
+            Breakdown::default(),
         ),
         (
             BreakdownDim::ServiceCategory,
             BreakdownDim::Service,
-            PairSums::new(),
-            PairSums::new(),
+            Breakdown::default(),
+            Breakdown::default(),
         ),
     ];
     for account in db::get_all_accounts()? {
         let key = ingest::period_key(&account, &period);
         let prev_key = ingest::period_key(&account, &previous);
         for (outer, inner, current, prior) in &mut splits {
-            merge_pairs(current, query::breakdown_within(&key, *outer, *inner)?);
-            merge_pairs(prior, query::breakdown_within(&prev_key, *outer, *inner)?);
+            current.add(
+                &key.provider,
+                &key.account_id,
+                &account.name,
+                *inner,
+                query::breakdown_within(&key, *outer, *inner)?,
+            );
+            prior.add(
+                &prev_key.provider,
+                &prev_key.account_id,
+                &account.name,
+                *inner,
+                query::breakdown_within(&prev_key, *outer, *inner)?,
+            );
         }
-        merge_buckets(
-            &mut by_service,
-            query::breakdown_by(&key, BreakdownDim::Service)?,
-        );
-        merge_buckets(
-            &mut by_region,
-            query::breakdown_by(&key, BreakdownDim::Region)?,
-        );
-        merge_buckets(
-            &mut by_category,
-            query::breakdown_by(&key, BreakdownDim::ServiceCategory)?,
-        );
-        merge_buckets(
-            &mut prev_by_service,
-            query::breakdown_by(&prev_key, BreakdownDim::Service)?,
-        );
-        merge_buckets(
-            &mut prev_by_region,
-            query::breakdown_by(&prev_key, BreakdownDim::Region)?,
-        );
-        merge_buckets(
-            &mut prev_by_category,
-            query::breakdown_by(&prev_key, BreakdownDim::ServiceCategory)?,
-        );
         top_resources.extend(query::top_resources(&key, TOP_RESOURCE_COUNT)?);
-    }
-    // Largest first in every dimension, as each per-account breakdown was.
-    for rows in [&mut by_service, &mut by_region, &mut by_category] {
-        rows.sort_by(|a, b| b.1.total_cmp(&a.1));
     }
     top_resources.sort_by(|a, b| b.amount.total_cmp(&a.amount));
     top_resources.truncate(TOP_RESOURCE_COUNT);
@@ -1516,72 +1540,27 @@ fn load_drilldown() -> Result<DrilldownData> {
         splits;
 
     Ok(DrilldownData {
-        service_resources: pair_rows(service_resources),
-        region_services: pair_rows(region_services),
-        category_services: pair_rows(category_services),
-        prev_service_resources: pair_rows(prev_service_resources),
-        prev_region_services: pair_rows(prev_region_services),
-        prev_category_services: pair_rows(prev_category_services),
-        by_service,
-        by_region,
-        by_category,
-        prev_by_service,
-        prev_by_region,
-        prev_by_category,
+        by_service: service_resources.parents(),
+        by_region: region_services.parents(),
+        by_category: category_services.parents(),
+        prev_by_service: prev_service_resources.parents(),
+        prev_by_region: prev_region_services.parents(),
+        prev_by_category: prev_category_services.parents(),
+        service_resources,
+        region_services,
+        category_services,
+        prev_service_resources,
+        prev_region_services,
+        prev_category_services,
         top_resources,
     })
 }
 
-/// Add one account's breakdown into the cross-account one, bucket by
-/// bucket — the same idiom the Sankey's totals use in `data.rs`.
-fn merge_buckets(into: &mut Vec<(String, f64)>, rows: Vec<(String, f64)>) {
-    for (label, amount) in rows {
-        match into.iter_mut().find(|(existing, _)| *existing == label) {
-            Some((_, total)) => *total += amount,
-            None => into.push((label, amount)),
-        }
-    }
-}
-
-/// Cross-account sums of `(bucket, inner bucket)` pairs.
-type PairSums = HashMap<(String, String), f64>;
-
-/// [`merge_buckets`] for `(bucket, inner bucket)` pairs.
-fn merge_pairs(into: &mut PairSums, rows: Vec<(String, String, f64)>) {
-    for (outer, inner, amount) in rows {
-        *into.entry((outer, inner)).or_insert(0.0) += amount;
-    }
-}
-
-/// The summed pairs as rows; [`within`] orders each bucket's own.
-fn pair_rows(sums: PairSums) -> Vec<(String, String, f64)> {
-    sums.into_iter()
-        .map(|((outer, inner), amount)| (outer, inner, amount))
-        .collect()
-}
-
-/// A breakdown's grand total, the share bars' denominator.
-fn total(rows: &[(String, f64)]) -> f64 {
-    rows.iter().map(|(_, amount)| amount).sum()
-}
-
-/// Pair the current breakdown with the previous period's so every treemap
-/// tile carries its own month-over-month base; a bucket with no previous
-/// period gets zero, which the heat map reads as "new".
-fn treemap_items(current: &[(String, f64)], previous: &[(String, f64)]) -> Vec<chart::TreemapItem> {
-    let previous: HashMap<&str, f64> = previous
-        .iter()
-        .map(|(label, amount)| (label.as_str(), *amount))
-        .collect();
-    current
-        .iter()
-        .map(|(label, amount)| {
-            chart::TreemapItem::new(
-                label.clone(),
-                *amount,
-                previous.get(label.as_str()).copied().unwrap_or(0.0),
-            )
-        })
+/// Pair periods by stable identity; only positive costs can occupy tiles.
+fn treemap_items(current: &[Bucket], previous: &[Bucket]) -> Vec<chart::TreemapItem> {
+    breakdown::positive_comparisons(current, previous)
+        .into_iter()
+        .map(|(row, previous)| chart::TreemapItem::new(row.label.clone(), row.amount, previous))
         .collect()
 }
 
@@ -1590,6 +1569,7 @@ fn treemap_items(current: &[(String, f64)], previous: &[(String, f64)]) -> Vec<c
 /// so it is not mistaken for a real one.
 fn breakdown_row(cx: &App, label: &str, amount: f64, total: f64, currency: &str) -> Div {
     let share = if total > 0.0 { amount / total } else { 0.0 };
+    let full_label = label.to_string();
     let label_color = if label == "Other" {
         theme::text_muted(cx)
     } else {
@@ -1603,6 +1583,7 @@ fn breakdown_row(cx: &App, label: &str, amount: f64, total: f64, currency: &str)
         .border_color(theme::card_border(cx))
         .child(
             div()
+                .id(SharedString::from(format!("breakdown-label-{label}")))
                 .flex_1()
                 // min_w_0 so a long bucket name truncates instead of
                 // pushing the amount columns out of the card.
@@ -1611,6 +1592,9 @@ fn breakdown_row(cx: &App, label: &str, amount: f64, total: f64, currency: &str)
                 .text_ellipsis()
                 .text_sm()
                 .text_color(label_color)
+                .tooltip(move |window, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new(full_label.clone()).build(window, cx)
+                })
                 .child(label.to_string()),
         )
         .child(
@@ -1623,19 +1607,29 @@ fn breakdown_row(cx: &App, label: &str, amount: f64, total: f64, currency: &str)
                 .child(fmt::amount(amount, currency)),
         )
         .child(
-            div().w_32().px_2().child(
-                div()
-                    .w_full()
-                    .h_2()
-                    .rounded_full()
-                    .bg(theme::sidebar_bg(cx))
-                    .child(
-                        div()
-                            .h_full()
-                            .w(relative(share as f32))
-                            .rounded_full()
-                            .bg(theme::accent(cx)),
-                    ),
-            ),
+            div()
+                .w_32()
+                .px_2()
+                .v_flex()
+                .gap_1()
+                .child(div().text_xs().child(if total > 0.0 {
+                    format!("{:.1}%", share * 100.0)
+                } else {
+                    "—".to_string()
+                }))
+                .child(
+                    div()
+                        .w_full()
+                        .h_2()
+                        .rounded_full()
+                        .bg(theme::sidebar_bg(cx))
+                        .child(
+                            div()
+                                .h_full()
+                                .w(relative(share.clamp(0.0, 1.0) as f32))
+                                .rounded_full()
+                                .bg(theme::accent(cx)),
+                        ),
+                ),
         )
 }

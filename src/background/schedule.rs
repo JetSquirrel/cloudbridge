@@ -9,7 +9,7 @@
 //! off ([`super::backoff`]), and its first failure is announced.
 
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use gpui_kit::*;
@@ -83,6 +83,9 @@ pub(super) fn run_once(status: Entity<Status>, fetch: bool, manual: bool, cx: &m
                 let now = Utc::now();
                 let mut newly_failing = Vec::new();
                 for tried in fetched.accounts {
+                    if !status.backoff.is_current(&tried.id, tried.started_at) {
+                        continue;
+                    }
                     match tried.error {
                         None => status.backoff.succeeded(&tried.id),
                         Some((kind, message)) => {
@@ -101,9 +104,8 @@ pub(super) fn run_once(status: Entity<Status>, fetch: bool, manual: bool, cx: &m
                 }
                 status.refreshing = false;
                 status.last_run = Some(now);
-                status.failures = status.backoff.failures();
-                status.failing = status.backoff.reasons();
-                status.failures.extend(fetched.failures);
+                status.other_failures = fetched.failures;
+                status.sync_failures();
                 let announce = match summary {
                     Ok(summary) => {
                         let fresh: Vec<AlertLine> = status
@@ -161,6 +163,7 @@ struct Fetched {
 }
 
 struct Tried {
+    started_at: Instant,
     id: String,
     name: String,
     credentials: Option<String>,
@@ -189,6 +192,7 @@ fn fetch_due_accounts(holds: &HashMap<String, Hold>) -> Fetched {
                 .is_some_and(|source| source.fetches_from_api())
     });
     for account in due {
+        let started_at = Instant::now();
         let error = match crate::ingest::refresh_account(account, false) {
             Ok(outcome) => {
                 fetched.ingested |= !outcome.ingested.is_empty();
@@ -197,6 +201,7 @@ fn fetch_due_accounts(holds: &HashMap<String, Hold>) -> Fetched {
             Err(e) => Some((http::kind_of(&e), e.to_string())),
         };
         fetched.accounts.push(Tried {
+            started_at,
             id: account.id.clone(),
             name: account.name.clone(),
             credentials: account.access_key_hint.clone(),
