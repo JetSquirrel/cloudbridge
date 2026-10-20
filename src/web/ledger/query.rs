@@ -9,9 +9,8 @@
 //! Two properties of the SQL are easy to lose in a rewrite and are kept on
 //! purpose. A charge no FX rate covers has a `None` amount, and `sum`
 //! ignores NULL — it adds nothing to a converted total rather than adding
-//! zero. And every grouping that ranks is written with `HAVING amount > 0`,
-//! so a bucket that nets to nothing is absent from the list, not present as
-//! a zero row.
+//! zero. Ranked summaries omit nonpositive buckets. Drill-downs preserve
+//! negative children so they reconcile with their parent's net amount.
 
 use std::collections::BTreeMap;
 
@@ -21,7 +20,7 @@ use chrono::{DateTime, Utc};
 use super::{Channel, ChargeCategory, PeriodKey};
 use crate::analytics::{self, QualityCounts, TwoPeriodBuckets};
 use crate::memory::{self, NormalizedRow};
-use crate::model::{BillingPeriod, TokenClass};
+use crate::model::{BillingPeriod, BreakdownPart, TokenClass};
 use crate::store::Connection;
 
 pub use crate::model::{
@@ -213,10 +212,9 @@ fn bucket_of(row: &NormalizedRow, dim: BreakdownDim) -> String {
             .clone()
             .unwrap_or_else(|| crate::service_category::UNCATEGORIZED.to_string()),
         BreakdownDim::Resource => row
-            .resource_name
+            .resource_id
             .clone()
-            .filter(|name| !name.is_empty())
-            .or_else(|| row.resource_id.clone())
+            .filter(|id| !id.is_empty())
             .unwrap_or_else(|| "Other".to_string()),
     }
 }
@@ -278,12 +276,13 @@ pub fn breakdown_by(key: &PeriodKey, dim: BreakdownDim) -> Result<Vec<(String, f
 }
 
 /// Charges of one period grouped by `outer` and, inside each of its
-/// buckets, by `inner`, as `(outer, inner, amount)`, largest first.
+/// buckets, by `inner`, largest first. Keep signed amounts and resource
+/// identities separately from their display names, as the desktop does.
 pub fn breakdown_within(
     key: &PeriodKey,
     outer: BreakdownDim,
     inner: BreakdownDim,
-) -> Result<Vec<(String, String, f64)>> {
+) -> Result<Vec<BreakdownPart>> {
     read(|all| {
         let rows = selected(
             all,
@@ -295,10 +294,43 @@ pub fn breakdown_within(
             },
         );
 
-        totals_by_bucket(&rows, |row| (bucket_of(row, outer), bucket_of(row, inner)))
-            .into_iter()
-            .map(|((outer, inner), amount)| (outer, inner, amount))
-            .collect()
+        let mut groups: BTreeMap<(String, Option<String>), BreakdownPart> = BTreeMap::new();
+        for row in rows {
+            let outer = bucket_of(row, outer);
+            let resource = inner == BreakdownDim::Resource;
+            let inner = if resource {
+                row.resource_id.clone().filter(|id| !id.is_empty())
+            } else {
+                Some(bucket_of(row, inner))
+            };
+            let part = groups
+                .entry((outer.clone(), inner.clone()))
+                .or_insert(BreakdownPart {
+                    outer,
+                    inner,
+                    resource_name: None,
+                    amount: 0.0,
+                });
+            part.amount += row.billed_cost_base.unwrap_or(0.0);
+            if resource {
+                if let Some(name) = row.resource_name.as_ref().filter(|name| !name.is_empty()) {
+                    if part.resource_name.as_ref().is_none_or(|old| name < old) {
+                        part.resource_name = Some(name.clone());
+                    }
+                }
+            }
+        }
+        let mut parts: Vec<_> = groups
+            .into_values()
+            .filter(|part| part.amount != 0.0)
+            .collect();
+        parts.sort_by(|a, b| {
+            b.amount
+                .total_cmp(&a.amount)
+                .then_with(|| a.outer.cmp(&b.outer))
+                .then_with(|| a.inner.cmp(&b.inner))
+        });
+        parts
     })
 }
 

@@ -129,6 +129,23 @@ pub fn request_reload(cx: &mut App) {
     app_state.update(cx, |state, cx| state.request_reload(cx));
 }
 
+/// Clear a resolved account failure on desktop; the web demo has no
+/// background scheduler. Shared pages can report either outcome here.
+pub fn clear_account_failure(account_id: &str, cx: &mut App) {
+    #[cfg(not(target_family = "wasm"))]
+    crate::background::clear_account_failure(account_id, cx);
+    #[cfg(target_family = "wasm")]
+    let _ = (account_id, cx);
+}
+
+/// Deletion also invalidates queued background work for this account ID.
+pub fn account_deleted(account_id: &str, cx: &mut App) {
+    #[cfg(not(target_family = "wasm"))]
+    crate::background::account_deleted(account_id, cx);
+    #[cfg(target_family = "wasm")]
+    let _ = (account_id, cx);
+}
+
 /// Tell the app shell the desktop's stores finished opening; it then loads
 /// the page on screen and the status bar. Until this lands no page loads,
 /// since every read would fail with "not initialized".

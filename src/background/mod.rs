@@ -87,8 +87,54 @@ pub struct Status {
     /// mark each one's row. A failure that belongs to no account is only in
     /// `failures`.
     pub failing: HashMap<String, String>,
+    other_failures: Vec<String>,
     announcer: Announcer,
     backoff: backoff::Backoff,
+}
+
+impl Status {
+    fn remove_account(&mut self, account_id: &str) {
+        self.backoff.remove_account(account_id);
+        self.sync_failures();
+    }
+
+    fn clear_account_failure(&mut self, account_id: &str) {
+        self.backoff
+            .invalidate(account_id, std::time::Instant::now());
+        self.sync_failures();
+    }
+
+    fn sync_failures(&mut self) {
+        self.failing = self.backoff.reasons();
+        self.failures = self.backoff.failures();
+        self.failures.extend(self.other_failures.iter().cloned());
+    }
+}
+
+/// Called after a successful manual refresh or account deletion. Notify
+/// every reader, including the menu bar, even with background refresh off.
+pub fn clear_account_failure(account_id: &str, cx: &mut App) {
+    update_account_failure(account_id, false, cx);
+}
+
+pub fn account_deleted(account_id: &str, cx: &mut App) {
+    update_account_failure(account_id, true, cx);
+}
+
+fn update_account_failure(account_id: &str, deleted: bool, cx: &mut App) {
+    if let Some(status) = cx
+        .try_global::<GlobalStatus>()
+        .map(|global| global.0.clone())
+    {
+        status.update(cx, |status, cx| {
+            if deleted {
+                status.remove_account(account_id);
+            } else {
+                status.clear_account_failure(account_id);
+            }
+            cx.notify();
+        });
+    }
 }
 
 /// The [`Status`] entity, for anything that needs to read or refresh it.
@@ -107,6 +153,7 @@ pub fn start(started_at: DateTime<Utc>, cx: &mut App) {
         last_run: None,
         failures: Vec::new(),
         failing: HashMap::new(),
+        other_failures: Vec::new(),
         announcer: Announcer::new(started_at),
         backoff: backoff::Backoff::default(),
     });
@@ -157,5 +204,61 @@ pub fn in_menu_bar(cx: &App) -> bool {
 pub fn refresh_now(cx: &mut App) {
     if let Some(status) = cx.try_global::<GlobalStatus>().map(|g| g.0.clone()) {
         schedule::run_once(status, true, true, cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{backoff, Announcer, Status};
+    use chrono::Utc;
+    use std::collections::HashMap;
+
+    #[test]
+    fn resolving_an_account_updates_every_failure_view_and_keeps_other_errors() {
+        let now = Utc::now();
+        let mut status = Status {
+            summary: None,
+            refreshing: false,
+            last_run: None,
+            failures: Vec::new(),
+            failing: HashMap::new(),
+            other_failures: vec!["accounts: store unavailable".into()],
+            announcer: Announcer::new(now),
+            backoff: backoff::Backoff::default(),
+        };
+        for id in ["deleted", "recovered", "still-failing"] {
+            status.backoff.failed(
+                backoff::Failure {
+                    account_id: id.into(),
+                    name: id.into(),
+                    credentials: None,
+                    kind: None,
+                    message: "denied".into(),
+                },
+                now,
+                chrono::Duration::hours(24),
+            );
+        }
+        let old_pass = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        status.sync_failures();
+        status.remove_account("deleted");
+        status.clear_account_failure("recovered");
+        assert_eq!(status.failing.len(), 1);
+        assert!(status.failing.contains_key("still-failing"));
+        assert_eq!(
+            status.failures,
+            ["still-failing: denied", "accounts: store unavailable"]
+        );
+        assert!(!status.backoff.is_current("deleted", old_pass));
+        assert!(!status.backoff.is_current("recovered", old_pass));
+        assert!(status.backoff.is_current("still-failing", old_pass));
+        assert!(status.backoff.is_current(
+            "recovered",
+            std::time::Instant::now() + std::time::Duration::from_secs(1)
+        ));
+        assert!(!status.backoff.is_current(
+            "deleted",
+            std::time::Instant::now() + std::time::Duration::from_secs(1)
+        ));
     }
 }

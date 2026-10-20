@@ -54,6 +54,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   window, so a fixed account is watched again at once.
 
 ### Fixed
+- Attribution drill-down keeps credits and adjustments visible and reconciles
+  the opened level with its parent's net cost, including across accounts.
+- Resource drill-down distinguishes accounts and resource IDs; equal names no
+  longer merge resources, and renaming a resource preserves its comparison.
+- Deleting an account or successfully refreshing it manually clears its
+  refresh-failure indicators immediately. Older background results cannot
+  restore a cleared failure.
 - The app icon had a white square behind it, visible as a rim in the Dock
   and Finder. It is now transparent outside the artwork and sized to
   macOS's icon grid.
