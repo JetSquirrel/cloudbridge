@@ -78,7 +78,7 @@ impl OverviewView {
     /// navigated to; a no-op while a load is already in flight. Existing
     /// data stays on screen while the reload runs — no loading flash.
     pub fn reload(&mut self, cx: &mut Context<Self>) {
-        if self.loading {
+        if self.loading || self.refreshing {
             return;
         }
         self.load(cx);
@@ -126,7 +126,7 @@ impl OverviewView {
     /// button); otherwise only stale periods are fetched. All of it is
     /// blocking, so it runs inside `smol::unblock`.
     fn refresh(&mut self, force: bool, cx: &mut Context<Self>) {
-        if self.refreshing {
+        if self.refreshing || self.loading {
             return;
         }
         self.refreshing = true;
@@ -196,6 +196,7 @@ impl OverviewView {
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = self.range;
         let refreshing = self.refreshing;
+        let busy = self.loading || refreshing;
         let caption = match &self.data {
             Some(d) => format!("{}, reported in {}", d.window_caption, d.currency),
             None => format!(
@@ -207,8 +208,16 @@ impl OverviewView {
 
         div()
             .w_full()
+            .flex_shrink_0()
             .h_flex()
-            .items_start()
+            .items_center()
+            .flex_wrap()
+            .gap_4()
+            .px_6()
+            .py_5()
+            .border_b_1()
+            .border_color(theme::card_border(cx))
+            .bg(theme::card_bg(cx))
             .justify_between()
             .child(
                 div()
@@ -220,6 +229,7 @@ impl OverviewView {
             .child(
                 div()
                     .h_flex()
+                    .flex_wrap()
                     .items_center()
                     .gap_3()
                     .child(
@@ -228,15 +238,21 @@ impl OverviewView {
                             .items_center()
                             .gap_1()
                             .p_1()
-                            .rounded_full()
+                            .rounded(cx.theme().radius)
                             .border_1()
                             .border_color(theme::card_border(cx))
                             .children(Range::ALL.iter().map(|range| {
                                 let active = *range == selected;
                                 let button = Button::new(range.id())
                                     .label(range.label())
+                                    .tooltip(match range {
+                                        Range::Mtd => "This month to date",
+                                        Range::Days30 => "Last 30 days",
+                                        Range::Months12 => "Last 12 months",
+                                    })
+                                    .disabled(busy)
                                     .small()
-                                    .rounded_full()
+                                    .rounded(cx.theme().radius)
                                     .custom(theme::range_pill(cx, active))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         if this.range != *range {
@@ -254,33 +270,45 @@ impl OverviewView {
                     )
                     .child(
                         Button::new("refresh")
+                            .icon(IconName::RefreshCw)
                             .label(if refreshing {
                                 "Refreshing…"
+                            } else if self.loading {
+                                "Loading…"
+                            } else if cfg!(target_family = "wasm") {
+                                "Reload demo"
                             } else {
                                 "Refresh"
                             })
                             .small()
                             .primary()
-                            .disabled(refreshing)
+                            .loading(busy)
+                            .tooltip(if cfg!(target_family = "wasm") {
+                                "Reload the sample ledger; no live provider data is fetched"
+                            } else {
+                                "Fetch stale sources and update this overview"
+                            })
+                            .disabled(busy)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.refresh(false, cx);
                             })),
                     )
-                    .child(
-                        Button::new("force-refresh")
-                            .label(if refreshing {
-                                "Refreshing…"
-                            } else {
-                                "Force refresh"
-                            })
-                            .small()
-                            .custom(theme::outline_variant(cx))
-                            .card_outline(cx)
-                            .disabled(refreshing)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.refresh(true, cx);
-                            })),
-                    ),
+                    .when(cfg!(not(target_family = "wasm")), |el| {
+                        el.child(
+                            Button::new("force-refresh")
+                                .label("Force refresh")
+                                .tooltip(
+                                    "Fetch every source again, including recently synced periods",
+                                )
+                                .small()
+                                .custom(theme::outline_variant(cx))
+                                .card_outline(cx)
+                                .disabled(busy)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.refresh(true, cx);
+                                })),
+                        )
+                    }),
             )
     }
 
@@ -297,10 +325,12 @@ impl OverviewView {
             .fold(0.0_f64, f64::max)
             .max(1.0);
         let currency = d.currency.as_str();
+        let compact = window.viewport_size().width < rems(80.0).to_pixels(window.rem_size());
 
         div()
             .w_full()
             .h_flex()
+            .when(compact, |el| el.flex_col())
             .items_stretch()
             .gap_4()
             // Spend chart
@@ -317,12 +347,15 @@ impl OverviewView {
                     .child(
                         div()
                             .h_flex()
+                            .flex_wrap()
+                            .gap_2()
                             .items_center()
                             .justify_between()
                             .child(theme::section_title(cx, d.chart_title))
                             .child(
                                 div()
                                     .h_flex()
+                                    .flex_wrap()
                                     .items_center()
                                     .gap_4()
                                     .child(legend_solid(cx, theme::accent(cx), "Actual"))
@@ -346,10 +379,9 @@ impl OverviewView {
                                     }),
                             ),
                     )
-                    .child(self.render_chart(d, window, cx))
-                    // The rolling ranges get x-axis endpoints; MTD's
-                    // calendar-month context is already in the header.
-                    .when(d.range != Range::Mtd, |el| {
+                    .child(self.render_chart_with_axis(d, window, cx))
+                    // Endpoints make every range readable without hovering.
+                    .when(!d.chart.actual.is_empty(), |el| {
                         let first = d
                             .chart
                             .actual
@@ -365,6 +397,7 @@ impl OverviewView {
                         el.child(
                             div()
                                 .h_flex()
+                                .pl(rems(6.25))
                                 .justify_between()
                                 .child(theme::caption(cx, first))
                                 .child(theme::caption(cx, last)),
@@ -379,13 +412,14 @@ impl OverviewView {
             // Where it went
             .child(
                 theme::card(cx)
-                    // 320px ≈ the 20rem step.
-                    .w_80()
+                    // A compact breakdown leaves most of the row for the trend.
+                    .when(compact, |el| el.w_full())
+                    .when(!compact, |el| el.w_64())
                     .flex_shrink_0()
                     .p_5()
                     .v_flex()
                     .gap_4()
-                    .child(theme::section_title(cx, "Where it went"))
+                    .child(theme::section_title(cx, "Spend breakdown"))
                     .child(
                         div()
                             .v_flex()
@@ -418,13 +452,13 @@ impl OverviewView {
                                         div()
                                             .w_full()
                                             .h_2()
-                                            .rounded_full()
+                                            .rounded(cx.theme().radius)
                                             .bg(theme::sidebar_bg(cx))
                                             .child(
                                                 div()
                                                     .h_full()
                                                     .w(relative(frac))
-                                                    .rounded_full()
+                                                    .rounded(cx.theme().radius)
                                                     .bg(line_color(cx, &line.name, index)),
                                             ),
                                     )
@@ -432,7 +466,7 @@ impl OverviewView {
                     )
                     .child(
                         Button::new("open-attribution")
-                            .label("Open attribution")
+                            .label("View attribution")
                             .small()
                             .w_full()
                             .custom(theme::outline_variant(cx))
@@ -441,6 +475,50 @@ impl OverviewView {
                                 crate::app::navigate_to(crate::app::CurrentView::Attribution, cx)
                             }),
                     ),
+            )
+    }
+
+    /// Currency ticks use exactly the same range as the canvas and benchmark.
+    fn render_chart_with_axis(
+        &self,
+        d: &data::OverviewData,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let (min, max) = chart::padded_y_range(
+            d.chart
+                .actual
+                .iter()
+                .chain(&d.chart.baseline)
+                .map(|p| p.amount),
+        );
+        div()
+            .h_flex()
+            .gap_3()
+            .child(
+                div()
+                    .w(rems(5.5))
+                    .flex_shrink_0()
+                    .h(rems(16.25))
+                    .relative()
+                    .text_right()
+                    .children((0..=3).map(|i| {
+                        div()
+                            .absolute()
+                            .right_0()
+                            .top(relative(i as f32 / 3.0))
+                            .mt(rems(-0.5))
+                            .line_height(rems(1.0))
+                            .text_xs()
+                            .text_color(theme::text_muted(cx))
+                            .child(fmt::amount(max - (max - min) * i as f64 / 3.0, &d.currency))
+                    })),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(self.render_chart(d, window, cx)),
             )
     }
 
@@ -661,6 +739,7 @@ impl OverviewView {
             .collect();
 
         HealthCard::new("overview-health", rows)
+            .compact()
             .expanded(self.health_expanded)
             .on_toggle(cx.listener(|this, _, _, cx| {
                 this.health_expanded = !this.health_expanded;
@@ -683,60 +762,75 @@ impl OverviewView {
 
 impl Render for OverviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let width = window.viewport_size().width / window.rem_size();
+        let columns = if width < 56.0 {
+            1
+        } else if width < 80.0 {
+            2
+        } else {
+            4
+        };
         let body: AnyElement = match &self.data {
             // Loading, or not started yet — the desktop holds the first
             // load until its stores open. Only a failed load shows no body;
             // its error sits under the header.
-            None if self.loading || self.error.is_none() => render_skeleton(cx).into_any_element(),
+            None if self.loading || self.error.is_none() => {
+                render_skeleton(cx, columns).into_any_element()
+            }
             None => div().into_any_element(),
             Some(d) if is_empty(d) => self.render_empty_state(d, cx).into_any_element(),
             Some(d) => div()
                 .v_flex()
-                .gap_6()
-                .child(render_stats(cx, d))
+                .gap_4()
+                .child(render_stats(cx, d, columns))
                 .child(self.render_middle(d, window, cx))
-                .child(render_movers(cx, d))
+                .child(render_movers(cx, d, columns < 4))
                 // MTD only; the rolling ranges carry no month-over-month.
                 .when_some(d.month_over_month.as_ref(), |el, mom| {
-                    el.child(render_month_over_month(cx, &d.currency, mom))
+                    el.child(render_month_over_month(cx, &d.currency, mom, columns < 4))
                 })
                 .into_any_element(),
         };
 
-        div().size_full().bg(theme::app_bg(cx)).child(
-            div()
-                .v_flex()
-                .gap_6()
-                // Full height so the scroll region fills the window and
-                // the scrollbar can actually engage.
-                .h_full()
-                .p_8()
-                .overflow_y_scrollbar()
-                .child(self.render_header(cx))
-                .when_some(self.error.clone(), |el, error| {
-                    el.child(
-                        div()
-                            .w_full()
-                            .p_3()
-                            .rounded_md()
-                            .bg(theme::danger_bg(cx))
-                            .text_sm()
-                            .text_color(theme::text_primary(cx))
-                            .child(error),
+        div()
+            .size_full()
+            .v_flex()
+            .bg(theme::app_bg(cx))
+            .child(self.render_header(cx))
+            .child(
+                div()
+                    .v_flex()
+                    .gap_4()
+                    // Full height so the scroll region fills the window and
+                    // the scrollbar can actually engage.
+                    .flex_1()
+                    .min_h_0()
+                    .p_6()
+                    .overflow_y_scrollbar()
+                    .when_some(self.error.clone(), |el, error| {
+                        el.child(
+                            div()
+                                .w_full()
+                                .p_3()
+                                .rounded_md()
+                                .bg(theme::danger_bg(cx))
+                                .text_sm()
+                                .text_color(theme::text_primary(cx))
+                                .child(error),
+                        )
+                    })
+                    .when_some(
+                        self.data
+                            .as_ref()
+                            .filter(|d| !d.data_quality.is_empty() && !self.health_dismissed),
+                        |el, d| el.child(self.render_health_card(cx, d)),
                     )
-                })
-                .when_some(
-                    self.data
-                        .as_ref()
-                        .filter(|d| !d.data_quality.is_empty() && !self.health_dismissed),
-                    |el, d| el.child(self.render_health_card(cx, d)),
-                )
-                .when_some(
-                    self.data.as_ref().filter(|d| d.accounts.demo > 0),
-                    |el, d| el.child(self.render_demo_notice(d, cx)),
-                )
-                .child(body),
-        )
+                    .when_some(
+                        self.data.as_ref().filter(|d| d.accounts.demo > 0),
+                        |el, d| el.child(self.render_demo_notice(d, cx)),
+                    )
+                    .child(body),
+            )
     }
 }
 
@@ -747,9 +841,9 @@ fn is_empty(d: &data::OverviewData) -> bool {
 }
 
 /// First-load placeholder shaped like the loaded page — the four stat
-/// cards, then the chart card beside the "Where it went" card at their
+/// cards, then the chart card beside the "Spend breakdown" card at their
 /// final paddings — so the landing content does not jump the layout.
-fn render_skeleton(cx: &App) -> impl IntoElement {
+fn render_skeleton(cx: &App, columns: u16) -> impl IntoElement {
     let stat = || {
         theme::card(cx)
             .flex_1()
@@ -764,11 +858,12 @@ fn render_skeleton(cx: &App) -> impl IntoElement {
 
     div()
         .v_flex()
-        .gap_6()
+        .gap_4()
         .child(
             div()
                 .w_full()
-                .h_flex()
+                .grid()
+                .grid_cols(columns)
                 .items_stretch()
                 .gap_4()
                 .children((0..4).map(|_| stat())),
@@ -777,6 +872,7 @@ fn render_skeleton(cx: &App) -> impl IntoElement {
             div()
                 .w_full()
                 .h_flex()
+                .when(columns < 4, |el| el.flex_col())
                 .items_stretch()
                 .gap_4()
                 .child(
@@ -792,7 +888,8 @@ fn render_skeleton(cx: &App) -> impl IntoElement {
                 )
                 .child(
                     theme::card(cx)
-                        .w_80()
+                        .when(columns < 4, |el| el.w_full())
+                        .when(columns == 4, |el| el.w_64())
                         .flex_shrink_0()
                         .p_5()
                         .v_flex()
@@ -804,12 +901,13 @@ fn render_skeleton(cx: &App) -> impl IntoElement {
 }
 
 /// Row of the four headline stat cards.
-fn render_stats(cx: &App, d: &data::OverviewData) -> impl IntoElement {
+fn render_stats(cx: &App, d: &data::OverviewData, columns: u16) -> impl IntoElement {
     let stats = &d.stats;
     let currency = d.currency.as_str();
     div()
         .w_full()
-        .h_flex()
+        .grid()
+        .grid_cols(columns)
         .items_stretch()
         .gap_4()
         .child(theme::stat_card(
@@ -854,34 +952,57 @@ fn render_stats(cx: &App, d: &data::OverviewData) -> impl IntoElement {
                     None => d.card2_caption.to_string(),
                 }),
         ))
-        .child(theme::stat_card(
-            cx,
-            "UNALLOCATED",
-            format!("{:.1}%", stats.unallocated_pct),
-            div().text_color(theme::text_muted(cx)).child(format!(
-                "{} with no tag or metric match",
-                fmt::amount(stats.unallocated_amount, currency)
-            )),
-        ))
+        .child(
+            theme::stat_card(
+                cx,
+                "UNALLOCATED",
+                format!("{:.1}%", stats.unallocated_pct),
+                div().text_color(theme::text_muted(cx)).child(format!(
+                    "{} with no tag or metric match",
+                    fmt::amount(stats.unallocated_amount, currency)
+                )),
+            )
+            .child(
+                Button::new("review-allocation")
+                    .label("Review allocation")
+                    .ghost()
+                    .small()
+                    .justify_start()
+                    .text_color(theme::accent(cx))
+                    .on_click(|_, _, cx| {
+                        crate::app::navigate_to(crate::app::CurrentView::Attribution, cx)
+                    }),
+            ),
+        )
         .child(
             theme::stat_card(
                 cx,
                 "OPEN ALERTS",
                 stats.open_alerts.to_string(),
-                // Plain text like the other cards' footers, so the four
-                // stay on one baseline; the sidebar's Alerts entry, badge
-                // included, is the way there.
                 div().text_color(theme::text_muted(cx)).child(format!(
                     "{} critical, {} warning",
                     stats.critical_alerts, stats.warning_alerts
                 )),
             )
-            .when(stats.open_alerts > 0, |el| el.bg(theme::alert_tint(cx))),
+            .when(stats.open_alerts > 0, |el| {
+                el.border_color(theme::danger(cx).opacity(0.35))
+            })
+            .child(
+                Button::new("review-alerts")
+                    .label("View alerts")
+                    .ghost()
+                    .small()
+                    .justify_start()
+                    .text_color(theme::accent(cx))
+                    .on_click(|_, _, cx| {
+                        crate::app::navigate_to(crate::app::CurrentView::Alerts, cx)
+                    }),
+            ),
         )
 }
 
 /// "Biggest movers" table card.
-fn render_movers(cx: &App, d: &data::OverviewData) -> impl IntoElement {
+fn render_movers(cx: &App, d: &data::OverviewData, compact: bool) -> impl IntoElement {
     let movers = &d.movers;
     let currency = d.currency.as_str();
     theme::card(cx)
@@ -890,103 +1011,109 @@ fn render_movers(cx: &App, d: &data::OverviewData) -> impl IntoElement {
         .v_flex()
         .gap_4()
         .child(theme::section_title(cx, d.movers_title))
+        .when(compact, |el| {
+            el.child(theme::caption(cx, "Scroll horizontally to see all columns"))
+        })
         .child(
-            div()
-                .v_flex()
-                .child(
-                    // The same column gap on the header and every row: the
-                    // right-aligned change column otherwise runs straight
-                    // into the left-aligned DRIVES column beside it.
-                    div()
-                        .h_flex()
-                        .items_center()
-                        .gap_4()
-                        .pb_2()
-                        .child(theme::header_cell(cx, "SOURCE").w_32())
-                        .child(
-                            theme::header_cell(cx, "MODEL OR SERVICE")
-                                .flex_1()
-                                .min_w_0(),
-                        )
-                        .child(
-                            theme::header_cell(cx, d.movers_amount_header.clone())
-                                .w_24()
-                                .text_right(),
-                        )
-                        .child(
-                            theme::header_cell(cx, d.movers_delta_header)
-                                .w_40()
-                                .text_right(),
-                        )
-                        .child(theme::header_cell(cx, "DRIVES").w_32()),
-                )
-                .children(movers.iter().map(|mover| {
-                    let (delta_text, delta_color) = match mover.change_pct {
-                        Some(pct) if pct < 0.0 => (fmt::change_pct(pct), theme::text_muted(cx)),
-                        Some(pct) => (fmt::change_pct(pct), theme::accent(cx)),
-                        // No meaningful previous-period base to compare
-                        // against.
-                        None => ("—".to_string(), theme::text_muted(cx)),
-                    };
-                    let drives: AnyElement = if mover.drives == data::UNALLOCATED {
+            div().w_full().overflow_x_scrollbar().child(
+                div()
+                    .min_w(rems(52.0))
+                    .v_flex()
+                    .child(
+                        // The same column gap on the header and every row: the
+                        // right-aligned change column otherwise runs straight
+                        // into the left-aligned DRIVES column beside it.
                         div()
-                            .text_sm()
-                            .text_color(theme::text_muted(cx))
-                            .child(mover.drives.clone())
-                            .into_any_element()
-                    } else {
-                        theme::pill(
-                            mover.drives.clone(),
-                            theme::sidebar_bg(cx),
-                            theme::text_primary(cx),
-                        )
-                        .into_any_element()
-                    };
-
-                    div()
-                        .h_flex()
-                        .items_center()
-                        .gap_4()
-                        .py_3()
-                        .border_t_1()
-                        .border_color(theme::card_border(cx))
-                        .child(
+                            .h_flex()
+                            .items_center()
+                            .gap_4()
+                            .pb_2()
+                            .child(theme::header_cell(cx, "SOURCE").w_32())
+                            .child(
+                                theme::header_cell(cx, "MODEL OR SERVICE")
+                                    .flex_1()
+                                    .min_w_0(),
+                            )
+                            .child(
+                                theme::header_cell(cx, d.movers_amount_header.clone())
+                                    .w_24()
+                                    .text_right(),
+                            )
+                            .child(
+                                theme::header_cell(cx, d.movers_delta_header)
+                                    .w_40()
+                                    .text_right(),
+                            )
+                            .child(theme::header_cell(cx, "DRIVES").w_32()),
+                    )
+                    .children(movers.iter().map(|mover| {
+                        let (delta_text, delta_color) = match mover.change_pct {
+                            Some(pct) if pct < 0.0 => (fmt::change_pct(pct), theme::text_muted(cx)),
+                            Some(pct) => (fmt::change_pct(pct), theme::accent(cx)),
+                            // No meaningful previous-period base to compare
+                            // against.
+                            None => ("—".to_string(), theme::text_muted(cx)),
+                        };
+                        let drives: AnyElement = if mover.drives == data::UNALLOCATED {
                             div()
-                                .w_32()
                                 .text_sm()
                                 .text_color(theme::text_muted(cx))
-                                .child(mover.provider.clone()),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                // min_w_0 so a long service name truncates
-                                // instead of pushing the amount columns
-                                // out of the card.
-                                .min_w_0()
-                                .text_sm()
-                                .text_color(theme::text_primary(cx))
-                                .child(mover.service.clone()),
-                        )
-                        .child(
-                            div()
-                                .w_24()
-                                .text_right()
-                                .text_sm()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme::text_primary(cx))
-                                .child(fmt::amount(mover.amount, currency)),
-                        )
-                        .child(
-                            div()
-                                .w_40()
-                                .text_right()
-                                .text_sm()
-                                .text_color(delta_color)
-                                .child(delta_text),
-                        )
-                        .child(div().w_32().child(drives))
-                })),
+                                .child(mover.drives.clone())
+                                .into_any_element()
+                        } else {
+                            theme::pill(
+                                mover.drives.clone(),
+                                theme::sidebar_bg(cx),
+                                theme::text_primary(cx),
+                            )
+                            .into_any_element()
+                        };
+
+                        div()
+                            .h_flex()
+                            .items_center()
+                            .gap_4()
+                            .py_3()
+                            .border_t_1()
+                            .border_color(theme::card_border(cx))
+                            .child(
+                                div()
+                                    .w_32()
+                                    .text_sm()
+                                    .text_color(theme::text_muted(cx))
+                                    .child(mover.provider.clone()),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    // min_w_0 so a long service name truncates
+                                    // instead of pushing the amount columns
+                                    // out of the card.
+                                    .min_w_0()
+                                    .text_sm()
+                                    .text_color(theme::text_primary(cx))
+                                    .child(mover.service.clone()),
+                            )
+                            .child(
+                                div()
+                                    .w_24()
+                                    .text_right()
+                                    .text_sm()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(theme::text_primary(cx))
+                                    .child(fmt::amount(mover.amount, currency)),
+                            )
+                            .child(
+                                div()
+                                    .w_40()
+                                    .text_right()
+                                    .text_sm()
+                                    .text_color(delta_color)
+                                    .child(delta_text),
+                            )
+                            .child(div().w_32().child(drives))
+                    })),
+            ),
         )
 }
 
@@ -996,6 +1123,7 @@ fn render_month_over_month(
     cx: &App,
     currency: &str,
     mom: &data::MonthOverMonth,
+    compact: bool,
 ) -> impl IntoElement {
     let delta = mom.change_pct.map(|pct| {
         let color = if pct < 0.0 {
@@ -1014,6 +1142,9 @@ fn render_month_over_month(
         .v_flex()
         .gap_4()
         .child(theme::section_title(cx, "Month over month"))
+        .when(compact, |el| {
+            el.child(theme::caption(cx, "Scroll horizontally to see all columns"))
+        })
         .child(
             div()
                 .h_flex()
@@ -1032,69 +1163,72 @@ fn render_month_over_month(
                 .when_some(delta, |el, delta| el.child(delta)),
         )
         .child(
-            div()
-                .v_flex()
-                .child(
-                    div()
-                        .h_flex()
-                        .items_center()
-                        .pb_2()
-                        .child(theme::header_cell(cx, "SERVICE").flex_1().min_w_0())
-                        .child(theme::header_cell(cx, "THIS MONTH").w_24().text_right())
-                        .child(theme::header_cell(cx, "LAST MONTH").w_24().text_right())
-                        .child(theme::header_cell(cx, "CHANGE").w_40().text_right()),
-                )
-                .children(mom.services.iter().map(|row| {
-                    let (delta_text, delta_color) = match row.change_pct {
-                        Some(pct) if pct < 0.0 => (fmt::change_pct(pct), theme::text_muted(cx)),
-                        Some(pct) => (fmt::change_pct(pct), theme::accent(cx)),
-                        // No meaningful previous-month base to compare
-                        // against.
-                        None => ("—".to_string(), theme::text_muted(cx)),
-                    };
-                    div()
-                        .h_flex()
-                        .items_center()
-                        .py_3()
-                        .border_t_1()
-                        .border_color(theme::card_border(cx))
-                        .child(
-                            div()
-                                .flex_1()
-                                // min_w_0 so a long service name truncates
-                                // instead of pushing the amount columns
-                                // out of the card.
-                                .min_w_0()
-                                .text_sm()
-                                .text_color(theme::text_primary(cx))
-                                .child(row.service.clone()),
-                        )
-                        .child(
-                            div()
-                                .w_24()
-                                .text_right()
-                                .text_sm()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme::text_primary(cx))
-                                .child(fmt::amount(row.current, currency)),
-                        )
-                        .child(
-                            div()
-                                .w_24()
-                                .text_right()
-                                .text_sm()
-                                .text_color(theme::text_muted(cx))
-                                .child(fmt::amount(row.previous, currency)),
-                        )
-                        .child(
-                            div()
-                                .w_40()
-                                .text_right()
-                                .text_sm()
-                                .text_color(delta_color)
-                                .child(delta_text),
-                        )
-                })),
+            div().w_full().overflow_x_scrollbar().child(
+                div()
+                    .min_w(rems(44.0))
+                    .v_flex()
+                    .child(
+                        div()
+                            .h_flex()
+                            .items_center()
+                            .pb_2()
+                            .child(theme::header_cell(cx, "SERVICE").flex_1().min_w_0())
+                            .child(theme::header_cell(cx, "THIS MONTH").w_24().text_right())
+                            .child(theme::header_cell(cx, "LAST MONTH").w_24().text_right())
+                            .child(theme::header_cell(cx, "CHANGE").w_40().text_right()),
+                    )
+                    .children(mom.services.iter().map(|row| {
+                        let (delta_text, delta_color) = match row.change_pct {
+                            Some(pct) if pct < 0.0 => (fmt::change_pct(pct), theme::text_muted(cx)),
+                            Some(pct) => (fmt::change_pct(pct), theme::accent(cx)),
+                            // No meaningful previous-month base to compare
+                            // against.
+                            None => ("—".to_string(), theme::text_muted(cx)),
+                        };
+                        div()
+                            .h_flex()
+                            .items_center()
+                            .py_3()
+                            .border_t_1()
+                            .border_color(theme::card_border(cx))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    // min_w_0 so a long service name truncates
+                                    // instead of pushing the amount columns
+                                    // out of the card.
+                                    .min_w_0()
+                                    .text_sm()
+                                    .text_color(theme::text_primary(cx))
+                                    .child(row.service.clone()),
+                            )
+                            .child(
+                                div()
+                                    .w_24()
+                                    .text_right()
+                                    .text_sm()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(theme::text_primary(cx))
+                                    .child(fmt::amount(row.current, currency)),
+                            )
+                            .child(
+                                div()
+                                    .w_24()
+                                    .text_right()
+                                    .text_sm()
+                                    .text_color(theme::text_muted(cx))
+                                    .child(fmt::amount(row.previous, currency)),
+                            )
+                            .child(
+                                div()
+                                    .w_40()
+                                    .text_right()
+                                    .text_sm()
+                                    .text_color(delta_color)
+                                    .child(delta_text),
+                            )
+                    })),
+            ),
         )
         // The "why it changed" decomposition; absent when its query
         // failed, the card then shows totals only.
@@ -1123,7 +1257,7 @@ fn render_why_it_changed(
             div()
                 .h_flex()
                 .items_start()
-                .gap_6()
+                .gap_4()
                 .child(
                     div()
                         .flex_1()
@@ -1229,7 +1363,7 @@ fn legend_solid(cx: &App, color: Hsla, label: &'static str) -> Div {
         .gap_2()
         // Decorative 16×2 swatch at the default rem; rem-based so it
         // zooms with the base font.
-        .child(div().w_4().h_0p5().rounded_full().bg(color))
+        .child(div().w_4().h_0p5().rounded(cx.theme().radius).bg(color))
         .child(
             div()
                 .text_xs()
@@ -1250,7 +1384,7 @@ fn legend_dashed(cx: &App, color: Hsla, label: &'static str) -> Div {
                 .gap_0p5()
                 // Decorative 4×2 dashes at the default rem; rem-based so
                 // they zoom with the base font.
-                .children((0..3).map(|_| div().w_1().h_0p5().rounded_full().bg(color))),
+                .children((0..3).map(|_| div().w_1().h_0p5().rounded(cx.theme().radius).bg(color))),
         )
         .child(
             div()
@@ -1272,7 +1406,9 @@ fn legend_dotted(cx: &App, color: Hsla, label: &'static str) -> Div {
                 .gap_0p5()
                 // Decorative 2×2 dots at the default rem; rem-based so
                 // they zoom with the base font.
-                .children((0..4).map(|_| div().w_0p5().h_0p5().rounded_full().bg(color))),
+                .children(
+                    (0..4).map(|_| div().w_0p5().h_0p5().rounded(cx.theme().radius).bg(color)),
+                ),
         )
         .child(
             div()

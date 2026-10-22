@@ -29,7 +29,7 @@ crate-type = ["rlib"]
 # stack is compiled into a cost dashboard. It carries its own
 # `cfg(target_family = "wasm")` dependency on `gpui-pre-web`, which is what
 # lets the whole UI compile for the browser.
-gpui-kit = "0.6"
+gpui-kit = "0.8.0"
 
 # Run blocking operations in GPUI async context. A local forwarding crate,
 # so that the pages calling `smol::unblock` need no target-specific code —

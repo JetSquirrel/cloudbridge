@@ -22,23 +22,25 @@ const Y_PAD_FRAC: f64 = 0.15;
 /// chrome, not structure, so it sits one step further back.
 const GUIDE_OPACITY: f32 = 0.4;
 
-/// The y-range the canvas maps data onto: the series min/max widened by
-/// [`Y_PAD_FRAC`] on both ends, falling back to 0..=1 for an empty or flat
-/// series. Overlays that land on the chart's scale (the Overview's
+/// The y-range includes zero and leaves headroom beyond the series extremes.
+/// Constant nonzero series retain their value; empty/all-zero data uses 0..=1.
+/// Overlays that land on the chart's scale (the Overview's
 /// benchmark line) derive from this same range.
 pub(crate) fn padded_y_range(values: impl IntoIterator<Item = f64>) -> (f64, f64) {
-    let mut min = f64::INFINITY;
-    let mut max = f64::NEG_INFINITY;
-    for v in values {
+    let mut min = 0.0_f64;
+    let mut max = 0.0_f64;
+    for v in values.into_iter().filter(|v| v.is_finite()) {
         min = min.min(v);
         max = max.max(v);
     }
-    if !min.is_finite() || !max.is_finite() || min >= max {
-        min = 0.0;
-        max = 1.0;
+    if min == max {
+        return (0.0, 1.0);
     }
     let pad = (max - min) * Y_PAD_FRAC;
-    (min - pad, max + pad)
+    (
+        if min < 0.0 { min - pad } else { 0.0 },
+        if max > 0.0 { max + pad } else { 0.0 },
+    )
 }
 
 /// The Overview spend chart: a smooth area chart of actual usage in the
@@ -915,12 +917,33 @@ mod tests {
     // into the test expansion and tips the crate over the default macro
     // recursion limit.
     use super::{
-        heat_color, heat_t, mix_color, smooth_segments, squarify, text_on, top_tiles, TreemapItem,
+        heat_color, heat_t, mix_color, padded_y_range, smooth_segments, squarify, text_on,
+        top_tiles, TreemapItem,
     };
     use gpui_kit::{Hsla, Rgba};
 
     fn approx(a: f32, b: f32) -> bool {
         (a - b).abs() < 0.01
+    }
+
+    #[test]
+    fn chart_scale_keeps_constant_spend_in_view() {
+        let (min, max) = padded_y_range([250.0, 250.0]);
+        assert_eq!(min, 0.0);
+        assert!(max > 250.0);
+        let fraction = (250.0 - min) / (max - min);
+        assert!(fraction > 0.0 && fraction < 1.0);
+    }
+
+    #[test]
+    fn chart_scale_preserves_credits_and_handles_missing_data() {
+        let (min, max) = padded_y_range([-50.0, 100.0, f64::NAN]);
+        assert!(min < -50.0 && max > 100.0);
+        assert_eq!(padded_y_range([0.0, 0.0]), (0.0, 1.0));
+        assert_eq!(padded_y_range([f64::NAN, f64::INFINITY]), (0.0, 1.0));
+        let (min, max) = padded_y_range([-50.0, -50.0]);
+        assert!(min < -50.0);
+        assert_eq!(max, 0.0);
     }
 
     /// Edge-touching tiles are not an overlap; the epsilon absorbs the

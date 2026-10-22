@@ -202,7 +202,10 @@ Things that will bite you:
   that family registered the text system panics rather than falling back. The
   four fonts are in `web/site/fonts/` (OFL) and registered in `src/wasm_entry.rs`;
   they are `include_bytes!`d, so they must exist to compile.
-- **Icons are fetched, not embedded.** gpui-kit's wasm asset source requests
+- **Workspace icons are embedded; other icons are fetched.** `src/wasm_entry.rs`
+  uses `icon_assets!` for the app's navigation and action icons so they render
+  on the first frame. Keep that list in step with new `IconName` uses. The
+  fallback gpui-kit wasm asset source requests
   `<endpoint>/assets/icons/<name>.svg` on demand, so the build script copies the
   catalog out of the `gpui-kit-assets` version `Cargo.lock` names into
   `web/site/assets/` (gitignored). The endpoint must be an **absolute** URL —
