@@ -1,6 +1,6 @@
 //! Design tokens for the "local ledger" redesign.
 //!
-//! A thin mapping layer over gpui-component's `Theme`: the warm palette
+//! A thin mapping layer over gpui-component's `Theme`: the workspace palette
 //! lives in `themes/cloudbridge.json` ("CloudBridge Light" / "CloudBridge
 //! Dark"), loaded through `ThemeRegistry`, and every function here reads the
 //! corresponding `cx.theme()` token so call sites stay one-line.
@@ -38,15 +38,15 @@ pub fn apply_theme_by_name(name: &str, cx: &mut App) {
 
 /// Density is an application-level decision, not a theme one: this is a
 /// dense desktop data tool, so every theme gets the same compact scale
-/// (13px base font ≈ Longbridge-style tooling) and the same 6px card
+/// (14px base font ≈ Longbridge-style tooling) and the same 8px card
 /// radius, whatever the theme file ships (gpui-component defaults are
 /// 16px / 12px, which read as web-sized in a desktop window).
 fn apply_density(cx: &mut App) {
     let theme = Theme::global_mut(cx);
-    theme.font_size = gpui_kit::px(13.0);
+    theme.font_size = gpui_kit::px(14.0);
     theme.mono_font_size = gpui_kit::px(12.0);
-    theme.radius = gpui_kit::px(6.0);
-    theme.radius_lg = gpui_kit::px(8.0);
+    theme.radius = gpui_kit::px(8.0);
+    theme.radius_lg = gpui_kit::px(10.0);
     // Direct Theme mutation must be projected so Base-owned scrollbars
     // and resize handles pick it up (per the GPUI Kit coding guide).
     Theme::sync_base(cx);
@@ -65,19 +65,19 @@ pub fn apply_named_theme(dark: bool, cx: &mut App) {
     );
 }
 
-/// App background: warm cream.
+/// Quiet workspace background, distinct from raised content surfaces.
 pub fn app_bg(cx: &App) -> Hsla {
     cx.theme().background
 }
 
-/// Sidebar background: slightly deeper cream.
+/// Sidebar background.
 pub fn sidebar_bg(cx: &App) -> Hsla {
     cx.theme().sidebar
 }
 
 /// Card background.
 pub fn card_bg(cx: &App) -> Hsla {
-    cx.theme().tiles
+    cx.theme().color_tokens().surface
 }
 
 /// Card border.
@@ -141,7 +141,7 @@ pub fn alert_tint(cx: &App) -> Hsla {
     tint(cx.theme().red)
 }
 
-/// Primary text: warm near-black.
+/// Primary text.
 pub fn text_primary(cx: &App) -> Hsla {
     cx.theme().foreground
 }
@@ -200,7 +200,7 @@ pub fn olive_light(cx: &App) -> Hsla {
     cx.theme().chart_4
 }
 
-/// Base card: card background, 1px border, theme radius (6px — see
+/// Base card: card background, 1px border, theme radius (8px — see
 /// `apply_density`). Padding and layout are left to the caller.
 pub fn card(cx: &App) -> Div {
     div()
@@ -210,7 +210,7 @@ pub fn card(cx: &App) -> Div {
         .rounded(cx.theme().radius)
 }
 
-/// The warm-palette outline button: card surface, ink label.
+/// The surface-colored outline button: card surface, ink label.
 ///
 /// Owned here rather than per page, so the Overview and Alerts buttons
 /// cannot drift apart.
@@ -288,7 +288,7 @@ pub fn range_pill(cx: &App, active: bool) -> ButtonCustomVariant {
     }
 }
 
-/// KPI card: muted label, bold 3xl value, small sub-line.
+/// KPI card with a reserved value tier and a separate supporting caption.
 pub fn stat_card(cx: &App, label: &'static str, value: String, sub: impl IntoElement) -> Div {
     card(cx)
         .flex_1()
@@ -298,13 +298,20 @@ pub fn stat_card(cx: &App, label: &'static str, value: String, sub: impl IntoEle
         .p_5()
         .v_flex()
         .gap_1()
-        .child(div().text_xs().text_color(text_muted(cx)).child(label))
         .child(
             div()
-                // 13px base: text_3xl ≈ 24px — the KPI tier, clearly above
-                // the text_2xl (≈20px) page title.
+                .text_sm()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(text_muted(cx))
+                .child(label),
+        )
+        .child(
+            div()
+                // 14px base: text_3xl ≈ 26px — the KPI tier, clearly above
+                // the text_2xl (≈21px) page title.
                 .text_3xl()
-                .font_weight(FontWeight::BOLD)
+                .py_1()
+                .font_weight(FontWeight::SEMIBOLD)
                 .text_color(text_primary(cx))
                 .child(value),
         )
@@ -320,8 +327,7 @@ pub fn section_title(cx: &App, text: &'static str) -> Div {
         .child(text)
 }
 
-/// Muted table header cell. Between xs (≈9.75px at the 13px base — too
-/// small to read as a column label) and sm: 0.85rem ≈ 11px.
+/// Muted table header cell. Between xs and sm: 0.85rem ≈ 12px at the 14px base.
 pub fn header_cell(cx: &App, text: impl Into<SharedString>) -> Div {
     div()
         .text_size(rems(0.85))

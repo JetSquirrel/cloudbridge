@@ -22,6 +22,55 @@ thread_local! {
     static APPLICATION: RefCell<Option<ApplicationHandle>> = const { RefCell::new(None) };
 }
 
+// The synchronous SVG renderer can cache an initial async asset-load failure.
+// Embed the app's icons so navigation and primary actions draw on the first
+// frame; retain the remote catalog for other component icons.
+gpui_kit::assets::icon_assets!(
+    WorkspaceIcons,
+    [
+        Bell,
+        Building2,
+        ChartPie,
+        Check,
+        ChevronDown,
+        ChevronLeft,
+        ChevronRight,
+        ChevronUp,
+        CircleCheck,
+        CircleX,
+        Copy,
+        Cpu,
+        Eye,
+        Info,
+        LayoutDashboard,
+        LoaderCircle,
+        Plus,
+        RefreshCw,
+        RotateCw,
+        Search,
+        Settings,
+        SquareTerminal,
+        TriangleAlert,
+        Wallet,
+        X,
+    ]
+);
+
+struct WebAssets(gpui_kit::assets::Assets);
+
+impl AssetSource for WebAssets {
+    fn load(&self, path: &str) -> anyhow::Result<Option<Cow<'static, [u8]>>> {
+        match WorkspaceIcons.load(path)? {
+            Some(bytes) => Ok(Some(bytes)),
+            None => self.0.load(path),
+        }
+    }
+
+    fn list(&self, path: &str) -> anyhow::Result<Vec<SharedString>> {
+        WorkspaceIcons.list(path)
+    }
+}
+
 /// Boot the demo. Called once, from `web/site/src/main.js`, with the absolute
 /// URL of the directory the page is served from.
 #[wasm_bindgen]
@@ -41,16 +90,16 @@ pub fn run(page_url: String) -> Result<(), JsValue> {
     let http_client = Arc::new(platform.fetch_http_client());
     let app = Application::with_platform(platform)
         .with_http_client(http_client)
-        // The one argument is the prefix the icon source fetches from, as
+        // Icons outside the embedded workspace set use this fetch prefix, as
         // `<prefix>/assets/icons/<name>.svg`. It must be absolute: the fetch
         // goes through reqwest, which refuses a relative URL before sending
         // anything, so `"."` left every icon blank. The page's own directory
         // keeps the module working at a site root and under `/demo/`, where
         // the demo is published. `scripts/build-web.sh` puts `assets/` next
         // to the page.
-        .with_assets(gpui_kit::assets::Assets::new(
+        .with_assets(WebAssets(gpui_kit::assets::Assets::new(
             page_url.trim_end_matches('/').to_string(),
-        ));
+        )));
 
     let launch = move |cx: &mut App| {
         gpui_kit::init(cx);

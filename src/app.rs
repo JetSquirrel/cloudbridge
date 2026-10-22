@@ -515,43 +515,59 @@ impl CloudBridgeApp {
         let alerts_badge = (open_alerts > 0).then_some(open_alerts);
 
         div()
-            // 14rem (182px at the 13px base), rem-based so the sidebar
-            // zooms with the base font.
-            .w_56()
+            .w(rems(15.0))
             .h_full()
             .flex_shrink_0()
             .border_r_1()
             .border_color(theme::card_border(cx))
             .bg(theme::sidebar_bg(cx))
-            .p_4()
+            .px_3()
+            .py_5()
             .v_flex()
-            .gap_2()
+            .gap_1()
             .child(
                 div()
-                    .v_flex()
-                    .gap_1()
-                    .pb_4()
-                    .mb_2()
-                    .border_b_1()
-                    .border_color(theme::card_border(cx))
+                    .h_flex()
+                    .items_center()
+                    .gap_3()
+                    .px_2()
+                    .pb_5()
                     .child(
                         div()
-                            .text_xl()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(theme::accent(cx))
-                            .child("CloudBridge"),
+                            .size_9()
+                            .flex_shrink_0()
+                            .rounded(cx.theme().radius)
+                            .bg(theme::accent(cx))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                Icon::new(IconName::ChartPie)
+                                    .size_5()
+                                    .text_color(theme::on_accent(cx)),
+                            ),
                     )
-                    .child(theme::caption(
-                        cx,
-                        format!("LOCAL LEDGER, V{}", env!("CARGO_PKG_VERSION")),
-                    )),
+                    .child(
+                        div()
+                            .v_flex()
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("CloudBridge"),
+                            )
+                            .child(theme::caption(cx, "Cost workspace")),
+                    ),
             )
             // The palette's pointer entry; its tooltip teaches the shortcut.
             .child(
                 Button::new("open-palette")
-                    .label("Search…")
+                    .label("Search workspace")
                     .icon(IconName::Search)
-                    .ghost()
+                    .custom(theme::outline_variant(cx))
+                    .border_1()
+                    .border_color(theme::card_border(cx))
                     .small()
                     .w_full()
                     .justify_start()
@@ -564,6 +580,16 @@ impl CloudBridgeApp {
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.open_palette(window, cx);
                     })),
+            )
+            .child(
+                div()
+                    .px_3()
+                    .pt_5()
+                    .pb_2()
+                    .text_xs()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme::text_muted(cx))
+                    .child("WORKSPACE"),
             )
             .child(self.nav_item(
                 "Overview",
@@ -608,6 +634,16 @@ impl CloudBridgeApp {
                 None,
                 cx,
             ))
+            .child(
+                div()
+                    .px_3()
+                    .pt_5()
+                    .pb_2()
+                    .text_xs()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme::text_muted(cx))
+                    .child("MANAGE"),
+            )
             // Query, Rules and Settings are the desktop's own: a query
             // console needs an engine underneath it, and neither an
             // allocation rule nor a setting can be acted on in a tab that
@@ -654,6 +690,31 @@ impl CloudBridgeApp {
                     cx,
                 ))
             })
+            .child(
+                div()
+                    .mt_3()
+                    .px_3()
+                    .pt_4()
+                    .border_t_1()
+                    .border_color(theme::card_border(cx))
+                    .h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(theme::dot(theme::olive(cx)))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::text_muted(cx))
+                            .child("Local ledger"),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::text_muted(cx))
+                            .child(format!("v{}", env!("CARGO_PKG_VERSION"))),
+                    ),
+            )
     }
 
     fn nav_item(
@@ -666,7 +727,7 @@ impl CloudBridgeApp {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let text_color = if is_active {
-            theme::on_accent(cx)
+            theme::accent(cx)
         } else {
             theme::text_muted(cx)
         };
@@ -675,16 +736,18 @@ impl CloudBridgeApp {
             .id(SharedString::from(label))
             .h_flex()
             .items_center()
-            .gap_2()
+            .gap_3()
             .px_3()
-            .py_1p5()
+            .py_2()
+            .text_sm()
             // Theme radius, not a pill: dense data-tool chrome.
             .rounded(cx.theme().radius)
             .cursor_pointer()
             .text_color(text_color)
             .when(is_active, |el| {
-                el.bg(theme::accent(cx))
-                    .hover(|s| s.bg(theme::accent_hover(cx)))
+                el.bg(theme::accent(cx).opacity(0.10))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .hover(|s| s.bg(theme::accent(cx).opacity(0.16)))
             })
             .when(!is_active, |el| {
                 el.hover(|s| s.bg(theme::card_bg(cx)))
@@ -697,16 +760,8 @@ impl CloudBridgeApp {
             item = item.child(div().flex_1()).child(theme::count_badge(
                 cx,
                 count,
-                if is_active {
-                    theme::on_accent(cx)
-                } else {
-                    theme::accent(cx)
-                },
-                if is_active {
-                    theme::accent(cx)
-                } else {
-                    theme::on_accent(cx)
-                },
+                theme::accent(cx),
+                theme::on_accent(cx),
             ));
         }
 
@@ -867,9 +922,6 @@ impl Render for CloudBridgeApp {
                     )
                     .child(self.render_status_bar(cx)),
             )
-            // The pages open their dialogs through `Root`, which keeps them
-            // but does not draw them; the window's first view does.
-            .children(Root::render_dialog_layer(window, cx))
     }
 }
 

@@ -33,6 +33,7 @@ pub(super) struct HealthCard {
     id: SharedString,
     rows: Vec<AnyElement>,
     expanded: bool,
+    compact: bool,
     on_toggle: Option<ClickHandler>,
     on_dismiss: Option<ClickHandler>,
 }
@@ -44,6 +45,7 @@ impl HealthCard {
             id: id.into(),
             rows,
             expanded: false,
+            compact: false,
             on_toggle: None,
             on_dismiss: None,
         }
@@ -51,6 +53,12 @@ impl HealthCard {
 
     pub(super) fn expanded(mut self, expanded: bool) -> Self {
         self.expanded = expanded;
+        self
+    }
+
+    /// Keep the dashboard's figures in view; findings remain one click away.
+    pub(super) fn compact(mut self) -> Self {
+        self.compact = true;
         self
     }
 
@@ -75,11 +83,12 @@ impl HealthCard {
 impl RenderOnce for HealthCard {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let total = self.rows.len();
-        let hidden = total.saturating_sub(COLLAPSED_ROWS);
+        let preview_rows = if self.compact { 0 } else { COLLAPSED_ROWS };
+        let hidden = total.saturating_sub(preview_rows);
         let shown = if self.expanded {
             total
         } else {
-            total.min(COLLAPSED_ROWS)
+            total.min(preview_rows)
         };
         let summary = match total {
             0 => "No data-quality issues this billing period".to_string(),
@@ -95,7 +104,9 @@ impl RenderOnce for HealthCard {
                 el.child(
                     Button::new(SharedString::from(format!("{}-toggle", self.id)))
                         .label(if self.expanded {
-                            "Show fewer".to_string()
+                            "Collapse".to_string()
+                        } else if self.compact {
+                            format!("Review {total} findings")
                         } else {
                             format!("Show all {total}")
                         })
@@ -116,7 +127,8 @@ impl RenderOnce for HealthCard {
 
         theme::card(cx)
             .w_full()
-            .p_5()
+            .px_5()
+            .py_3()
             .v_flex()
             .gap_3()
             .child(
@@ -124,17 +136,19 @@ impl RenderOnce for HealthCard {
                     .h_flex()
                     .items_center()
                     .justify_between()
+                    .flex_wrap()
                     .gap_3()
                     .child(
                         div()
-                            .v_flex()
-                            .gap_1()
+                            .flex()
+                            .when(self.compact, |el| el.items_center().flex_wrap().gap_3())
+                            .when(!self.compact, |el| el.flex_col().gap_1())
                             .child(theme::section_title(cx, "Data health"))
                             .child(theme::caption(cx, summary)),
                     )
                     .child(actions),
             )
-            .when(total > 0, |el| {
+            .when(shown > 0, |el| {
                 el.child(
                     // One group, so the rows sit closer to one another than
                     // to the heading; each row draws the hairline above itself.
