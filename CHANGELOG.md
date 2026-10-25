@@ -29,6 +29,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   platform, the settings that change fetching and display, which kinds of
   source are configured, and the data folder's path. No account names,
   keys or amounts.
+- **Microsoft Azure.** A subscription's actual cost, read through Cost
+  Management's query API as a service principal with the Cost Management
+  Reader role: daily, by service and charge type, so a reservation
+  purchase or a refund does not read as usage. The form asks for the
+  client ID, the secret and the subscription; the tenant is looked up from
+  the subscription. `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` and
+  `AZURE_SUBSCRIPTION_ID` work with "Use this machine's credentials".
+- **Google Cloud.** The billing account's export to BigQuery, read with one
+  query per invoice month: daily, by service, SKU, project and region.
+  Credits are their own rows, so usage stays gross. The credential is a
+  service account key file (or the file `gcloud auth application-default
+  login` writes), read at each fetch; CloudBridge keeps only its path.
+  `GOOGLE_APPLICATION_CREDENTIALS` works with "Use this machine's
+  credentials".
+- For a source whose credential is scoped to something other than a region,
+  the add dialog's region field is named for it and required: Azure's
+  subscription, Google Cloud's export table.
 
 ### Changed
 - The menu bar title is the month's spend alone. Open alerts put an

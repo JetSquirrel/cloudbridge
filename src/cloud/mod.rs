@@ -3,12 +3,14 @@
 pub mod aliyun;
 pub mod aws;
 pub mod aws_focus;
+pub mod azure;
 pub mod billfile;
 pub mod cloudflare;
 pub mod cloudflare_analytics;
 pub mod corkscrew;
 pub mod deduction;
 pub mod deepseek;
+pub mod gcp;
 pub mod http;
 pub mod raw;
 pub mod registry;
@@ -50,8 +52,7 @@ impl CloudAccount {
 
 impl SourceId {
     /// The descriptor for this id, or `None` if no source is registered
-    /// under it — an account written by a newer build, or by a build that
-    /// still had the Azure and GCP enum variants.
+    /// under it, such as an account written by a newer build.
     pub fn descriptor(&self) -> Option<&'static SourceDescriptor> {
         registry::get(self.as_str())
     }

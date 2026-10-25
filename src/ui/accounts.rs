@@ -54,6 +54,18 @@ fn setup_hint(source_id: &str) -> Option<(&'static str, &'static str)> {
              primary account's key.",
             "alibaba-cloud",
         )),
+        "Azure" => Some((
+            "An app registration's client ID and secret, with the Cost Management \
+             Reader role on the subscription. The subscription's tenant is looked up \
+             from it.",
+            "azure",
+        )),
+        "GCP" => Some((
+            "The path of a service account's JSON key, and the table the billing \
+             account's BigQuery export writes to. The account needs BigQuery Job User \
+             and Data Viewer there.",
+            "google-cloud",
+        )),
         "Cloudflare" => Some((
             "An API token with Account → Billing → Read — and Account → Account \
              Analytics → Read to split the bill by bucket, Worker, D1 database and Durable \
@@ -595,6 +607,20 @@ impl AccountsView {
             ));
             cx.notify();
             return;
+        }
+        // A scope in place of a region is what the credential is good for,
+        // so it is required — unless the machine's credentials name it too.
+        if let Some(label) = self.selected_source.region_label {
+            let from_system = system
+                && self
+                    .selected_source
+                    .credentials_from_system()
+                    .is_some_and(|found| found.region.is_some());
+            if region.trim().is_empty() && !from_system {
+                self.dialog_error = Some(format!("Enter the {label}."));
+                cx.notify();
+                return;
+            }
         }
 
         let account = CloudAccount {
@@ -1740,12 +1766,12 @@ impl AccountsView {
                             })
                             .child(theme::caption(cx, KEYRING_NOTE))
                         })
-                        .when(self.selected_source.default_region.is_some(), |el| {
+                        .when_some(self.selected_source.region_field(), |el, label| {
                             el.child(
                                 div()
                                     .v_flex()
                                     .gap_1()
-                                    .child(div().text_sm().child("Region"))
+                                    .child(div().text_sm().child(label))
                                     .child(Input::new(&self.region_input)),
                             )
                         })

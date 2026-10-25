@@ -94,6 +94,62 @@ policy; review its scope against your requirements.
 Do not use the primary account's AccessKey. A local bill-file import does
 not require an API credential, including for Alibaba Cloud.
 
+## Microsoft Azure
+
+CloudBridge reads a subscription's actual cost through Cost Management's
+query API, signed in as a service principal.
+
+1. In Microsoft Entra ID → **App registrations**, register an application
+   for CloudBridge and add a **client secret** under Certificates & secrets.
+2. On the subscription, open **Access control (IAM)** → **Add role
+   assignment** and give the application **Cost Management Reader**. That
+   role reads cost and usage and nothing else.
+3. In CloudBridge, enter the application (client) ID, the secret's
+   **Value** (not its ID) and the subscription ID.
+
+CloudBridge makes three kinds of request: an unauthenticated
+`GET /subscriptions/{id}`, whose `401` challenge names the subscription's
+tenant; `POST https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token`
+with the client credentials; and
+`POST /subscriptions/{id}/providers/Microsoft.CostManagement/query`, daily,
+grouped by service and charge type. To skip the tenant lookup, enter the
+subscription as `tenant-id/subscription-id`.
+
+The query API is rate limited per tenant and reports by service, not by
+resource. The secret is kept in the OS keyring; the IDs are not secrets.
+On a machine with `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` and
+`AZURE_SUBSCRIPTION_ID` set, "Use this machine's credentials" reads them
+instead.
+
+## Google Cloud
+
+Google Cloud has no API that reports what a month cost. The billing data is
+the export a billing account writes to BigQuery, so CloudBridge reads it
+with a query.
+
+1. In **Billing** → **Billing export** → **BigQuery export**, turn on the
+   **Standard usage cost** export to a dataset. It holds data from the day
+   it is turned on.
+2. In the dataset's project, create a service account. Give it **BigQuery
+   Job User** on the project and **BigQuery Data Viewer** on the dataset,
+   then create a JSON key for it and save the file locally.
+3. In CloudBridge, enter the key file's path and the export table's ID as
+   the BigQuery console copies it:
+   `project.dataset.gcp_billing_export_v1_XXXXXX_XXXXXX_XXXXXX`.
+
+CloudBridge signs a token request with the key
+(`POST https://oauth2.googleapis.com/token`), runs one query job per month
+in the table's project
+(`POST https://bigquery.googleapis.com/bigquery/v2/projects/{project}/queries`)
+and reads its result pages. The query reads the whole table: on-demand
+BigQuery pricing applies past the monthly free tier, though a billing
+export is usually far smaller than that.
+
+The key file stays where you keep it and is read at each fetch; CloudBridge
+stores only its path. The file `gcloud auth application-default login`
+writes works as well, as does `GOOGLE_APPLICATION_CREDENTIALS` with "Use
+this machine's credentials".
+
 ## Cloudflare
 
 Create a custom API token with the single permission **Account → Billing →

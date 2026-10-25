@@ -50,6 +50,8 @@ required.
 | Source | Connection | Available detail |
 | --- | --- | --- |
 | Amazon Web Services | Cost Explorer API | Costs by service and charge category |
+| Microsoft Azure | Cost Management query API | Daily costs by service and charge type, per subscription |
+| Google Cloud | Billing export in BigQuery | Daily costs by service, SKU, project and region, with credits apart |
 | Alibaba Cloud (阿里云) | Billing API or bill import | Product totals; imported bill details include Model Studio (百炼) models |
 | Volcengine (火山引擎) | Bill import | Ark (火山方舟) endpoints and token types |
 | OpenAI | Cost or usage export | Project and model costs or token usage |
@@ -58,7 +60,9 @@ required.
 | DeepSeek | Balance API or bill import | Prepaid balance; imported daily, per-model spend |
 
 File imports need no provider credentials. DeepSeek's API reports a balance,
-not a spending breakdown. Azure and Google Cloud are not currently supported.
+not a spending breakdown. Google Cloud is read from the billing account's
+BigQuery export, which has to be turned on first; see
+[permissions](https://cloudbridge.jetsquirrel.cloud/policies.html#google-cloud).
 
 AWS accounts can also read AWS Data Exports (FOCUS 1.2 with AWS columns) from
 an S3 bucket. This replaces Cost Explorer for accounts with an export URI,

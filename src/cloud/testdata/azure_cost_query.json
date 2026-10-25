@@ -1,0 +1,23 @@
+{
+  "id": "subscriptions/11111111-2222-3333-4444-555555555555/providers/Microsoft.CostManagement/query/00000000-0000-0000-0000-000000000000",
+  "name": "00000000-0000-0000-0000-000000000000",
+  "type": "Microsoft.CostManagement/query",
+  "properties": {
+    "nextLink": null,
+    "columns": [
+      { "name": "Cost", "type": "Number" },
+      { "name": "UsageDate", "type": "Number" },
+      { "name": "ServiceName", "type": "String" },
+      { "name": "ChargeType", "type": "String" },
+      { "name": "Currency", "type": "String" }
+    ],
+    "rows": [
+      [12.5, 20260901, "Virtual Machines", "Usage", "USD"],
+      [0.42, 20260901, "Storage", "Usage", "USD"],
+      [0.0, 20260902, "Bandwidth", "Usage", "USD"],
+      [300.0, 20260915, "Virtual Machines", "Purchase", "USD"],
+      [-3.0, 20260920, "Virtual Machines", "Refund", "USD"],
+      [9.99, 20261001, "Virtual Machines", "Usage", "USD"]
+    ]
+  }
+}

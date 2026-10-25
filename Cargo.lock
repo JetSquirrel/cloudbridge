@@ -1198,6 +1198,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "quick-xml 0.42.0",
  "rand 0.9.5",
+ "ring",
  "serde",
  "serde_json",
  "sha1",

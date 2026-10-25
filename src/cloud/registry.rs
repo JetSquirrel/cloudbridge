@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 use super::billfile::{self, BillFileFormat};
 use super::corkscrew::{self, ScanProvider};
 use super::{
-    aliyun::AliyunCloudService, aws::AwsCloudService, cloudflare::CloudflareService,
-    deepseek::DeepSeekService,
+    aliyun::AliyunCloudService, aws::AwsCloudService, azure::AzureService,
+    cloudflare::CloudflareService, deepseek::DeepSeekService, gcp::GcpService,
 };
 use super::{BillingSource, SourceContext};
 
@@ -282,6 +282,11 @@ pub struct SourceDescriptor {
     /// Region applied when the user leaves the field blank, or `None` when
     /// the source has no notion of a region.
     pub default_region: Option<&'static str>,
+    /// What the region field asks for instead, for a source whose
+    /// credential is scoped to something else — an Azure subscription, a
+    /// Google Cloud billing export table. `Some` makes the field required
+    /// and names it.
+    pub region_label: Option<&'static str>,
     /// What the source reports; see [`Reporting`].
     pub reporting: Reporting,
     /// Where this source's credentials can be read from on the machine
@@ -321,9 +326,19 @@ impl SourceDescriptor {
     }
 
     pub fn region_placeholder(&self) -> String {
-        match self.default_region {
-            Some(region) => format!("Region (optional, default {})", region),
-            None => "(Not required)".to_string(),
+        match (self.region_label, self.default_region) {
+            (Some(label), _) => label.to_string(),
+            (None, Some(region)) => format!("Region (optional, default {})", region),
+            (None, None) => "(Not required)".to_string(),
+        }
+    }
+
+    /// Whether the form shows the region field, and under what name.
+    pub fn region_field(&self) -> Option<&'static str> {
+        match (self.region_label, self.default_region) {
+            (Some(label), _) => Some(label),
+            (None, Some(_)) => Some("Region"),
+            (None, None) => None,
         }
     }
 
@@ -424,6 +439,7 @@ static SOURCES: &[SourceDescriptor] = &[
         access_key_label: "Access Key ID",
         secret_key_label: Some("Secret Access Key"),
         default_region: Some("us-east-1"),
+        region_label: None,
         reporting: Reporting::Periodic,
         local_credentials: Some(LocalCredentials {
             env: EnvCredentials {
@@ -449,12 +465,80 @@ static SOURCES: &[SourceDescriptor] = &[
         inventory: Some(&corkscrew::AWS),
     },
     SourceDescriptor {
+        id: "Azure",
+        display_name: "Microsoft Azure",
+        short_name: "Azure",
+        // A service principal: an app registration with the Cost
+        // Management Reader role on the subscription.
+        access_key_label: "Application (client) ID",
+        secret_key_label: Some("Client secret"),
+        default_region: None,
+        // The subscription the role was granted on; its tenant is found
+        // from it.
+        region_label: Some("Subscription ID"),
+        reporting: Reporting::Periodic,
+        local_credentials: Some(LocalCredentials {
+            // The variables the Azure SDKs' EnvironmentCredential reads.
+            env: EnvCredentials {
+                access_key: &["AZURE_CLIENT_ID"],
+                secret_key: &["AZURE_CLIENT_SECRET"],
+                region: &["AZURE_SUBSCRIPTION_ID"],
+            },
+            // `az login` keeps a user token cache, not a secret this
+            // client could sign in with.
+            files: &[],
+        }),
+        build: Some(|ctx| {
+            Box::new(AzureService::new(
+                ctx.access_key_id,
+                ctx.secret_access_key,
+                ctx.region,
+            ))
+        }),
+        bill_file: None,
+        inventory: None,
+    },
+    SourceDescriptor {
+        id: "GCP",
+        display_name: "Google Cloud",
+        short_name: "GCP",
+        // The path of a key file, read at each fetch — a service account's
+        // JSON key is too long for some keyrings, and kept on disk it can
+        // be rotated without editing the account.
+        access_key_label: "Service account key",
+        secret_key_label: None,
+        default_region: None,
+        // Billing data is the billing account's export to BigQuery; there
+        // is no cost API to ask instead.
+        region_label: Some("Billing export table"),
+        reporting: Reporting::Periodic,
+        local_credentials: Some(LocalCredentials {
+            // Application Default Credentials' variable, which names a file.
+            env: EnvCredentials {
+                access_key: &["GOOGLE_APPLICATION_CREDENTIALS"],
+                secret_key: &[],
+                region: &[],
+            },
+            files: &[],
+        }),
+        build: Some(|ctx| {
+            Box::new(GcpService::new(
+                ctx.access_key_id,
+                ctx.secret_access_key,
+                ctx.region,
+            ))
+        }),
+        bill_file: None,
+        inventory: None,
+    },
+    SourceDescriptor {
         id: "Aliyun",
         display_name: "Alibaba Cloud",
         short_name: "Aliyun",
         access_key_label: "AccessKey ID",
         secret_key_label: Some("AccessKey Secret"),
         default_region: Some("cn-hangzhou"),
+        region_label: None,
         reporting: Reporting::Periodic,
         local_credentials: Some(LocalCredentials {
             env: EnvCredentials {
@@ -487,6 +571,7 @@ static SOURCES: &[SourceDescriptor] = &[
         access_key_label: "Account ID",
         secret_key_label: Some("API Token"),
         default_region: None,
+        region_label: None,
         reporting: Reporting::Periodic,
         local_credentials: Some(LocalCredentials {
             // The variables wrangler reads. Its own login is an OAuth
@@ -519,6 +604,7 @@ static SOURCES: &[SourceDescriptor] = &[
         access_key_label: "API Key",
         secret_key_label: None,
         default_region: None,
+        region_label: None,
         reporting: Reporting::Snapshot,
         local_credentials: Some(LocalCredentials {
             env: EnvCredentials {
@@ -551,6 +637,7 @@ static SOURCES: &[SourceDescriptor] = &[
         access_key_label: "Access Key ID",
         secret_key_label: Some("Secret Access Key"),
         default_region: None,
+        region_label: None,
         reporting: Reporting::Periodic,
         local_credentials: None,
         build: None,
@@ -568,6 +655,7 @@ static SOURCES: &[SourceDescriptor] = &[
         access_key_label: "Admin API Key",
         secret_key_label: None,
         default_region: None,
+        region_label: None,
         reporting: Reporting::Periodic,
         local_credentials: None,
         build: None,
@@ -581,6 +669,7 @@ static SOURCES: &[SourceDescriptor] = &[
         access_key_label: "Admin API Key",
         secret_key_label: None,
         default_region: None,
+        region_label: None,
         reporting: Reporting::Periodic,
         local_credentials: None,
         build: None,
@@ -736,15 +825,16 @@ mod tests {
     #[test]
     fn region_placeholder_matches_default_region() {
         for source in all() {
-            match source.default_region {
-                Some(region) => {
+            match (source.region_label, source.default_region) {
+                (Some(label), _) => assert_eq!(source.region_placeholder(), label),
+                (None, Some(region)) => {
                     assert!(
                         source.region_placeholder().contains(region),
                         "{}",
                         source.id
                     )
                 }
-                None => assert_eq!(source.region_placeholder(), "(Not required)"),
+                (None, None) => assert_eq!(source.region_placeholder(), "(Not required)"),
             }
         }
     }

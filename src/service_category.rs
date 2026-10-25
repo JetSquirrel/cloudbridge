@@ -210,6 +210,74 @@ const CLOUDFLARE_FAMILIES: &[(&str, Placement)] = &[
     ("Load Balancing", (NETWORKING, "Application Networking")),
 ];
 
+/// Azure, by the `ServiceName` Cost Management groups by — the meter
+/// category, which is all the query reports.
+const AZURE_NAMES: &[(&str, Placement)] = &[
+    ("Virtual Machines", (COMPUTE, "Virtual Machines")),
+    ("Functions", (COMPUTE, "Serverless Compute")),
+    ("Azure Kubernetes Service", (COMPUTE, "Containers")),
+    ("Container Instances", (COMPUTE, "Containers")),
+    ("Azure Container Apps", (COMPUTE, "Containers")),
+    ("Azure App Service", (WEB, "Application Platforms")),
+    ("SQL Database", (DATABASES, "Relational Databases")),
+    (
+        "Azure Database for PostgreSQL",
+        (DATABASES, "Relational Databases"),
+    ),
+    (
+        "Azure Database for MySQL",
+        (DATABASES, "Relational Databases"),
+    ),
+    ("Azure Cosmos DB", (DATABASES, "NoSQL Databases")),
+    ("Redis Cache", (DATABASES, "Caching")),
+    ("Azure Cache for Redis", (DATABASES, "Caching")),
+    ("Cognitive Services", (AI, "Generative AI")),
+    ("Azure Machine Learning", (AI, "Machine Learning")),
+    ("Log Analytics", (MANAGEMENT, "Observability")),
+    ("Azure Monitor", (MANAGEMENT, "Observability")),
+    ("Bandwidth", (NETWORKING, "Network Connectivity")),
+    ("Virtual Network", (NETWORKING, "Network Infrastructure")),
+    ("Load Balancer", (NETWORKING, "Application Networking")),
+    (
+        "Application Gateway",
+        (NETWORKING, "Application Networking"),
+    ),
+    ("Azure DNS", (NETWORKING, "Network Routing")),
+    ("Content Delivery Network", (NETWORKING, "Content Delivery")),
+    ("Key Vault", (SECURITY, "Secret Management")),
+];
+
+/// Google Cloud, by the billing export's `service.description`. Its
+/// `service.id` is an opaque code (`6F81-5844-456A`), so the name is what
+/// can be read and checked.
+const GCP_NAMES: &[(&str, Placement)] = &[
+    ("Compute Engine", (COMPUTE, "Virtual Machines")),
+    ("Cloud Run", (COMPUTE, "Serverless Compute")),
+    ("Cloud Run Functions", (COMPUTE, "Serverless Compute")),
+    ("Cloud Functions", (COMPUTE, "Serverless Compute")),
+    ("Kubernetes Engine", (COMPUTE, "Containers")),
+    ("App Engine", (WEB, "Application Platforms")),
+    ("Cloud Storage", (STORAGE, "Object Storage")),
+    ("Filestore", (STORAGE, "File Storage")),
+    ("Cloud SQL", (DATABASES, "Relational Databases")),
+    ("Cloud Spanner", (DATABASES, "Relational Databases")),
+    ("Cloud Firestore", (DATABASES, "NoSQL Databases")),
+    ("Cloud Bigtable", (DATABASES, "NoSQL Databases")),
+    ("Cloud Memorystore for Redis", (DATABASES, "Caching")),
+    ("Vertex AI", (AI, "Machine Learning")),
+    ("Gemini API", (AI, "Generative AI")),
+    ("Cloud Logging", (MANAGEMENT, "Observability")),
+    ("Cloud Monitoring", (MANAGEMENT, "Observability")),
+    ("Networking", (NETWORKING, "Network Connectivity")),
+    ("Cloud DNS", (NETWORKING, "Network Routing")),
+    ("Cloud CDN", (NETWORKING, "Content Delivery")),
+    ("Secret Manager", (SECURITY, "Secret Management")),
+    (
+        "Cloud Key Management Service (KMS)",
+        (SECURITY, "Secret Management"),
+    ),
+];
+
 /// The sources whose whole bill is model inference.
 const MODEL_PROVIDERS: &[&str] = &["OpenAI", "Anthropic", "DeepSeek"];
 
@@ -239,6 +307,8 @@ pub fn classify(
         "Aliyun" => code.and_then(|code| lookup(ALIYUN_CODES, code)),
         "Volcengine" => code.and_then(|code| lookup(VOLCENGINE_CODES, code)),
         "Cloudflare" => code.and_then(|code| lookup(CLOUDFLARE_FAMILIES, code)),
+        "Azure" => service_name.and_then(|name| lookup(AZURE_NAMES, name)),
+        "GCP" => service_name.and_then(|name| lookup(GCP_NAMES, name)),
         _ => None,
     }
 }
@@ -271,6 +341,8 @@ mod tests {
             ALIYUN_CODES,
             VOLCENGINE_CODES,
             CLOUDFLARE_FAMILIES,
+            AZURE_NAMES,
+            GCP_NAMES,
         ]
         .into_iter()
         .flatten()
@@ -303,6 +375,8 @@ mod tests {
             ALIYUN_CODES,
             VOLCENGINE_CODES,
             CLOUDFLARE_FAMILIES,
+            AZURE_NAMES,
+            GCP_NAMES,
         ] {
             let mut keys: Vec<String> = table
                 .iter()
@@ -319,6 +393,12 @@ mod tests {
     fn the_same_kind_of_product_lands_in_the_same_place_on_every_cloud() {
         let vm = Some((COMPUTE, "Virtual Machines"));
         assert_eq!(classify("AWS", Some("AmazonEC2"), None), vm);
+        assert_eq!(classify("Azure", None, Some("Virtual Machines")), vm);
+        // A Google Cloud row's code is opaque; its name places it.
+        assert_eq!(
+            classify("GCP", Some("6F81-5844-456A"), Some("Compute Engine")),
+            vm
+        );
         assert_eq!(classify("Aliyun", Some("ecs"), None), vm);
         assert_eq!(classify("Volcengine", Some("ecs"), None), vm);
 
