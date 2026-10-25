@@ -102,6 +102,9 @@ pub struct SourceDescriptor {
     /// Region applied when the user leaves the field blank, or `None` when
     /// the source has no notion of a region.
     pub default_region: Option<&'static str>,
+    /// What the region field asks for instead, for a source scoped to
+    /// something else; see the desktop's registry.
+    pub region_label: Option<&'static str>,
     /// What the source reports; see [`Reporting`].
     pub reporting: Reporting,
     /// Whether the source has a billing API on the desktop.
@@ -148,9 +151,19 @@ impl SourceDescriptor {
     }
 
     pub fn region_placeholder(&self) -> String {
-        match self.default_region {
-            Some(region) => format!("Region (optional, default {})", region),
-            None => "(Not required)".to_string(),
+        match (self.region_label, self.default_region) {
+            (Some(label), _) => label.to_string(),
+            (None, Some(region)) => format!("Region (optional, default {})", region),
+            (None, None) => "(Not required)".to_string(),
+        }
+    }
+
+    /// Whether the form shows the region field, and under what name.
+    pub fn region_field(&self) -> Option<&'static str> {
+        match (self.region_label, self.default_region) {
+            (Some(label), _) => Some(label),
+            (None, Some(_)) => Some("Region"),
+            (None, None) => None,
         }
     }
 
@@ -279,7 +292,7 @@ const ANTHROPIC_FORMAT: BillFileFormat = BillFileFormat {
 
 /// Every source, in the order the picker shows them.
 ///
-/// The same seven the desktop registers, with the same names and the same
+/// The same nine the desktop registers, with the same names and the same
 /// answers to every question above.
 static SOURCES: &[SourceDescriptor] = &[
     SourceDescriptor {
@@ -289,6 +302,33 @@ static SOURCES: &[SourceDescriptor] = &[
         access_key_label: "Access Key ID",
         secret_key_label: Some("Secret Access Key"),
         default_region: Some("us-east-1"),
+        region_label: None,
+        reporting: Reporting::Periodic,
+        fetches_from_api: true,
+        bill_file: None,
+        local_credentials: None,
+    },
+    SourceDescriptor {
+        id: "Azure",
+        display_name: "Microsoft Azure",
+        short_name: "Azure",
+        access_key_label: "Application (client) ID",
+        secret_key_label: Some("Client secret"),
+        default_region: None,
+        region_label: Some("Subscription ID"),
+        reporting: Reporting::Periodic,
+        fetches_from_api: true,
+        bill_file: None,
+        local_credentials: None,
+    },
+    SourceDescriptor {
+        id: "GCP",
+        display_name: "Google Cloud",
+        short_name: "GCP",
+        access_key_label: "Service account key",
+        secret_key_label: None,
+        default_region: None,
+        region_label: Some("Billing export table"),
         reporting: Reporting::Periodic,
         fetches_from_api: true,
         bill_file: None,
@@ -301,6 +341,7 @@ static SOURCES: &[SourceDescriptor] = &[
         access_key_label: "AccessKey ID",
         secret_key_label: Some("AccessKey Secret"),
         default_region: Some("cn-hangzhou"),
+        region_label: None,
         reporting: Reporting::Periodic,
         fetches_from_api: true,
         bill_file: Some(&ALIYUN_FORMAT),
@@ -313,6 +354,7 @@ static SOURCES: &[SourceDescriptor] = &[
         access_key_label: "Account ID",
         secret_key_label: Some("API Token"),
         default_region: None,
+        region_label: None,
         reporting: Reporting::Periodic,
         fetches_from_api: true,
         bill_file: None,
@@ -325,6 +367,7 @@ static SOURCES: &[SourceDescriptor] = &[
         access_key_label: "API Key",
         secret_key_label: None,
         default_region: None,
+        region_label: None,
         reporting: Reporting::Snapshot,
         fetches_from_api: true,
         bill_file: Some(&DEEPSEEK_FORMAT),
@@ -337,6 +380,7 @@ static SOURCES: &[SourceDescriptor] = &[
         access_key_label: "Access Key ID",
         secret_key_label: Some("Secret Access Key"),
         default_region: None,
+        region_label: None,
         reporting: Reporting::Periodic,
         fetches_from_api: false,
         bill_file: Some(&VOLCENGINE_FORMAT),
@@ -349,6 +393,7 @@ static SOURCES: &[SourceDescriptor] = &[
         access_key_label: "Admin API Key",
         secret_key_label: None,
         default_region: None,
+        region_label: None,
         reporting: Reporting::Periodic,
         fetches_from_api: false,
         bill_file: Some(&OPENAI_FORMAT),
@@ -361,6 +406,7 @@ static SOURCES: &[SourceDescriptor] = &[
         access_key_label: "Admin API Key",
         secret_key_label: None,
         default_region: None,
+        region_label: None,
         reporting: Reporting::Periodic,
         fetches_from_api: false,
         bill_file: Some(&ANTHROPIC_FORMAT),

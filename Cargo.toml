@@ -63,6 +63,9 @@ hmac = "0.12"
 sha2 = "0.10"
 sha1 = "0.10"  # Aliyun signing
 hex = "0.4"
+# Google Cloud: a service account signs its token request with RS256.
+# Already in the tree through rustls.
+ring = "0.17"
 
 # Database. `json` and `parquet` compile those extensions into the binary
 # rather than letting duckdb autoload them at runtime: under the hardened
