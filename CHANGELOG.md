@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-26
+
+Azure and Google Cloud join as billing sources: a subscription's actual
+cost from Cost Management, and the billing account's BigQuery export.
+A command palette reaches every page, account and command from the
+keyboard, Attribution's treemap opens a tile one level down, and an
+account the background refresh keeps failing on is marked as such.
+
 ### Added
 - **Settings → Background → Keep running in the menu bar.** On by default,
   as before. Off, the menu bar icon goes at once, closing the window quits,

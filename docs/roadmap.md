@@ -68,6 +68,13 @@ API's per-resource usage. Insights, the first resource-inventory plugin,
 shipped in the same release for AWS and Cloudflare (see "Next —
 resources" below).
 
+0.6.0 adds Microsoft Azure and Google Cloud, bringing the sources to
+nine. Azure is read from Cost Management's query API as a service
+principal, daily by service and charge type; Google Cloud from the
+billing account's BigQuery export, one query per invoice month, daily by
+service, SKU, project and region with credits as their own rows. Neither
+has a resource scan in Insights yet.
+
 A source is a `SourceDescriptor` registry entry rather than an enum
 variant. API-backed sources implement `BillingSource`; file-only sources
 provide a bill parser without an API client. The ingest pipeline persists
