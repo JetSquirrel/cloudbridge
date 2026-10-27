@@ -246,11 +246,103 @@ pub fn derive(
     })
 }
 
+/// What a token meter's name says about its tokens, for a FOCUS row that
+/// predates `TokenDirection` and `TokenCacheAction`: a FOCUS 1.2 export,
+/// whose meter or description still names the kind of token, as in
+/// `"Claude3.5Sonnet-cache-read-input-token-count"`. Matched on words, so
+/// `-`, `_` and case do not matter. `None` when the name says neither
+/// direction.
+///
+/// A cache miss is input served from no cache. Input the name says nothing
+/// more about has no `TokenCacheAction`: FOCUS leaves out what the meter
+/// does not tell.
+pub fn meter_from_name(name: &str) -> Option<TokenMeter> {
+    use TokenCacheAction::{Read, Uncached, Write};
+    use TokenDirection::{Input, Output};
+    let words: String = name
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { ' ' })
+        .collect();
+    let words = format!(
+        " {} ",
+        words.split_whitespace().collect::<Vec<_>>().join(" ")
+    );
+    let has = |phrase: &str| words.contains(&format!(" {phrase} "));
+    let meter = |direction, cache_action| {
+        Some(TokenMeter {
+            direction: Some(direction),
+            cache_action,
+        })
+    };
+
+    if has("cache read") || has("cached input") || has("cache hit") || has("cached") {
+        meter(Input, Some(Read))
+    } else if has("cache write") || has("cache creation") || has("cache writes") {
+        meter(Input, Some(Write))
+    } else if has("cache miss") || has("uncached") {
+        meter(Input, Some(Uncached))
+    } else if has("output") || has("completion") || has("generated") || has("response") {
+        meter(Output, None)
+    } else if has("input") || has("prompt") {
+        meter(Input, None)
+    } else {
+        None
+    }
+}
+
+/// A FOCUS token row whose details give no `TokenDirection`, completed from
+/// its meter name or description by [`meter_from_name`]. The properties it
+/// does carry are kept; details that are not a JSON object are left alone.
+fn complete_focus_row(charge: &mut Charge) {
+    if class_of(
+        charge.consumed_unit.as_deref(),
+        charge.sku_price_details.as_deref(),
+    ) != Some(TokenClass::Unsplit)
+    {
+        return;
+    }
+    let Some(meter) = [
+        charge.sku_meter.as_deref(),
+        charge.charge_description.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(meter_from_name) else {
+        return;
+    };
+
+    let mut object = match charge.sku_price_details.as_deref() {
+        None => Map::new(),
+        Some(json) => match serde_json::from_str::<Value>(json) {
+            Ok(Value::Object(object)) => object,
+            _ => return,
+        },
+    };
+    if let Some(direction) = meter.direction {
+        object.insert(
+            "TokenDirection".to_string(),
+            Value::String(direction.as_str().to_string()),
+        );
+    }
+    if let Some(cache_action) = meter.cache_action {
+        object
+            .entry("TokenCacheAction")
+            .or_insert_with(|| Value::String(cache_action.as_str().to_string()));
+    }
+    // Keys in alphabetical order, as [`TokenDetails::to_json`] writes them,
+    // whichever order the export used.
+    let sorted: std::collections::BTreeMap<String, Value> = object.into_iter().collect();
+    charge.sku_price_details = serde_json::to_string(&sorted).ok();
+}
+
 /// Give a token-metered or model-attributed charge its FOCUS 1.5 columns.
 /// A charge that already has any of them came from a source that reports
-/// FOCUS itself, and keeps what it reported.
+/// FOCUS itself, and keeps what it reported, completed by
+/// [`meter_from_name`] when it is a token row of no stated direction.
 pub fn fill(provider: &str, charge: &mut Charge) {
     if charge.consumed_unit.is_some() || charge.sku_price_details.is_some() {
+        complete_focus_row(charge);
         return;
     }
     let Some(columns) = derive(
@@ -428,6 +520,97 @@ mod tests {
     fn a_row_with_neither_tokens_nor_a_model_is_left_alone() {
         assert_eq!(derive("AWS", Some("Hrs"), Some(24.0), None), None);
         assert_eq!(derive("AWS", None, None, Some("  ")), None);
+    }
+
+    #[test]
+    fn a_meter_name_says_which_tokens_it_counts() {
+        use super::meter_from_name;
+        let named = |name: &str| {
+            meter_from_name(name).map(|meter| {
+                (
+                    meter.direction.map(TokenDirection::as_str),
+                    meter.cache_action.map(TokenCacheAction::as_str),
+                )
+            })
+        };
+        assert_eq!(
+            named("USE1-Claude3.5Sonnet-cache-read-input-token-count"),
+            Some((Some("Input"), Some("Read")))
+        );
+        assert_eq!(
+            named("USW2-Claude3.7Sonnet-cache-write-input-token-count"),
+            Some((Some("Input"), Some("Write")))
+        );
+        assert_eq!(
+            named("input_cache_miss_tokens"),
+            Some((Some("Input"), Some("Uncached")))
+        );
+        assert_eq!(
+            named("Cached Input Tokens"),
+            Some((Some("Input"), Some("Read")))
+        );
+        assert_eq!(
+            named("USE1-Nova-Pro-output-tokens"),
+            Some((Some("Output"), None))
+        );
+        assert_eq!(named("completion tokens"), Some((Some("Output"), None)));
+        assert_eq!(
+            named("USE1-Llama3-input-tokens"),
+            Some((Some("Input"), None))
+        );
+        // Words, not substrings: "throughput" is not "output".
+        assert_eq!(named("Provisioned throughput model units"), None);
+        assert_eq!(named("Tokens"), None);
+    }
+
+    #[test]
+    fn a_focus_token_row_without_a_direction_is_completed_from_its_meter() {
+        let row = |details: Option<&str>, meter: &str| Charge {
+            consumed_quantity: Some(1000.0),
+            consumed_unit: Some(TOKENS.to_string()),
+            sku_meter: Some(meter.to_string()),
+            sku_price_details: details.map(str::to_string),
+            ..Charge::new(Utc::now(), Utc::now(), "USD")
+        };
+
+        let mut charge = row(
+            Some(r#"{"ModelId":"anthropic.claude-3-5"}"#),
+            "Claude-cache-read-input-token-count",
+        );
+        fill("AWS", &mut charge);
+        assert_eq!(
+            charge.sku_price_details.as_deref(),
+            Some(
+                r#"{"ModelId":"anthropic.claude-3-5","TokenCacheAction":"Read","TokenDirection":"Input"}"#
+            )
+        );
+
+        // No details at all: the meter is enough.
+        let mut charge = row(None, "Nova-output-tokens");
+        fill("AWS", &mut charge);
+        assert_eq!(
+            charge.sku_price_details.as_deref(),
+            Some(r#"{"TokenDirection":"Output"}"#)
+        );
+
+        // A row that states its direction keeps it, whatever the meter says.
+        let stated = r#"{"TokenDirection":"Input"}"#;
+        let mut charge = row(Some(stated), "something-output-tokens");
+        fill("AWS", &mut charge);
+        assert_eq!(charge.sku_price_details.as_deref(), Some(stated));
+
+        // Details that are not an object are not rewritten.
+        let mut charge = row(Some("[1,2]"), "Nova-output-tokens");
+        fill("AWS", &mut charge);
+        assert_eq!(charge.sku_price_details.as_deref(), Some("[1,2]"));
+
+        // Not a token row: nothing to complete.
+        let mut charge = Charge {
+            consumed_unit: Some("Hours".to_string()),
+            ..row(None, "BoxUsage-output")
+        };
+        fill("AWS", &mut charge);
+        assert_eq!(charge.sku_price_details, None);
     }
 
     #[test]
