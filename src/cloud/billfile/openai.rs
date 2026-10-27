@@ -100,6 +100,10 @@ static LAYOUT: Layout = Layout {
     ],
     // The Usage API documents `input_tokens` as including cached tokens.
     input_includes: &["Cached Input Tokens"],
+    // The Usage API's `user_id` and `api_key_id` groupings.
+    principal_id: &["user_id"],
+    credential_id: &["api_key_id"],
+    credential_name: &["api_key_name", "key_name"],
 };
 
 fn periods(text: &str) -> Result<Vec<BillingPeriod>> {

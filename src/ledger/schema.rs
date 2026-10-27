@@ -51,7 +51,12 @@ use duckdb::{params, Connection};
 /// and cache interaction in the last. [`migrate`] backfills them from the
 /// pricing unit and model the ledger already stores, through
 /// [`crate::token_meter::derive`], as a new write would fill them.
-pub const SCHEMA_VERSION: i32 = 7;
+///
+/// v8 adds FOCUS 1.5's `principal_id`, `credential_id` and
+/// `requester_details`: the user and API key a model provider's usage is
+/// reported under. Nothing earlier recorded them apart, so existing rows
+/// keep NULL until their month is imported again or replayed.
+pub const SCHEMA_VERSION: i32 = 8;
 
 /// The view the application reads: every charge with its amount also
 /// expressed in the reporting currency.
@@ -154,7 +159,12 @@ pub fn apply(conn: &Connection) -> Result<()> {
             consumed_quantity   DOUBLE,
             consumed_unit       VARCHAR,
             sku_meter           VARCHAR,
-            sku_price_details   VARCHAR
+            sku_price_details   VARCHAR,
+            -- v8: FOCUS 1.5's requester attribution. requester_details is
+            -- JSON array text.
+            principal_id        VARCHAR,
+            credential_id       VARCHAR,
+            requester_details   VARCHAR
         );
 
         CREATE INDEX IF NOT EXISTS idx_charge_period
@@ -307,6 +317,15 @@ fn migrate(conn: &Connection) -> Result<()> {
         let added = add_token_columns(conn);
         conn.execute_batch(if added.is_ok() { "COMMIT" } else { "ROLLBACK" })?;
         added?;
+    }
+    if !has_column(conn, "fct_charge", "requester_details")? {
+        tracing::info!("Adding FOCUS 1.5 requester columns to fct_charge");
+        // NULL for existing rows: no import kept the key apart before.
+        conn.execute_batch(
+            "ALTER TABLE fct_charge ADD COLUMN principal_id VARCHAR;
+             ALTER TABLE fct_charge ADD COLUMN credential_id VARCHAR;
+             ALTER TABLE fct_charge ADD COLUMN requester_details VARCHAR;",
+        )?;
     }
 
     Ok(())

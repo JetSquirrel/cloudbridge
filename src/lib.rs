@@ -26,6 +26,9 @@ pub mod service_category;
 // model-provider imports write. Applied by both backends' writers.
 pub mod token_meter;
 
+// FOCUS 1.5's requester attribution: the user and API key behind a charge.
+pub mod requester;
+
 // The demo bill, as rows. Written into whichever ledger the target has, by
 // that ledger's own `demo` module.
 pub mod demo_data;

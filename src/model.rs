@@ -177,6 +177,14 @@ pub struct Charge {
     /// FOCUS 1.5 model and token properties in it; see
     /// [`crate::token_meter`].
     pub sku_price_details: Option<String>,
+    /// FOCUS `PrincipalId`: the user or service account the charge was
+    /// incurred by. See [`crate::requester`].
+    pub principal_id: Option<String>,
+    /// FOCUS `CredentialId`: the published id of the API key or session
+    /// that authenticated the request, never the secret.
+    pub credential_id: Option<String>,
+    /// FOCUS `RequesterDetails`, JSON array text describing the two.
+    pub requester_details: Option<String>,
 }
 
 impl Charge {
@@ -215,6 +223,9 @@ impl Charge {
             consumed_unit: None,
             sku_meter: None,
             sku_price_details: None,
+            principal_id: None,
+            credential_id: None,
+            requester_details: None,
         }
     }
 }
