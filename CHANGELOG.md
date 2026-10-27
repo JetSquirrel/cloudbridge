@@ -42,6 +42,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reports (`ChargeClass`, `PricingCategory`, `ContractedCost`, ...) are
   left out, and a row with no reported amount keeps `BilledCost` empty.
   Desktop only.
+- **The user and API key behind model usage, as FOCUS 1.5 records them.**
+  An OpenAI export grouped by user or API key, and an Anthropic export
+  grouped by API key, keep them in the ledger's new `principal_id`,
+  `credential_id` and `requester_details` columns (schema v8): the key's
+  published id and display name, never the key itself, which is why
+  DeepSeek's masked `api_key` column is not used. The Query page and the
+  FOCUS export carry them; months imported earlier gain them when
+  imported again or replayed.
 
 ### Changed
 - **Models reads tokens by their FOCUS properties.** A token's class

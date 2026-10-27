@@ -56,6 +56,12 @@ pub struct Layout {
     /// token on one row only, so a usage row's input is what is left once
     /// these are taken out.
     pub input_includes: &'static [&'static str],
+    /// The user the usage is reported under: FOCUS `PrincipalId`.
+    pub principal_id: &'static [&'static str],
+    /// The API key's published id and display name: FOCUS `CredentialId`
+    /// and the `Credential` entry of `RequesterDetails`.
+    pub credential_id: &'static [&'static str],
+    pub credential_name: &'static [&'static str],
 }
 
 /// Where each of a [`Layout`]'s columns actually is.
@@ -67,6 +73,9 @@ struct Columns {
     description: Option<usize>,
     scope_name: Option<usize>,
     scope_id: Option<usize>,
+    principal_id: Option<usize>,
+    credential_id: Option<usize>,
+    credential_name: Option<usize>,
     /// Only the token columns this export carries.
     tokens: Vec<(&'static str, usize)>,
 }
@@ -81,6 +90,9 @@ impl Columns {
             description: sheet.column(layout.description),
             scope_name: sheet.column(layout.scope_name),
             scope_id: sheet.column(layout.scope_id),
+            principal_id: sheet.column(layout.principal_id),
+            credential_id: sheet.column(layout.credential_id),
+            credential_name: sheet.column(layout.credential_name),
             tokens: layout
                 .tokens
                 .iter()
@@ -146,6 +158,13 @@ pub fn normalize(layout: &Layout, batch: &RawBatch, part: &str) -> Result<Normal
             .filter(|(_, count)| *count != 0.0)
             .collect();
 
+        let requester = crate::requester::describe(
+            record.text(columns.principal_id).as_deref(),
+            "User",
+            record.text(columns.credential_id).as_deref(),
+            record.text(columns.credential_name).as_deref(),
+            "API Key",
+        );
         let template = || Charge {
             service_name: Some(layout.service_name.to_string()),
             // The model is what a model provider's spend is grouped by.
@@ -157,6 +176,9 @@ pub fn normalize(layout: &Layout, batch: &RawBatch, part: &str) -> Result<Normal
             // charge was billed against, which is what this column is for.
             billing_account_id: record.text(columns.scope_id),
             resource_name: record.text(columns.scope_name),
+            principal_id: requester.principal_id.clone(),
+            credential_id: requester.credential_id.clone(),
+            requester_details: requester.requester_details.clone(),
             ..Charge::new(start, end, currency.clone())
         };
 
@@ -256,6 +278,9 @@ mod tests {
             ("Cached Input Tokens", &["cached_tokens"]),
         ],
         input_includes: &["Cached Input Tokens"],
+        principal_id: &["user_id"],
+        credential_id: &["api_key_id"],
+        credential_name: &["api_key_name"],
     };
 
     const PART: &str = "test_usage_export";
@@ -351,6 +376,27 @@ mod tests {
                 ("Cached Input Tokens", 500.0),
             ]
         );
+    }
+
+    /// A row grouped by user and API key carries them as FOCUS 1.5's
+    /// requester columns; a row that names no key has none.
+    #[test]
+    fn the_user_and_key_behind_a_row_are_its_requester() {
+        let text = "date,model,cost,user_id,api_key_id,api_key_name\n\
+                    2026-08-09,model-x,1.00,user-abc,key_123,ci-pipeline\n\
+                    2026-08-10,model-x,2.00,,,\n";
+        let charges = charges(text, BillingPeriod::new(2026, 8));
+
+        assert_eq!(charges[0].principal_id.as_deref(), Some("user-abc"));
+        assert_eq!(charges[0].credential_id.as_deref(), Some("key_123"));
+        let details: serde_json::Value =
+            serde_json::from_str(charges[0].requester_details.as_deref().unwrap()).unwrap();
+        assert_eq!(details[1]["key"], "Credential");
+        assert_eq!(details[1]["value"]["Name"], "ci-pipeline");
+
+        assert_eq!(charges[1].principal_id, None);
+        assert_eq!(charges[1].credential_id, None);
+        assert_eq!(charges[1].requester_details, None);
     }
 
     #[test]

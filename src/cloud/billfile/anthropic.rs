@@ -96,6 +96,9 @@ static LAYOUT: Layout = Layout {
     ],
     // Anthropic reports cache reads and writes apart from uncached input.
     input_includes: &[],
+    principal_id: &[],
+    credential_id: &["api_key_id"],
+    credential_name: &["api_key_name", "key_name"],
 };
 
 fn periods(text: &str) -> Result<Vec<BillingPeriod>> {
