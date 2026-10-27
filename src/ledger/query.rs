@@ -1775,45 +1775,64 @@ fn tag_usage_breakdown_by_service_of(
 
 // ==================== Model token economics ====================
 //
-// LLM providers meter in tokens: a model-provider import writes the model
-// into `x_model` and the token count into `pricing_quantity`, priced in one
-// of the units `analytics::classify_token_unit` knows. These reads group
-// that usage by `(provider, MODEL_SQL)`; everything computed from the
-// groups is pure, in `analytics`.
+// LLM providers meter in tokens, and the ledger describes them as FOCUS
+// 1.5 does: the count in `consumed_quantity` with `consumed_unit` "Tokens",
+// the model and the tokens' direction and cache interaction in
+// `sku_price_details` (see `crate::token_meter`). These reads group that
+// usage by `(provider, MODEL_SQL)`; everything computed from the groups is
+// pure, in `analytics`.
 
-/// What a row's usage is grouped under on the Models page: the model, or,
-/// for a bill that names no model — Alibaba Cloud's Model Studio and
-/// Volcengine's Ark today — the product it was billed under.
-const MODEL_SQL: &str = "coalesce(nullif(x_model, ''), nullif(x_service_code, ''))";
+/// `sku_price_details`, or NULL where it is not JSON, so one malformed row
+/// cannot fail a page.
+const DETAILS_SQL: &str = "CASE WHEN json_valid(sku_price_details) THEN sku_price_details END";
 
-/// [`analytics::classify_token_unit`] as a SQL expression over
-/// `pricing_unit`, so a quantity lands in the same class here as it would in
-/// the pure layer — case-insensitive and trimmed, as the classifier is.
-const TOKEN_CLASS_SQL: &str = "CASE lower(trim(pricing_unit))
-         WHEN 'input tokens' THEN 'in'
-         WHEN 'tokens' THEN 'in'
-         WHEN 'output tokens' THEN 'out'
-         WHEN 'cached input tokens' THEN 'cache'
-         WHEN 'cache read tokens' THEN 'cache'
-         WHEN 'cache creation tokens' THEN 'cache'
-         WHEN 'requests' THEN 'request'
-         WHEN 'web search requests' THEN 'request'
-         ELSE 'other' END";
+/// What a row's usage is grouped under on the Models page: FOCUS
+/// `ModelId`, the model an import wrote, or, for a bill that names no
+/// model — Alibaba Cloud's Model Studio and Volcengine's Ark today — the
+/// product it was billed under.
+const MODEL_SQL: &str = "coalesce(
+        nullif(json_extract_string(details, '$.ModelId'), ''),
+        nullif(x_model, ''),
+        nullif(x_service_code, ''))";
+
+/// [`crate::token_meter::class_of`] as a SQL expression over a row's
+/// `consumed_unit`, `direction` and `cache` (the two token properties, read
+/// once by [`token_rows_sql`]), so a quantity lands in the same class here
+/// as in the browser's ledger: `in`, `out`, `cache_read`, `cache_write`,
+/// `unsplit`, or `other` for a row that does not count tokens.
+const TOKEN_CLASS_SQL: &str = "CASE
+         WHEN lower(trim(consumed_unit)) IS DISTINCT FROM 'tokens' THEN 'other'
+         WHEN direction = 'Output' THEN 'out'
+         WHEN direction = 'Input' AND cache = 'Read' THEN 'cache_read'
+         WHEN direction = 'Input' AND cache = 'Write' THEN 'cache_write'
+         WHEN direction = 'Input' THEN 'in'
+         ELSE 'unsplit' END";
+
+/// The reading view with each row's `model` and `token_class` beside it,
+/// and the two token properties they are read from.
+fn token_rows_sql() -> String {
+    format!(
+        "SELECT *, {TOKEN_CLASS_SQL} AS token_class FROM (
+           SELECT *, {MODEL_SQL} AS model,
+                  json_extract_string(details, '$.TokenDirection') AS direction,
+                  json_extract_string(details, '$.TokenCacheAction') AS cache
+           FROM (SELECT *, {DETAILS_SQL} AS details FROM {NORMALIZED_VIEW}))"
+    )
+}
 
 /// Token economics per `(provider, model)` over the charge-time window
 /// `[since, until)`, with the previous window `[prev_since, prev_until)`
 /// alongside for comparison, largest current-window usage first.
 ///
-/// A bucket qualifies when any of its rows carries a token-shaped pricing
-/// unit — any class [`analytics::classify_token_unit`] knows, requests
-/// included, though a request meters no tokens — or when it is a model
-/// provider's row: `OpenAI`, `Anthropic` and `DeepSeek` are the registry
-/// ids, so a provider that reports cost without token counts (DeepSeek
-/// today) still appears, with `has_token_data` false. Rows with neither a
-/// model nor a product code are left out. Token sums by class are over the
-/// current window; the previous window's tokens are one total,
-/// `previous_tokens`. `cost_basis='absent'` rows count toward both, since
-/// they carry token quantities with a NULL cost.
+/// A bucket qualifies when any of its rows counts tokens, or when it is a
+/// model provider's row: `OpenAI`, `Anthropic` and `DeepSeek` are the
+/// registry ids, so a provider that reports cost without token counts
+/// (DeepSeek today) still appears, with `has_token_data` false. Rows with
+/// neither a model nor a product code are left out. Token sums by class
+/// are of `consumed_quantity` over the current window; the previous
+/// window's tokens are one total, `previous_tokens`. `cost_basis='absent'`
+/// rows count toward both, since they carry token quantities with a NULL
+/// cost.
 pub fn model_token_summary(
     since: DateTime<Utc>,
     until: DateTime<Utc>,
@@ -1835,8 +1854,9 @@ pub(crate) fn model_token_summary_of(
     let scan_end = until.max(prev_until);
     let stamp = |instant: DateTime<Utc>| instant.format(TIMESTAMP_FORMAT).to_string();
 
+    let token_rows = token_rows_sql();
     let mut stmt = conn.prepare(&format!(
-        "SELECT provider, {MODEL_SQL} AS model,
+        "SELECT provider, model,
                 coalesce(sum(billed_cost_base) FILTER (
                     WHERE charge_category = 'Usage'
                       AND charge_period_start >= CAST(? AS TIMESTAMP)
@@ -1845,28 +1865,36 @@ pub(crate) fn model_token_summary_of(
                     WHERE charge_category = 'Usage'
                       AND charge_period_start >= CAST(? AS TIMESTAMP)
                       AND charge_period_start < CAST(? AS TIMESTAMP)), 0.0) AS previous_cost,
-                coalesce(sum(pricing_quantity) FILTER (
-                    WHERE {TOKEN_CLASS_SQL} = 'in'
+                coalesce(sum(consumed_quantity) FILTER (
+                    WHERE token_class = 'in'
                       AND charge_period_start >= CAST(? AS TIMESTAMP)
                       AND charge_period_start < CAST(? AS TIMESTAMP)), 0.0) AS tokens_in,
-                coalesce(sum(pricing_quantity) FILTER (
-                    WHERE {TOKEN_CLASS_SQL} = 'out'
+                coalesce(sum(consumed_quantity) FILTER (
+                    WHERE token_class = 'out'
                       AND charge_period_start >= CAST(? AS TIMESTAMP)
                       AND charge_period_start < CAST(? AS TIMESTAMP)), 0.0) AS tokens_out,
-                coalesce(sum(pricing_quantity) FILTER (
-                    WHERE {TOKEN_CLASS_SQL} = 'cache'
+                coalesce(sum(consumed_quantity) FILTER (
+                    WHERE token_class = 'cache_read'
                       AND charge_period_start >= CAST(? AS TIMESTAMP)
-                      AND charge_period_start < CAST(? AS TIMESTAMP)), 0.0) AS tokens_cache,
-                coalesce(sum(pricing_quantity) FILTER (
-                    WHERE {TOKEN_CLASS_SQL} IN ('in', 'out', 'cache')
+                      AND charge_period_start < CAST(? AS TIMESTAMP)), 0.0) AS tokens_cache_read,
+                coalesce(sum(consumed_quantity) FILTER (
+                    WHERE token_class = 'cache_write'
+                      AND charge_period_start >= CAST(? AS TIMESTAMP)
+                      AND charge_period_start < CAST(? AS TIMESTAMP)), 0.0) AS tokens_cache_write,
+                coalesce(sum(consumed_quantity) FILTER (
+                    WHERE token_class = 'unsplit'
+                      AND charge_period_start >= CAST(? AS TIMESTAMP)
+                      AND charge_period_start < CAST(? AS TIMESTAMP)), 0.0) AS tokens_unsplit,
+                coalesce(sum(consumed_quantity) FILTER (
+                    WHERE token_class <> 'other'
                       AND charge_period_start >= CAST(? AS TIMESTAMP)
                       AND charge_period_start < CAST(? AS TIMESTAMP)), 0.0) AS previous_tokens
-         FROM {NORMALIZED_VIEW}
+         FROM ({token_rows}) AS t
          WHERE charge_period_start >= CAST(? AS TIMESTAMP)
            AND charge_period_start < CAST(? AS TIMESTAMP)
-           AND {MODEL_SQL} IS NOT NULL
+           AND model IS NOT NULL
          GROUP BY provider, model
-         HAVING bool_or({TOKEN_CLASS_SQL} <> 'other')
+         HAVING bool_or(token_class <> 'other')
              OR provider IN ('OpenAI', 'Anthropic', 'DeepSeek')
          ORDER BY usage_cost DESC"
     ))?;
@@ -1884,25 +1912,32 @@ pub(crate) fn model_token_summary_of(
                 stamp(until),
                 stamp(since),
                 stamp(until),
+                stamp(since),
+                stamp(until),
+                stamp(since),
+                stamp(until),
                 stamp(prev_since),
                 stamp(prev_until),
                 stamp(scan_start),
                 stamp(scan_end),
             ],
             |row| {
-                let tokens_in = row.get::<_, f64>(4)?;
-                let tokens_out = row.get::<_, f64>(5)?;
-                let tokens_cache = row.get::<_, f64>(6)?;
-                Ok(ModelTokenSummary {
+                let summary = ModelTokenSummary {
                     provider: row.get(0)?,
                     model: row.get(1)?,
                     usage_cost: row.get(2)?,
                     previous_cost: row.get(3)?,
-                    previous_tokens: row.get(7)?,
-                    has_token_data: tokens_in + tokens_out + tokens_cache > 0.0,
-                    tokens_in,
-                    tokens_out,
-                    tokens_cache,
+                    tokens_in: row.get(4)?,
+                    tokens_out: row.get(5)?,
+                    tokens_cache_read: row.get(6)?,
+                    tokens_cache_write: row.get(7)?,
+                    tokens_unsplit: row.get(8)?,
+                    previous_tokens: row.get(9)?,
+                    has_token_data: false,
+                };
+                Ok(ModelTokenSummary {
+                    has_token_data: summary.tokens() > 0.0,
+                    ..summary
                 })
             },
         )?
@@ -1912,7 +1947,7 @@ pub(crate) fn model_token_summary_of(
 }
 
 /// Token counts per `(day, model)` over `[since, until)`, oldest first —
-/// the Models page's daily series. Only token-metered rows count: a
+/// the Models page's daily series. Only rows that count tokens count: a
 /// per-request charge is not a token count, and `cost_basis='absent'` rows
 /// count, as in [`model_token_summary`]. The rollup cannot answer this —
 /// it stores no quantities and no model — so the view is read directly.
@@ -1928,15 +1963,16 @@ pub(crate) fn daily_model_tokens_of(
     since: DateTime<Utc>,
     until: DateTime<Utc>,
 ) -> Result<Vec<DailyModelTokens>> {
+    let token_rows = token_rows_sql();
     let mut stmt = conn.prepare(&format!(
         "SELECT strftime(charge_period_start, '%Y-%m-%d') AS day,
-                {MODEL_SQL} AS model,
-                sum(pricing_quantity) AS tokens
-         FROM {NORMALIZED_VIEW}
+                model,
+                sum(consumed_quantity) AS tokens
+         FROM ({token_rows}) AS t
          WHERE charge_period_start >= CAST(? AS TIMESTAMP)
            AND charge_period_start < CAST(? AS TIMESTAMP)
-           AND {MODEL_SQL} IS NOT NULL
-           AND {TOKEN_CLASS_SQL} IN ('in', 'out', 'cache')
+           AND model IS NOT NULL
+           AND token_class <> 'other'
          GROUP BY day, model
          ORDER BY day"
     ))?;
@@ -4527,11 +4563,14 @@ mod tests {
         // In: 4M + 2M absent; out: 1M; cache: 5M read. Requests count as neither.
         assert!((gpt5.tokens_in - 6_000_000.0).abs() < 1e-9);
         assert!((gpt5.tokens_out - 1_000_000.0).abs() < 1e-9);
-        assert!((gpt5.tokens_cache - 5_000_000.0).abs() < 1e-9);
+        assert!((gpt5.tokens_cache_read - 5_000_000.0).abs() < 1e-9);
+        assert_eq!(gpt5.tokens_cache_write, 0.0);
         assert!(gpt5.has_token_data);
 
-        // The bare "Tokens" aggregate classifies as input-side.
-        assert!((rows[1].tokens_in - 3_000_000.0).abs() < 1e-9);
+        // The bare "Tokens" aggregate is neither input nor output.
+        assert_eq!(rows[1].tokens_in, 0.0);
+        assert!((rows[1].tokens_unsplit - 3_000_000.0).abs() < 1e-9);
+        assert!(rows[1].has_token_data);
 
         // DeepSeek reports cost with no token metering, and no July spend.
         let deepseek = &rows[2];
@@ -4541,8 +4580,69 @@ mod tests {
         assert_eq!(deepseek.tokens_in, 0.0);
         assert!(!deepseek.has_token_data);
 
-        // "Cached Input Tokens" is cache class.
-        assert!((rows[3].tokens_cache - 1_000.0).abs() < 1e-9);
+        // "Cached Input Tokens" is a cache read.
+        assert!((rows[3].tokens_cache_read - 1_000.0).abs() < 1e-9);
+    }
+
+    /// A source that reports FOCUS itself, as a cloud marketplace's export
+    /// does, is read by its own ModelId and token properties: no x_model
+    /// and no pricing unit the importers know.
+    #[test]
+    fn a_focus_token_row_is_read_by_its_own_properties() {
+        let mut conn = conn("USD");
+        let focus_row = |details: &str, quantity: f64, amount: f64| Charge {
+            service_name: Some("Amazon Bedrock".to_string()),
+            billed_cost: Some(amount),
+            pricing_unit: Some("1000000 Tokens".to_string()),
+            pricing_quantity: Some(quantity / 1_000_000.0),
+            consumed_quantity: Some(quantity),
+            consumed_unit: Some("Tokens".to_string()),
+            sku_price_details: Some(details.to_string()),
+            ..charge("ignored", amount, "USD", 4)
+        };
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                focus_row(
+                    r#"{"ModelDeveloper":"Solora AI","ModelId":"solora-reasoning-pro","TokenCacheAction":"Write","TokenDirection":"Input"}"#,
+                    2_000_000.0,
+                    7.5,
+                ),
+                focus_row(
+                    r#"{"ModelId":"solora-reasoning-pro","TokenCacheAction":"Read","TokenDirection":"Input"}"#,
+                    8_000_000.0,
+                    2.4,
+                ),
+                focus_row(
+                    r#"{"ModelId":"solora-reasoning-pro","TokenDirection":"Output"}"#,
+                    1_500_000.0,
+                    22.5,
+                ),
+                // Not JSON: still a token row, of no known direction.
+                focus_row("{broken", 10.0, 0.0),
+            ],
+        );
+
+        let sep = Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).unwrap();
+        let jul = Utc.with_ymd_and_hms(2026, 7, 1, 0, 0, 0).unwrap();
+        let rows = model_token_summary_of(&conn, at(1), sep, jul, at(1)).unwrap();
+        let names: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|row| (row.provider.as_str(), row.model.as_str()))
+            .collect();
+        // The malformed row has no model to group under.
+        assert_eq!(names, vec![("AWS", "solora-reasoning-pro")]);
+        let model = &rows[0];
+        assert!((model.usage_cost - 32.4).abs() < 1e-9, "got {model:?}");
+        assert_eq!(model.tokens_cache_write, 2_000_000.0);
+        assert_eq!(model.tokens_cache_read, 8_000_000.0);
+        assert_eq!(model.tokens_out, 1_500_000.0);
+        assert_eq!(model.tokens_in, 0.0);
+
+        let daily = daily_model_tokens_of(&conn, at(1), sep).unwrap();
+        assert_eq!(daily.len(), 1);
+        assert_eq!(daily[0].tokens, 11_500_000.0);
     }
 
     #[test]

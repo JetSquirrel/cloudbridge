@@ -26,7 +26,7 @@ use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
 use crate::model::{
     BillingPeriod, CategoryDelta, CostChangeDecomposition, DailyTotal, DataQualityIssue,
     DataQualityKind, FindingSeverity, ForecastBands, IssueSeverity, ModelTokenSummary,
-    MovementKind, PeriodForecast, PeriodOverPeriod, ServiceMovement, TokenClass, TokenFinding,
+    MovementKind, PeriodForecast, PeriodOverPeriod, ServiceMovement, TokenFinding,
 };
 
 // ==================== Billing-period arithmetic ====================
@@ -464,23 +464,6 @@ const SPEND_CONCENTRATION_SHARE: f64 = 0.70;
 /// delta is a price move, not a usage move.
 const PRICE_DOMINANCE: f64 = 0.25;
 
-/// Which side of an LLM bill a pricing unit measures.
-///
-/// The match is on the exact strings the ledger stores in `pricing_unit`,
-/// compared case-insensitively and trimmed, so a provider's own spelling —
-/// including a stray space — still classifies. The bare `"Tokens"` aggregate
-/// Aliyun and Volcengine report has no input/output split and is treated as
-/// input-side, which is where such aggregate usage almost always sits.
-pub fn classify_token_unit(unit: &str) -> TokenClass {
-    match unit.trim().to_ascii_lowercase().as_str() {
-        "input tokens" | "tokens" => TokenClass::Input,
-        "output tokens" => TokenClass::Output,
-        "cached input tokens" | "cache read tokens" | "cache creation tokens" => TokenClass::Cache,
-        "requests" | "web search requests" => TokenClass::Request,
-        _ => TokenClass::Other,
-    }
-}
-
 /// The blended cost of one million tokens, the unit LLM prices are quoted
 /// in. `None` when there is nothing to divide by, or a negative cost — a
 /// credit — would produce a nonsensical unit price.
@@ -491,15 +474,17 @@ pub fn blended_unit_cost(cost: f64, tokens: f64) -> Option<f64> {
     Some(cost / tokens * 1_000_000.0)
 }
 
-/// The share of a model's input side that came from cache, as
-/// `cache / (cache + input)`. `None` when the model has no input-side tokens
-/// at all, where the share is undefined rather than zero.
-pub fn cache_read_share(tokens_cache: f64, tokens_in: f64) -> Option<f64> {
-    let total = tokens_cache + tokens_in;
+/// The share of a model's input side served from a prompt cache, as
+/// `read / (read + other_input)`, where `other_input` is the rest of the
+/// input side: uncached input and input written to the cache. `None` when
+/// the model has no input-side tokens at all, where the share is undefined
+/// rather than zero.
+pub fn cache_read_share(tokens_cache_read: f64, other_input: f64) -> Option<f64> {
+    let total = tokens_cache_read + other_input;
     if total <= 0.0 {
         return None;
     }
-    Some(tokens_cache / total)
+    Some(tokens_cache_read / total)
 }
 
 /// Split a model's spend delta into a volume effect and a price effect, in
@@ -545,15 +530,20 @@ pub fn token_findings(models: &[ModelTokenSummary]) -> Vec<TokenFinding> {
         if model.has_token_data {
             // (a) A model that barely reads from cache pays input price for
             // what could be cache price.
-            if let Some(share) = cache_read_share(model.tokens_cache, model.tokens_in) {
+            // Tokens the bill does not split into input and output are no
+            // input side to measure.
+            if let Some(share) = cache_read_share(
+                model.tokens_cache_read,
+                model.tokens_in + model.tokens_cache_write,
+            ) {
                 if share < LOW_CACHE_SHARE {
                     findings.push(TokenFinding {
                         title: "Low cache utilization".to_string(),
                         detail: format!(
-                            "{name}: cache tokens are {:.1}% of the input side ({:.0} cached of {:.0} input-side tokens)",
+                            "{name}: cache reads are {:.1}% of the input side ({:.0} read from cache of {:.0} input-side tokens)",
                             share * 100.0,
-                            model.tokens_cache,
-                            model.tokens_cache + model.tokens_in,
+                            model.tokens_cache_read,
+                            model.input_side(),
                         ),
                         severity: FindingSeverity::Notice,
                     });
@@ -563,7 +553,7 @@ pub fn token_findings(models: &[ModelTokenSummary]) -> Vec<TokenFinding> {
             // (b) A spend rise that is a price move, not a usage move. A
             // previous period with no tokens has no unit cost to rise from,
             // so it decomposes to nothing and raises nothing.
-            let tokens = model.tokens_in + model.tokens_out + model.tokens_cache;
+            let tokens = model.tokens();
             if model.usage_cost > model.previous_cost {
                 if let Some((volume_effect, price_effect)) = price_volume_decompose(
                     (model.usage_cost, tokens),
@@ -1307,42 +1297,12 @@ mod tests {
             previous_cost,
             tokens_in: 0.0,
             tokens_out: 0.0,
-            tokens_cache: 0.0,
+            tokens_cache_read: 0.0,
+            tokens_cache_write: 0.0,
+            tokens_unsplit: 0.0,
             previous_tokens: 0.0,
             has_token_data: false,
         }
-    }
-
-    #[test]
-    fn the_known_pricing_units_classify_to_their_side_of_the_bill() {
-        assert_eq!(classify_token_unit("Input Tokens"), TokenClass::Input);
-        assert_eq!(classify_token_unit("Output Tokens"), TokenClass::Output);
-        assert_eq!(
-            classify_token_unit("Cached Input Tokens"),
-            TokenClass::Cache
-        );
-        assert_eq!(classify_token_unit("Cache Read Tokens"), TokenClass::Cache);
-        assert_eq!(
-            classify_token_unit("Cache Creation Tokens"),
-            TokenClass::Cache
-        );
-        assert_eq!(classify_token_unit("Requests"), TokenClass::Request);
-        assert_eq!(
-            classify_token_unit("Web Search Requests"),
-            TokenClass::Request
-        );
-        // The bare aggregate Aliyun and Volcengine report is input-side.
-        assert_eq!(classify_token_unit("Tokens"), TokenClass::Input);
-    }
-
-    #[test]
-    fn classification_ignores_case_and_surrounding_space_but_nothing_else() {
-        assert_eq!(classify_token_unit("  input tokens \n"), TokenClass::Input);
-        assert_eq!(classify_token_unit("CACHE READ TOKENS"), TokenClass::Cache);
-        assert_eq!(classify_token_unit("tokens"), TokenClass::Input);
-
-        assert_eq!(classify_token_unit("GB-Seconds"), TokenClass::Other);
-        assert_eq!(classify_token_unit(""), TokenClass::Other);
     }
 
     #[test]
@@ -1410,7 +1370,7 @@ mod tests {
     fn a_model_with_barely_any_cache_reads_is_a_notice() {
         let mut models = vec![ModelTokenSummary {
             tokens_in: 980_000.0,
-            tokens_cache: 20_000.0,
+            tokens_cache_read: 20_000.0,
             has_token_data: true,
             ..summary("anthropic", "claude-sonnet-4", 50.0, 50.0)
         }];
@@ -1423,8 +1383,43 @@ mod tests {
         assert!(findings[0].detail.contains("anthropic claude-sonnet-4"));
 
         // Well cached — 40% of the input side — raises nothing.
-        models[0].tokens_cache = 400_000.0;
+        models[0].tokens_cache_read = 400_000.0;
         models[0].tokens_in = 600_000.0;
+        assert!(token_findings(&models).is_empty());
+    }
+
+    /// Writing to a cache is not reading from it: a prefix written and
+    /// never read back is input-side tokens the cache served none of.
+    #[test]
+    fn cache_writes_count_toward_the_input_side_not_the_reads() {
+        let models = vec![ModelTokenSummary {
+            tokens_in: 100_000.0,
+            tokens_cache_write: 880_000.0,
+            tokens_cache_read: 20_000.0,
+            has_token_data: true,
+            ..summary("anthropic", "claude-sonnet-4", 50.0, 50.0)
+        }];
+
+        let findings = token_findings(&models);
+        assert_eq!(findings.len(), 1);
+        assert!(
+            findings[0].detail.contains("2.0%"),
+            "{}",
+            findings[0].detail
+        );
+        assert!(findings[0].detail.contains("of 1000000 input-side"));
+    }
+
+    /// A bill that counts input and output together has no input side, so
+    /// it is not told its cache is underused.
+    #[test]
+    fn unsplit_tokens_raise_no_cache_finding() {
+        let models = vec![ModelTokenSummary {
+            tokens_unsplit: 5_000_000.0,
+            has_token_data: true,
+            ..summary("Volcengine", "ark", 50.0, 50.0)
+        }];
+
         assert!(token_findings(&models).is_empty());
     }
 
@@ -1461,7 +1456,7 @@ mod tests {
     fn a_rise_that_is_all_price_and_no_volume_is_a_warning() {
         let models = vec![ModelTokenSummary {
             tokens_in: 900_000.0,
-            tokens_cache: 100_000.0,
+            tokens_cache_read: 100_000.0,
             previous_tokens: 1_000_000.0,
             has_token_data: true,
             // Same tokens, spend up from 100 to 150: the whole delta is the
@@ -1482,7 +1477,7 @@ mod tests {
     fn a_rise_that_is_all_volume_is_not_a_rising_unit_price() {
         let models = vec![ModelTokenSummary {
             tokens_in: 1_350_000.0,
-            tokens_cache: 150_000.0,
+            tokens_cache_read: 150_000.0,
             previous_tokens: 1_000_000.0,
             has_token_data: true,
             // Half again the tokens at the same $100 per 1M: spend rose
@@ -1497,7 +1492,7 @@ mod tests {
     fn a_rise_from_a_period_without_tokens_has_no_unit_price_to_compare() {
         let models = vec![ModelTokenSummary {
             tokens_in: 900_000.0,
-            tokens_cache: 100_000.0,
+            tokens_cache_read: 100_000.0,
             has_token_data: true,
             ..summary("openai", "gpt-4o", 150.0, 100.0)
         }];
@@ -1509,7 +1504,7 @@ mod tests {
     fn a_cheaper_period_is_not_a_rising_unit_price() {
         let models = vec![ModelTokenSummary {
             tokens_in: 900_000.0,
-            tokens_cache: 100_000.0,
+            tokens_cache_read: 100_000.0,
             has_token_data: true,
             ..summary("openai", "gpt-4o", 90.0, 100.0)
         }];
@@ -1525,7 +1520,7 @@ mod tests {
             // Warning: rising unit price, and also the spend concentration.
             ModelTokenSummary {
                 tokens_in: 900_000.0,
-                tokens_cache: 100_000.0,
+                tokens_cache_read: 100_000.0,
                 previous_tokens: 1_000_000.0,
                 has_token_data: true,
                 ..summary("openai", "gpt-4o", 200.0, 100.0)
@@ -1533,7 +1528,7 @@ mod tests {
             // Notice: low cache utilization.
             ModelTokenSummary {
                 tokens_in: 100_000.0,
-                tokens_cache: 1_000.0,
+                tokens_cache_read: 1_000.0,
                 has_token_data: true,
                 ..summary("anthropic", "claude-sonnet-4", 30.0, 30.0)
             },

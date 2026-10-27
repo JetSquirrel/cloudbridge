@@ -22,6 +22,7 @@ use crate::analytics::{self, QualityCounts, TwoPeriodBuckets};
 use crate::memory::{self, NormalizedRow};
 use crate::model::{BillingPeriod, BreakdownPart, TokenClass};
 use crate::store::Connection;
+use crate::token_meter::{self, TokenDetails};
 
 pub use crate::model::{
     AdhocResult, Balance, BreakdownDim, CategoryDelta, CostChangeDecomposition, DailyModelTokens,
@@ -1389,22 +1390,29 @@ fn trailing_daily_average_at(
 /// bucket has to carry a token-class pricing unit to qualify.
 const MODEL_PROVIDERS: &[&str] = &["OpenAI", "Anthropic", "DeepSeek"];
 
-/// What a row's usage is grouped under on the Models page: the model, or,
-/// for a bill that names no model — Alibaba Cloud's Model Studio and
-/// Volcengine's Ark today — the product it was billed under. The desktop's
-/// `MODEL_SQL`.
-fn model_key(row: &NormalizedRow) -> Option<&str> {
-    [row.x_model.as_deref(), row.x_service_code.as_deref()]
+/// What a row's usage is grouped under on the Models page: FOCUS
+/// `ModelId`, the model an import wrote, or, for a bill that names no
+/// model — Alibaba Cloud's Model Studio and Volcengine's Ark today — the
+/// product it was billed under. The desktop's `MODEL_SQL`.
+fn model_key(row: &NormalizedRow) -> Option<String> {
+    let model_id = row
+        .sku_price_details
+        .as_deref()
+        .and_then(|details| TokenDetails::parse(details).model_id);
+    model_id
         .into_iter()
-        .flatten()
+        .chain(row.x_model.clone())
+        .chain(row.x_service_code.clone())
         .find(|key| !key.is_empty())
 }
 
-/// Whether a pricing unit meters something token-shaped — tokens of any
-/// class, or requests — as opposed to an ordinary usage unit like hours or
-/// GB-months, which [`analytics::classify_token_unit`] leaves as `Other`.
-fn is_token_unit(unit: &str) -> bool {
-    !matches!(analytics::classify_token_unit(unit), TokenClass::Other)
+/// Which part of a token bill a row's tokens are, or `None` for a row that
+/// counts no tokens. The desktop's `TOKEN_CLASS_SQL`.
+fn token_class(row: &NormalizedRow) -> Option<TokenClass> {
+    token_meter::class_of(
+        row.consumed_unit.as_deref(),
+        row.sku_price_details.as_deref(),
+    )
 }
 
 /// Cost and token usage per `(provider, model)` over a charge-time window,
@@ -1416,10 +1424,9 @@ fn is_token_unit(unit: &str) -> bool {
 /// the sum over Usage rows in `[since, until)` and `previous_cost` the same
 /// over `[prev_since, prev_until)`, so a credit does not shrink what was
 /// consumed; a charge no rate covers adds nothing to either, as `sum`
-/// ignores NULL. Token totals are sums of `pricing_quantity` by class —
-/// input toward `tokens_in`, output toward `tokens_out`, cache toward
-/// `tokens_cache`, all three in the previous window toward
-/// `previous_tokens`; request and unclassed units meter no tokens. A row with a
+/// ignores NULL. Token totals are sums of `consumed_quantity` by
+/// [`TokenClass`], every class in the previous window toward
+/// `previous_tokens`; a row that counts no tokens adds none. A row with a
 /// quantity but no billable amount still counts its tokens, so an
 /// absent-basis model can report `has_token_data` at zero cost. Largest
 /// `usage_cost` first.
@@ -1435,10 +1442,12 @@ pub fn model_token_summary(
         previous_cost: f64,
         tokens_in: f64,
         tokens_out: f64,
-        tokens_cache: f64,
+        tokens_cache_read: f64,
+        tokens_cache_write: f64,
+        tokens_unsplit: f64,
         previous_tokens: f64,
-        /// Any row under the key carried a token-class unit, in either
-        /// window — the qualification for keys outside [`MODEL_PROVIDERS`].
+        /// Any row under the key counted tokens, in either window — the
+        /// qualification for keys outside [`MODEL_PROVIDERS`].
         has_token_unit: bool,
     }
 
@@ -1455,28 +1464,21 @@ pub fn model_token_summary(
                 continue;
             }
 
-            let entry = buckets
-                .entry((row.provider.clone(), model.to_string()))
-                .or_default();
+            let entry = buckets.entry((row.provider.clone(), model)).or_default();
 
-            if let Some(unit) = row.pricing_unit.as_deref() {
-                entry.has_token_unit |= is_token_unit(unit);
-                let quantity = row.pricing_quantity.unwrap_or(0.0);
-                let class = analytics::classify_token_unit(unit);
+            if let Some(class) = token_class(row) {
+                entry.has_token_unit = true;
+                let quantity = row.consumed_quantity.unwrap_or(0.0);
                 if current {
-                    match class {
-                        TokenClass::Input => entry.tokens_in += quantity,
-                        TokenClass::Output => entry.tokens_out += quantity,
-                        TokenClass::Cache => entry.tokens_cache += quantity,
-                        TokenClass::Request | TokenClass::Other => {}
-                    }
+                    *match class {
+                        TokenClass::Input => &mut entry.tokens_in,
+                        TokenClass::Output => &mut entry.tokens_out,
+                        TokenClass::CacheRead => &mut entry.tokens_cache_read,
+                        TokenClass::CacheWrite => &mut entry.tokens_cache_write,
+                        TokenClass::Unsplit => &mut entry.tokens_unsplit,
+                    } += quantity;
                 }
-                if previous
-                    && matches!(
-                        class,
-                        TokenClass::Input | TokenClass::Output | TokenClass::Cache
-                    )
-                {
+                if previous {
                     entry.previous_tokens += quantity;
                 }
             }
@@ -1497,16 +1499,24 @@ pub fn model_token_summary(
             .filter(|((provider, _), bucket)| {
                 bucket.has_token_unit || MODEL_PROVIDERS.contains(&provider.as_str())
             })
-            .map(|((provider, model), bucket)| ModelTokenSummary {
-                provider,
-                model,
-                usage_cost: bucket.usage_cost,
-                previous_cost: bucket.previous_cost,
-                tokens_in: bucket.tokens_in,
-                tokens_out: bucket.tokens_out,
-                tokens_cache: bucket.tokens_cache,
-                previous_tokens: bucket.previous_tokens,
-                has_token_data: bucket.tokens_in + bucket.tokens_out + bucket.tokens_cache > 0.0,
+            .map(|((provider, model), bucket)| {
+                let summary = ModelTokenSummary {
+                    provider,
+                    model,
+                    usage_cost: bucket.usage_cost,
+                    previous_cost: bucket.previous_cost,
+                    tokens_in: bucket.tokens_in,
+                    tokens_out: bucket.tokens_out,
+                    tokens_cache_read: bucket.tokens_cache_read,
+                    tokens_cache_write: bucket.tokens_cache_write,
+                    tokens_unsplit: bucket.tokens_unsplit,
+                    previous_tokens: bucket.previous_tokens,
+                    has_token_data: false,
+                };
+                ModelTokenSummary {
+                    has_token_data: summary.tokens() > 0.0,
+                    ..summary
+                }
             })
             .collect();
         summaries.sort_by(|a, b| b.usage_cost.total_cmp(&a.usage_cost));
@@ -1518,9 +1528,9 @@ pub fn model_token_summary(
 /// Total tokens per `(day, model)` over a charge-time window `[since,
 /// until)`, oldest day first — the Models page's daily series.
 ///
-/// Only token-unit rows contribute, and only input, output and cache classes
-/// count toward the total: a requests-metered row meters no tokens. Days
-/// with no token rows are absent, as they are from every other daily series.
+/// Only rows that count tokens contribute: a requests-metered row meters
+/// none. Days with no token rows are absent, as they are from every other
+/// daily series.
 pub fn daily_model_tokens(
     since: DateTime<Utc>,
     until: DateTime<Utc>,
@@ -1536,18 +1546,12 @@ pub fn daily_model_tokens(
             let Some(model) = model_key(row) else {
                 continue;
             };
-            let Some(unit) = row.pricing_unit.as_deref() else {
+            if token_class(row).is_none() {
                 continue;
-            };
-            let tokens = match analytics::classify_token_unit(unit) {
-                TokenClass::Input | TokenClass::Output | TokenClass::Cache => {
-                    row.pricing_quantity.unwrap_or(0.0)
-                }
-                TokenClass::Request | TokenClass::Other => continue,
-            };
+            }
             *grouped
-                .entry((memory::day_of(row.charge_period_start), model.to_string()))
-                .or_insert(0.0) += tokens;
+                .entry((memory::day_of(row.charge_period_start), model))
+                .or_insert(0.0) += row.consumed_quantity.unwrap_or(0.0);
         }
 
         grouped

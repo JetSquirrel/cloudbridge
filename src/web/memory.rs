@@ -124,6 +124,9 @@ pub struct NormalizedRow {
     /// account the charge was incurred in.
     pub cloud_account_id: Option<String>,
     pub pricing_unit: Option<String>,
+    pub consumed_quantity: Option<f64>,
+    pub consumed_unit: Option<String>,
+    pub sku_price_details: Option<String>,
     pub charge_category: ChargeCategory,
     pub tags: Option<String>,
     pub billing_currency: String,
@@ -170,6 +173,9 @@ pub fn normalized(store: &Store) -> Vec<NormalizedRow> {
                     .clone()
                     .or_else(|| charge.billing_account_id.clone()),
                 pricing_unit: charge.pricing_unit.clone(),
+                consumed_quantity: charge.consumed_quantity,
+                consumed_unit: charge.consumed_unit.clone(),
+                sku_price_details: charge.sku_price_details.clone(),
                 charge_category: charge.charge_category,
                 tags: charge.tags.clone(),
                 billing_currency: charge.billing_currency.clone(),
