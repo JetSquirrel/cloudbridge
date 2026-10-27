@@ -21,6 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   select a model's cache reads with
   `json_extract_string(sku_price_details, '$.TokenCacheAction') = 'Read'`
   instead of matching the provider's meter name.
+- **An AWS Data Export keeps FOCUS's description of tokens.** Its
+  `ConsumedQuantity`, `ConsumedUnit`, `SkuMeter` and `SkuPriceDetails` are
+  read into the ledger, so a row with `ConsumedUnit` "Tokens" (Amazon
+  Bedrock's, for one) appears on the Models page, under the `ModelId` its
+  details give or else under its product. An export written before FOCUS
+  1.5 gives no `TokenDirection`; for a token row, it is read from the
+  meter name when the name says which tokens it counts
+  ("...-cache-read-input-token-count", "...-output-tokens"), and left out
+  when it does not. Not yet checked against a real Bedrock export. A `SkuPriceDetails` or `Tags` column delivered as a
+  Parquet MAP is stored as JSON, like the CSV's.
 
 ### Changed
 - **Models reads tokens by their FOCUS properties.** A token's class
