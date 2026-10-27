@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Token rows in FOCUS 1.5's terms.** FOCUS 1.5 describes an AI model
+  API's bill without a column of its own: the token count goes in
+  `ConsumedQuantity` with `ConsumedUnit` "Tokens", the provider's meter
+  in `SkuMeter`, and the model and the tokens themselves in
+  `SkuPriceDetails`: `ModelDeveloper`, `ModelId`, `TokenDirection`
+  (Input or Output) and `TokenCacheAction` (Uncached, Read or Write).
+  The ledger gains `consumed_quantity`, `consumed_unit`, `sku_meter`
+  and `sku_price_details` (schema v7), filled for every OpenAI,
+  Anthropic, DeepSeek, Model Studio and Ark row on import, and for the
+  rows already in a ledger when it is first opened. The Query page can
+  select a model's cache reads with
+  `json_extract_string(sku_price_details, '$.TokenCacheAction') = 'Read'`
+  instead of matching the provider's meter name.
+
+### Fixed
+- An OpenAI usage export counted cached input tokens twice: its
+  `input_tokens` already includes them, and they were stored again as
+  cached input. Input is now what is left once the cached tokens are taken
+  out, so each token is counted on one row, as FOCUS requires. Months
+  imported before this keep the old counts until they are imported again
+  or replayed (Accounts, Replay normalization).
+
 ## [0.6.0] - 2026-10-26
 
 Azure and Google Cloud join as billing sources: a subscription's actual

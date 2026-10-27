@@ -98,6 +98,8 @@ static LAYOUT: Layout = Layout {
             &["num_model_requests", "n_requests", "requests"],
         ),
     ],
+    // The Usage API documents `input_tokens` as including cached tokens.
+    input_includes: &["Cached Input Tokens"],
 };
 
 fn periods(text: &str) -> Result<Vec<BillingPeriod>> {

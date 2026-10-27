@@ -89,6 +89,7 @@ pub fn replace_period(
                 .cloned()
                 .map(|mut charge| {
                     crate::service_category::fill(&key.provider, &mut charge);
+                    crate::token_meter::fill(&key.provider, &mut charge);
                     charge
                 })
                 .collect(),
