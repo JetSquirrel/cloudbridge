@@ -14,6 +14,7 @@
 //! would stop matching theirs.
 
 pub mod demo;
+pub mod focus_export;
 pub mod inventory;
 pub mod query;
 pub mod rollup;
