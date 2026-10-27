@@ -22,6 +22,10 @@ pub mod analytics;
 // means the same thing on every cloud. Applied by both backends' writers.
 pub mod service_category;
 
+// FOCUS 1.5's token properties, derived from the pricing units the
+// model-provider imports write. Applied by both backends' writers.
+pub mod token_meter;
+
 // The demo bill, as rows. Written into whichever ledger the target has, by
 // that ledger's own `demo` module.
 pub mod demo_data;

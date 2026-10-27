@@ -259,15 +259,17 @@ fn parse_timestamp(value: &str) -> Result<DateTime<Utc>> {
     )
 }
 
-/// The charges with FOCUS service categories filled in where their source
-/// left them unset — the one place the desktop applies the mapping, so a
-/// fetch, an import and a replay all come out placed the same way.
+/// The charges with FOCUS service categories and FOCUS 1.5 token columns
+/// filled in where their source left them unset — the one place the
+/// desktop applies the mappings, so a fetch, an import and a replay all
+/// come out placed the same way.
 fn categorized(key: &PeriodKey, charges: &[Charge]) -> Vec<Charge> {
     charges
         .iter()
         .cloned()
         .map(|mut charge| {
             crate::service_category::fill(&key.provider, &mut charge);
+            crate::token_meter::fill(&key.provider, &mut charge);
             charge
         })
         .collect()
@@ -326,11 +328,13 @@ pub(crate) fn write_period(
               billed_cost, effective_cost, list_cost, billing_currency, cost_basis,
               pricing_quantity, pricing_unit, tags, created_at,
               sub_account_id, sub_account_name,
-              service_subcategory, x_service_code, x_model)
+              service_subcategory, x_service_code, x_model,
+              consumed_quantity, consumed_unit, sku_meter, sku_price_details)
              VALUES (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), ?, ?,
                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP),
                      ?, ?,
-                     ?, ?, ?)",
+                     ?, ?, ?,
+                     ?, ?, ?, ?)",
         )?;
 
         for (charge, charge_id) in charges.iter().zip(&ids) {
@@ -370,6 +374,10 @@ pub(crate) fn write_period(
                 charge.service_subcategory,
                 charge.x_service_code,
                 charge.x_model,
+                charge.consumed_quantity,
+                charge.consumed_unit,
+                charge.sku_meter,
+                charge.sku_price_details,
             ])?;
         }
     }
@@ -750,6 +758,48 @@ mod tests {
         assert_eq!(basis, "absent");
         assert_eq!(unit, "Tokens");
         assert_eq!(cost, None);
+    }
+
+    /// A model provider's token row is written with the FOCUS 1.5 columns
+    /// its pricing unit and model imply.
+    #[test]
+    fn a_token_row_is_written_with_its_focus_columns() {
+        let mut conn = conn();
+        let key = PeriodKey::new("Anthropic", "acct-4", "2026-08");
+
+        write_period(
+            &mut conn,
+            &key,
+            "b-1",
+            &[Charge {
+                x_model: Some("claude-sonnet-4-5".to_string()),
+                pricing_quantity: Some(2_000_000.0),
+                pricing_unit: Some("Cache Creation Tokens".to_string()),
+                billed_cost: Some(7.5),
+                ..Charge::new(at(1), at(2), "USD")
+            }],
+            None,
+            Channel::File,
+        )
+        .unwrap();
+
+        let stored: (f64, String, String, String) = conn
+            .query_row(
+                "SELECT consumed_quantity, consumed_unit, sku_meter, sku_price_details
+                 FROM fct_charge",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            stored,
+            (
+                2_000_000.0,
+                "Tokens".to_string(),
+                "Cache Creation Tokens".to_string(),
+                r#"{"ModelDeveloper":"Anthropic","ModelId":"claude-sonnet-4-5","TokenCacheAction":"Write","TokenDirection":"Input"}"#.to_string()
+            )
+        );
     }
 
     fn balance(day: u32, topped_up: f64) -> BalanceSnapshot {

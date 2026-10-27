@@ -51,6 +51,11 @@ pub struct Layout {
     pub scope_id: &'static [&'static str],
     /// Token columns, each paired with the `pricing_unit` it is counted in.
     pub tokens: &'static [(&'static str, &'static [&'static str])],
+    /// Units whose tokens the `"Input Tokens"` column already counts.
+    /// OpenAI's input total includes its cached tokens; FOCUS 1.5 counts a
+    /// token on one row only, so a usage row's input is what is left once
+    /// these are taken out.
+    pub input_includes: &'static [&'static str],
 }
 
 /// Where each of a [`Layout`]'s columns actually is.
@@ -173,7 +178,7 @@ pub fn normalize(layout: &Layout, batch: &RawBatch, part: &str) -> Result<Normal
             }),
             // A usage export: what was consumed, with no claim about what
             // it cost.
-            None => charges.extend(counted.iter().map(|(unit, count)| Charge {
+            None => charges.extend(apart(layout, &counted).iter().map(|(unit, count)| Charge {
                 cost_basis: CostBasis::Absent,
                 billed_cost: None,
                 pricing_quantity: Some(*count),
@@ -187,6 +192,25 @@ pub fn normalize(layout: &Layout, batch: &RawBatch, part: &str) -> Result<Normal
         charges,
         balances: Vec::new(),
     })
+}
+
+/// A usage row's counts with each token counted once: the input total less
+/// the tokens [`Layout::input_includes`] says it already holds. An input
+/// count that nothing is left of is no row.
+fn apart(layout: &Layout, counted: &[(&'static str, f64)]) -> Vec<(&'static str, f64)> {
+    let included: f64 = counted
+        .iter()
+        .filter(|(unit, _)| layout.input_includes.contains(unit))
+        .map(|(_, count)| count)
+        .sum();
+    counted
+        .iter()
+        .map(|&(unit, count)| match unit {
+            "Input Tokens" => (unit, (count - included).max(0.0)),
+            _ => (unit, count),
+        })
+        .filter(|(_, count)| *count != 0.0)
+        .collect()
 }
 
 /// The span a row covers: its own day, or the whole month when the export
@@ -229,7 +253,9 @@ mod tests {
         tokens: &[
             ("Input Tokens", &["input_tokens"]),
             ("Output Tokens", &["output_tokens"]),
+            ("Cached Input Tokens", &["cached_tokens"]),
         ],
+        input_includes: &["Cached Input Tokens"],
     };
 
     const PART: &str = "test_usage_export";
@@ -296,6 +322,35 @@ mod tests {
         assert_eq!(charges[0].pricing_quantity, Some(1000.0));
         assert_eq!(charges[0].pricing_unit.as_deref(), Some("Input Tokens"));
         assert_eq!(charges[1].pricing_quantity, Some(200.0));
+    }
+
+    #[test]
+    fn cached_tokens_are_taken_out_of_an_input_total_that_counts_them() {
+        let text = "date,model,input_tokens,cached_tokens,output_tokens
+                    2026-08-09,model-x,1000,600,200
+                    2026-08-10,model-x,500,500,100
+";
+        let charges = charges(text, BillingPeriod::new(2026, 8));
+        let units: Vec<(&str, f64)> = charges
+            .iter()
+            .map(|charge| {
+                (
+                    charge.pricing_unit.as_deref().unwrap(),
+                    charge.pricing_quantity.unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            units,
+            vec![
+                ("Input Tokens", 400.0),
+                ("Output Tokens", 200.0),
+                ("Cached Input Tokens", 600.0),
+                // Every input token of the second day was cached.
+                ("Output Tokens", 100.0),
+                ("Cached Input Tokens", 500.0),
+            ]
+        );
     }
 
     #[test]

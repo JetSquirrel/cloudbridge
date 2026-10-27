@@ -44,7 +44,14 @@ use duckdb::{params, Connection};
 /// one scan it came from. New tables only, so the CREATEs below are the
 /// migration. They are the plugin's whole contract with the ledger:
 /// nothing reads the scanner's own database afterwards.
-pub const SCHEMA_VERSION: i32 = 6;
+///
+/// v7 adds FOCUS 1.5's `consumed_quantity`, `consumed_unit`, `sku_meter`
+/// and `sku_price_details`: how an AI model API's bill is described, the
+/// token count in the first two and the model and the tokens' direction
+/// and cache interaction in the last. [`migrate`] backfills them from the
+/// pricing unit and model the ledger already stores, through
+/// [`crate::token_meter::derive`], as a new write would fill them.
+pub const SCHEMA_VERSION: i32 = 7;
 
 /// The view the application reads: every charge with its amount also
 /// expressed in the reporting currency.
@@ -141,7 +148,13 @@ pub fn apply(conn: &Connection) -> Result<()> {
             -- the last two, hence the x_ prefix.
             service_subcategory VARCHAR,
             x_service_code      VARCHAR,
-            x_model             VARCHAR
+            x_model             VARCHAR,
+            -- v7: FOCUS 1.5's token billing columns. sku_price_details is
+            -- JSON object text, like tags.
+            consumed_quantity   DOUBLE,
+            consumed_unit       VARCHAR,
+            sku_meter           VARCHAR,
+            sku_price_details   VARCHAR
         );
 
         CREATE INDEX IF NOT EXISTS idx_charge_period
@@ -287,6 +300,65 @@ fn migrate(conn: &Connection) -> Result<()> {
         let moved = split_service_category(conn);
         conn.execute_batch(if moved.is_ok() { "COMMIT" } else { "ROLLBACK" })?;
         moved?;
+    }
+    if !has_column(conn, "fct_charge", "sku_price_details")? {
+        tracing::info!("Adding FOCUS 1.5 token columns to fct_charge");
+        conn.execute_batch("BEGIN TRANSACTION")?;
+        let added = add_token_columns(conn);
+        conn.execute_batch(if added.is_ok() { "COMMIT" } else { "ROLLBACK" })?;
+        added?;
+    }
+
+    Ok(())
+}
+
+/// The v7 move: add the columns, then give every row a new write would
+/// fill the values [`crate::token_meter::derive`] gives it. Only rows with
+/// a model or a token-shaped pricing unit can gain anything, so only those
+/// are read.
+fn add_token_columns(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "ALTER TABLE fct_charge ADD COLUMN consumed_quantity DOUBLE;
+         ALTER TABLE fct_charge ADD COLUMN consumed_unit VARCHAR;
+         ALTER TABLE fct_charge ADD COLUMN sku_meter VARCHAR;
+         ALTER TABLE fct_charge ADD COLUMN sku_price_details VARCHAR;",
+    )?;
+
+    type Row = (String, String, Option<String>, Option<f64>, Option<String>);
+    let rows: Vec<Row> = conn
+        .prepare(
+            "SELECT charge_id, provider, pricing_unit, pricing_quantity, x_model
+             FROM fct_charge
+             WHERE x_model IS NOT NULL OR lower(pricing_unit) LIKE '%tokens%'",
+        )?
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })?
+        .collect::<Result<_, _>>()?;
+
+    let mut update = conn.prepare(
+        "UPDATE fct_charge
+         SET consumed_quantity = ?, consumed_unit = ?, sku_meter = ?, sku_price_details = ?
+         WHERE charge_id = ?",
+    )?;
+    for (charge_id, provider, unit, quantity, model) in &rows {
+        if let Some(columns) =
+            crate::token_meter::derive(provider, unit.as_deref(), *quantity, model.as_deref())
+        {
+            update.execute(params![
+                columns.consumed_quantity,
+                columns.consumed_unit,
+                columns.sku_meter,
+                columns.sku_price_details,
+                charge_id
+            ])?;
+        }
     }
 
     Ok(())
@@ -648,6 +720,95 @@ mod tests {
         // And it happens once: a second start leaves the rows alone.
         apply(&conn).unwrap();
         assert_eq!(row("novel"), (None, None, some("some-new-product"), None));
+    }
+
+    /// v7 gives the token rows already in a ledger the FOCUS 1.5 columns a
+    /// new write would: the count as `consumed_quantity`, the pricing unit
+    /// as the meter, and the model and token properties as details.
+    #[test]
+    fn an_existing_ledger_gains_the_focus_token_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(V3_FCT_CHARGE).unwrap();
+        // Before v5 a model-provider row kept its model in service_category.
+        conn.execute_batch(
+            "INSERT INTO fct_charge
+                 (charge_id, batch_id, provider, account_id, billing_period,
+                  charge_period_start, charge_period_end, charge_category,
+                  service_name, service_category, pricing_quantity, pricing_unit,
+                  billed_cost, billing_currency, cost_basis, created_at)
+             SELECT id, 'b-1', provider, 'acct', '2026-09',
+                    CAST('2026-09-01 00:00:00' AS TIMESTAMP),
+                    CAST('2026-09-02 00:00:00' AS TIMESTAMP), 'Usage',
+                    provider, model, quantity, unit, NULL, 'USD', 'absent',
+                    CAST('2026-09-02 00:00:00' AS TIMESTAMP)
+             FROM (VALUES
+                 ('read', 'Anthropic', 'claude-opus-4-1', 8000.0, 'Cache Read Tokens'),
+                 ('out', 'OpenAI', 'gpt-5', 1500.0, 'Output Tokens'),
+                 ('ark', 'Volcengine', 'ark', 42.0, 'Tokens'),
+                 ('requests', 'OpenAI', 'gpt-5', 3.0, 'Requests'),
+                 ('hours', 'AWS', NULL, 24.0, 'Hrs')
+             ) AS t(id, provider, model, quantity, unit);",
+        )
+        .unwrap();
+
+        apply(&conn).unwrap();
+
+        type Columns = (Option<f64>, Option<String>, Option<String>, Option<String>);
+        let row = |id: &str| -> Columns {
+            conn.query_row(
+                "SELECT consumed_quantity, consumed_unit, sku_meter, sku_price_details
+                 FROM fct_charge WHERE charge_id = ?",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap()
+        };
+        let some = |value: &str| Some(value.to_string());
+
+        assert_eq!(
+            row("read"),
+            (
+                Some(8000.0),
+                some("Tokens"),
+                some("Cache Read Tokens"),
+                some(
+                    r#"{"ModelDeveloper":"Anthropic","ModelId":"claude-opus-4-1","TokenCacheAction":"Read","TokenDirection":"Input"}"#
+                )
+            )
+        );
+        assert_eq!(
+            row("out"),
+            (
+                Some(1500.0),
+                some("Tokens"),
+                some("Output Tokens"),
+                some(r#"{"ModelDeveloper":"OpenAI","ModelId":"gpt-5","TokenDirection":"Output"}"#)
+            )
+        );
+        // Ark's aggregate is tokens of no one direction, billed under a
+        // product rather than a model.
+        assert_eq!(
+            row("ark"),
+            (Some(42.0), some("Tokens"), some("Tokens"), None)
+        );
+        // A request count is not a token count, but its model is known.
+        assert_eq!(
+            row("requests"),
+            (
+                None,
+                None,
+                None,
+                some(r#"{"ModelDeveloper":"OpenAI","ModelId":"gpt-5"}"#)
+            )
+        );
+        assert_eq!(row("hours"), (None, None, None, None));
+        assert_eq!(row("c-1"), (None, None, None, None));
+
+        apply(&conn).unwrap();
+        assert_eq!(
+            row("ark"),
+            (Some(42.0), some("Tokens"), some("Tokens"), None)
+        );
     }
 
     /// A ledger written before v2 keeps its rows, and they read as the API

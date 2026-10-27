@@ -48,6 +48,7 @@ static LAYOUT: Layout = Layout {
     scope_name: &["api_key_name"],
     scope_id: &["user_id"],
     tokens: &[],
+    input_includes: &[],
 };
 
 fn periods(text: &str) -> Result<Vec<BillingPeriod>> {

@@ -166,6 +166,17 @@ pub struct Charge {
     pub pricing_unit: Option<String>,
     /// JSON object text, or `None` when the source reports no tags.
     pub tags: Option<String>,
+    /// FOCUS `ConsumedQuantity`: the raw count, before the pricing unit
+    /// groups it. Filled for token rows by [`crate::token_meter::fill`].
+    pub consumed_quantity: Option<f64>,
+    /// FOCUS `ConsumedUnit`; `"Tokens"` for a token count.
+    pub consumed_unit: Option<String>,
+    /// FOCUS `SkuMeter`: what the provider calls the metered thing.
+    pub sku_meter: Option<String>,
+    /// FOCUS `SkuPriceDetails`, JSON object text. Token rows carry the
+    /// FOCUS 1.5 model and token properties in it; see
+    /// [`crate::token_meter`].
+    pub sku_price_details: Option<String>,
 }
 
 impl Charge {
@@ -200,6 +211,10 @@ impl Charge {
             pricing_quantity: None,
             pricing_unit: None,
             tags: None,
+            consumed_quantity: None,
+            consumed_unit: None,
+            sku_meter: None,
+            sku_price_details: None,
         }
     }
 }

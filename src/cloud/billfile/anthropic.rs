@@ -94,6 +94,8 @@ static LAYOUT: Layout = Layout {
         ),
         ("Web Search Requests", &["web_search_requests"]),
     ],
+    // Anthropic reports cache reads and writes apart from uncached input.
+    input_includes: &[],
 };
 
 fn periods(text: &str) -> Result<Vec<BillingPeriod>> {
