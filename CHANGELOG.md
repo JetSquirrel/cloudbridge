@@ -22,6 +22,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `json_extract_string(sku_price_details, '$.TokenCacheAction') = 'Read'`
   instead of matching the provider's meter name.
 
+### Changed
+- **Models reads tokens by their FOCUS properties.** A token's class
+  comes from `TokenDirection` and `TokenCacheAction` rather than from the
+  provider's meter name, and a model is grouped by `ModelId`, so a bill
+  that reports FOCUS itself reads the same as an import. Cache writes are
+  no longer counted as cache reads: CACHE shows tokens served from the
+  cache, writes are part of IN, and the cache-read share and the "Low
+  cache utilization" finding divide reads by the whole input side.
+  Model Studio's and Ark's token totals, which count input and output
+  together, are no longer taken for input: they stay in IN, with a tooltip
+  saying so, but no longer raise a cache finding.
+
 ### Fixed
 - An OpenAI usage export counted cached input tokens twice: its
   `input_tokens` already includes them, and they were stored again as

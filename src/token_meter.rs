@@ -25,7 +25,7 @@
 
 use serde_json::{Map, Value};
 
-use crate::model::Charge;
+use crate::model::{Charge, TokenClass};
 
 /// FOCUS `ConsumedUnit` for a token count.
 pub const TOKENS: &str = "Tokens";
@@ -183,6 +183,30 @@ impl TokenDetails {
     }
 }
 
+/// Which part of a token bill a row's tokens are, from its FOCUS columns:
+/// `None` when `ConsumedUnit` is not `"Tokens"`. A row with no
+/// `TokenDirection` meters input and output together. Input with no
+/// `TokenCacheAction`, or `"Other"`, is input the bill does not place in a
+/// cache, so it counts as plain input.
+pub fn class_of(
+    consumed_unit: Option<&str>,
+    sku_price_details: Option<&str>,
+) -> Option<TokenClass> {
+    if !consumed_unit.is_some_and(|unit| unit.trim().eq_ignore_ascii_case(TOKENS)) {
+        return None;
+    }
+    let meter = sku_price_details
+        .map(|details| TokenDetails::parse(details).meter)
+        .unwrap_or_default();
+    Some(match (meter.direction, meter.cache_action) {
+        (Some(TokenDirection::Output), _) => TokenClass::Output,
+        (Some(TokenDirection::Input), Some(TokenCacheAction::Read)) => TokenClass::CacheRead,
+        (Some(TokenDirection::Input), Some(TokenCacheAction::Write)) => TokenClass::CacheWrite,
+        (Some(TokenDirection::Input), _) => TokenClass::Input,
+        (None, _) => TokenClass::Unsplit,
+    })
+}
+
 /// The FOCUS 1.5 columns a row gains from its pricing unit and model.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct TokenColumns {
@@ -276,6 +300,44 @@ mod tests {
             meter("  CACHE READ TOKENS \n"),
             (Some("Input"), Some("Read"))
         );
+    }
+
+    #[test]
+    fn a_row_is_classed_by_its_focus_properties() {
+        use super::class_of;
+        use crate::model::TokenClass;
+        let class = |unit: &str| {
+            let columns = derive("Anthropic", Some(unit), Some(1.0), Some("m")).unwrap();
+            class_of(
+                columns.consumed_unit.as_deref(),
+                columns.sku_price_details.as_deref(),
+            )
+        };
+        assert_eq!(class("Input Tokens"), Some(TokenClass::Input));
+        assert_eq!(class("Output Tokens"), Some(TokenClass::Output));
+        assert_eq!(class("Cache Read Tokens"), Some(TokenClass::CacheRead));
+        assert_eq!(class("Cache Creation Tokens"), Some(TokenClass::CacheWrite));
+        assert_eq!(class("Tokens"), Some(TokenClass::Unsplit));
+
+        // As a FOCUS export might write them: input on one meter whether
+        // or not it touched a cache.
+        assert_eq!(
+            class_of(Some("Tokens"), Some(r#"{"TokenDirection":"Input"}"#)),
+            Some(TokenClass::Input)
+        );
+        assert_eq!(
+            class_of(
+                Some("tokens"),
+                Some(r#"{"TokenDirection":"Input","TokenCacheAction":"Other"}"#)
+            ),
+            Some(TokenClass::Input)
+        );
+        assert_eq!(class_of(Some("Tokens"), None), Some(TokenClass::Unsplit));
+        assert_eq!(
+            class_of(Some("Token-Hours"), Some(r#"{"ModelId":"m"}"#)),
+            None
+        );
+        assert_eq!(class_of(None, Some(r#"{"TokenDirection":"Output"}"#)), None);
     }
 
     #[test]

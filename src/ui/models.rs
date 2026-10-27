@@ -3,7 +3,9 @@
 //! over the selected range.
 
 use chrono::Utc;
-use gpui_kit::component::{button::*, skeleton::Skeleton, Sizable as _, StyledExt};
+use gpui_kit::component::{
+    button::*, skeleton::Skeleton, tooltip::Tooltip, Sizable as _, StyledExt,
+};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
@@ -524,13 +526,7 @@ fn model_row(cx: &App, m: &ModelTokenSummary, total: f64, currency: &str) -> Div
                 .child(fmt::amount(m.usage_cost, currency)),
         )
         .child(div().w_20().text_right().text_sm().child(delta))
-        .child(
-            div()
-                .w_20()
-                .text_right()
-                .text_sm()
-                .child(token_cell(m.tokens_in)),
-        )
+        .child(input_cell(m, cx))
         .child(
             div()
                 .w_20()
@@ -543,7 +539,7 @@ fn model_row(cx: &App, m: &ModelTokenSummary, total: f64, currency: &str) -> Div
                 .w_20()
                 .text_right()
                 .text_sm()
-                .child(token_cell(m.tokens_cache)),
+                .child(token_cell(m.tokens_cache_read)),
         )
         .child(
             div()
@@ -552,10 +548,7 @@ fn model_row(cx: &App, m: &ModelTokenSummary, total: f64, currency: &str) -> Div
                 .text_sm()
                 .text_color(theme::text_primary(cx))
                 .child(fmt::unit_cost(
-                    analytics::blended_unit_cost(
-                        m.usage_cost,
-                        m.tokens_in + m.tokens_out + m.tokens_cache,
-                    ),
+                    analytics::blended_unit_cost(m.usage_cost, m.tokens()),
                     currency,
                 )),
         )
@@ -575,6 +568,54 @@ fn model_row(cx: &App, m: &ModelTokenSummary, total: f64, currency: &str) -> Div
                     ),
             ),
         )
+}
+
+/// The IN column: uncached input and input written to a cache, and tokens
+/// the bill does not split into input and output, which are mostly input.
+/// A tooltip says what went into the number when it is more than plain
+/// input.
+fn input_cell(m: &ModelTokenSummary, cx: &App) -> AnyElement {
+    let cell = div().w_20().text_right().text_sm();
+    if !m.has_token_data {
+        return cell
+            .text_color(theme::text_muted(cx))
+            .child("—".to_string())
+            .into_any_element();
+    }
+
+    let mut parts = Vec::new();
+    if m.tokens_cache_write > 0.0 {
+        parts.push(format!(
+            "{} written to the cache",
+            fmt::quantity(m.tokens_cache_write)
+        ));
+    }
+    if m.tokens_unsplit > 0.0 {
+        parts.push(format!(
+            "{} the bill counts as input and output together",
+            fmt::quantity(m.tokens_unsplit)
+        ));
+    }
+    let value = div()
+        .text_color(theme::text_primary(cx))
+        .child(fmt::quantity(
+            m.tokens_in + m.tokens_cache_write + m.tokens_unsplit,
+        ));
+    if parts.is_empty() {
+        return cell.child(value).into_any_element();
+    }
+
+    let note = format!("Includes {}", parts.join(", and "));
+    cell.child(
+        div()
+            .id(SharedString::from(format!(
+                "model-input-{}-{}",
+                m.provider, m.model
+            )))
+            .child(value)
+            .tooltip(move |window, cx| Tooltip::new(note.clone()).build(window, cx)),
+    )
+    .into_any_element()
 }
 
 /// One finding from the token analytics: a severity-colored dot ahead of
