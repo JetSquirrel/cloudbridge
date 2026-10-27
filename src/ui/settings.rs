@@ -74,6 +74,9 @@ pub struct SettingsView {
     copy_generation: u64,
     #[cfg(not(target_family = "wasm"))]
     copied: Option<u64>,
+    /// A FOCUS export is being chosen or written.
+    #[cfg(not(target_family = "wasm"))]
+    exporting: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -132,6 +135,8 @@ impl SettingsView {
             copy_generation: 0,
             #[cfg(not(target_family = "wasm"))]
             copied: None,
+            #[cfg(not(target_family = "wasm"))]
+            exporting: false,
             _subscriptions: vec![subscription],
         }
     }
@@ -507,6 +512,85 @@ impl SettingsView {
         .detach();
     }
 
+    /// Ask where to save, then write the ledger there as FOCUS. The button
+    /// stays busy from the dialog until the file is written.
+    #[cfg(not(target_family = "wasm"))]
+    fn export_focus(&mut self, cx: &mut Context<Self>) {
+        if self.exporting {
+            return;
+        }
+        self.exporting = true;
+        self.save_status = None;
+        self.status_generation += 1;
+        cx.notify();
+
+        let directory = directories::UserDirs::new()
+            .and_then(|dirs| dirs.document_dir().map(std::path::Path::to_path_buf))
+            .or_else(|| directories::UserDirs::new().map(|dirs| dirs.home_dir().to_path_buf()))
+            .unwrap_or_default();
+        let name = format!(
+            "cloudbridge-focus-{}.csv",
+            chrono::Local::now().format("%Y-%m-%d")
+        );
+        let chosen = cx.prompt_for_new_path(&directory, Some(&name));
+
+        cx.spawn(async move |this, cx| {
+            let outcome: Option<Result<String, String>> = match chosen.await {
+                Ok(Ok(Some(path))) => Some(
+                    smol::unblock(move || {
+                        crate::ledger::focus_export::export_csv(&path)
+                            .map(|rows| format!("Exported {rows} charges to {}", path.display()))
+                            .map_err(|e| format!("Could not export: {e}"))
+                    })
+                    .await,
+                ),
+                // Cancelled: nothing to say.
+                Ok(Ok(None)) | Err(_) => None,
+                Ok(Err(e)) => Some(Err(format!("Could not open the save dialog: {e}"))),
+            };
+            this.update(cx, |this, cx| {
+                this.exporting = false;
+                match outcome {
+                    Some(Ok(message)) => {
+                        this.save_status = Some(StatusMessage::Success(message));
+                    }
+                    Some(Err(message)) => {
+                        tracing::error!("{}", message);
+                        this.save_status = Some(StatusMessage::Error(message));
+                    }
+                    None => {}
+                }
+                this.status_generation += 1;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The Data section: the ledger, out of the app. Desktop only — the
+    /// browser demo has no file to write.
+    #[cfg(not(target_family = "wasm"))]
+    fn render_data(&self, cx: &Context<Self>) -> impl IntoElement {
+        Self::setting_row(
+            "Export as FOCUS",
+            "Every charge as a CSV with FOCUS 1.5 column names, for another \
+             FinOps tool: amounts in the currency each was billed in, and a \
+             model's tokens as ConsumedQuantity and SkuPriceDetails.",
+            Button::new("export-focus")
+                .label("Export…")
+                .small()
+                .custom(theme::outline_variant(cx))
+                .card_outline(cx)
+                .loading(self.exporting)
+                .disabled(self.exporting)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.export_focus(cx);
+                })),
+            cx,
+        )
+    }
+
     fn render_section(
         &self,
         title: &'static str,
@@ -666,8 +750,9 @@ impl Render for SettingsView {
             // Background
             .map(|el| {
                 #[cfg(not(target_family = "wasm"))]
-                let el =
-                    el.child(self.render_section("Background", self.render_background(cx), cx));
+                let el = el
+                    .child(self.render_section("Background", self.render_background(cx), cx))
+                    .child(self.render_section("Data", self.render_data(cx), cx));
                 el
             })
             // Demo data

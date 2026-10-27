@@ -31,6 +31,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ("...-cache-read-input-token-count", "...-output-tokens"), and left out
   when it does not. Not yet checked against a real Bedrock export. A `SkuPriceDetails` or `Tags` column delivered as a
   Parquet MAP is stored as JSON, like the CSV's.
+- **Settings, Data, Export as FOCUS.** Writes every charge in the ledger
+  to a CSV with FOCUS 1.5 column names, for another FinOps tool to read:
+  `BilledCost`, `EffectiveCost` and `ListCost` in the currency each charge
+  was billed in, `ChargePeriodStart` and the billing period as ISO 8601,
+  `ServiceProviderName` and the rest of the provider columns, and a
+  model's tokens as `ConsumedQuantity`, `ConsumedUnit`, `SkuMeter` and
+  `SkuPriceDetails`. What CloudBridge adds is in `x_` columns, such as
+  `x_CostBasis`. It is not a conformant FOCUS dataset: columns no source
+  reports (`ChargeClass`, `PricingCategory`, `ContractedCost`, ...) are
+  left out, and a row with no reported amount keeps `BilledCost` empty.
+  Desktop only.
 
 ### Changed
 - **Models reads tokens by their FOCUS properties.** A token's class
