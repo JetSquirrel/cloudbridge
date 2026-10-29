@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-29
+
+Model usage is read in FOCUS 1.5's terms: token rows carry
+`ConsumedQuantity`, `SkuMeter` and `SkuPriceDetails`, an AWS Data Export
+keeps them, the Models page reads tokens by `TokenDirection` and
+`TokenCacheAction`, and an OpenAI or Anthropic export records the user and
+API key behind the usage. The ledger can be exported as a FOCUS CSV. The
+ledger now runs on DuckDB 2.0, and the interface on GPUI Kit 0.8.1.
+
 ### Added
 - **Token rows in FOCUS 1.5's terms.** FOCUS 1.5 describes an AI model
   API's bill without a column of its own: the token count goes in
