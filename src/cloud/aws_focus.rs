@@ -89,9 +89,13 @@ impl ExportFormat {
 ///
 /// `Numeric` columns are cast to DOUBLE; everything else to VARCHAR, which
 /// covers the string-typed timestamps FOCUS delivers as well as real ones.
+/// `Json` columns are key-value objects: JSON text in a CSV, and either
+/// that or a MAP or STRUCT in Parquet, which is written out as JSON so the
+/// ledger holds one form.
 enum ColumnKind {
     Text,
     Numeric,
+    Json,
 }
 
 const COLUMNS: &[(&str, ColumnKind)] = &[
@@ -111,11 +115,17 @@ const COLUMNS: &[(&str, ColumnKind)] = &[
     ("BillingCurrency", ColumnKind::Text),
     ("PricingQuantity", ColumnKind::Numeric),
     ("PricingUnit", ColumnKind::Text),
-    ("Tags", ColumnKind::Text),
+    ("Tags", ColumnKind::Json),
     ("SubAccountId", ColumnKind::Text),
     ("SubAccountName", ColumnKind::Text),
     ("ServiceSubcategory", ColumnKind::Text),
     ("x_ServiceCode", ColumnKind::Text),
+    // FOCUS 1.5 describes an AI model's tokens with these four; see
+    // `crate::token_meter`.
+    ("ConsumedQuantity", ColumnKind::Numeric),
+    ("ConsumedUnit", ColumnKind::Text),
+    ("SkuMeter", ColumnKind::Text),
+    ("SkuPriceDetails", ColumnKind::Json),
 ];
 
 // SELECT positions, matching COLUMNS above.
@@ -140,6 +150,10 @@ const IX_SUB_ACCOUNT: usize = 17;
 const IX_SUB_ACCOUNT_NAME: usize = 18;
 const IX_SERVICE_SUBCATEGORY: usize = 19;
 const IX_SERVICE_CODE: usize = 20;
+const IX_CONSUMED_QUANTITY: usize = 21;
+const IX_CONSUMED_UNIT: usize = 22;
+const IX_SKU_METER: usize = 23;
+const IX_SKU_PRICE_DETAILS: usize = 24;
 
 /// Turn a batch of FOCUS export payloads into ledger rows.
 ///
@@ -169,26 +183,45 @@ pub fn normalize(batch: &RawBatch) -> Result<Normalized> {
         }
     };
 
-    let available: Vec<String> = conn
+    // (lower-cased name, type) of every column the files have.
+    let available: Vec<(String, String)> = conn
         .prepare(&format!("DESCRIBE SELECT * FROM {scan}"))?
-        .query_map([], |row| row.get::<_, String>(0))?
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?.to_lowercase(),
+                row.get::<_, String>(1)?.to_uppercase(),
+            ))
+        })?
         .collect::<Result<_, _>>()?;
-    let available: Vec<String> = available.iter().map(|name| name.to_lowercase()).collect();
+    let type_of = |name: &str| {
+        available
+            .iter()
+            .find(|(column, _)| *column == name.to_lowercase())
+            .map(|(_, column_type)| column_type.as_str())
+    };
 
     let select_list: Vec<String> = COLUMNS
         .iter()
         .enumerate()
         .map(|(ix, (name, kind))| {
             let cast = match kind {
-                ColumnKind::Text => "VARCHAR",
+                ColumnKind::Text | ColumnKind::Json => "VARCHAR",
                 ColumnKind::Numeric => "DOUBLE",
             };
-            // Empty text is no value: the CSV quotes an absent RegionId
-            // as "", and an empty ResourceId must not become a resource.
-            if available.contains(&name.to_lowercase()) {
-                format!("CAST(NULLIF(CAST(\"{name}\" AS VARCHAR), '') AS {cast}) AS c{ix}")
-            } else {
-                format!("CAST(NULL AS {cast}) AS c{ix}")
+            match type_of(name) {
+                None => format!("CAST(NULL AS {cast}) AS c{ix}"),
+                Some(column_type)
+                    if matches!(kind, ColumnKind::Json)
+                        && (column_type.starts_with("MAP")
+                            || column_type.starts_with("STRUCT")) =>
+                {
+                    format!("CAST(to_json(\"{name}\") AS VARCHAR) AS c{ix}")
+                }
+                // Empty text is no value: the CSV quotes an absent RegionId
+                // as "", and an empty ResourceId must not become a resource.
+                Some(_) => {
+                    format!("CAST(NULLIF(CAST(\"{name}\" AS VARCHAR), '') AS {cast}) AS c{ix}")
+                }
             }
         })
         .collect();
@@ -231,6 +264,12 @@ pub fn normalize(batch: &RawBatch) -> Result<Normalized> {
                 tags: row
                     .get::<_, Option<String>>(IX_TAGS)?
                     .filter(|tags| !tags.is_empty() && tags != "{}"),
+                consumed_quantity: row.get(IX_CONSUMED_QUANTITY)?,
+                consumed_unit: row.get(IX_CONSUMED_UNIT)?,
+                sku_meter: row.get(IX_SKU_METER)?,
+                sku_price_details: row
+                    .get::<_, Option<String>>(IX_SKU_PRICE_DETAILS)?
+                    .filter(|details| !details.is_empty() && details != "{}"),
                 ..Charge::new(DateTime::default(), DateTime::default(), "USD")
             },
         ))
@@ -468,6 +507,62 @@ mod tests {
         assert_eq!(credit.resource_id, None);
         assert_eq!(credit.sub_account_id, None);
         assert_eq!(credit.tags, None);
+    }
+
+    /// A model's token rows keep FOCUS's own description of them, whether
+    /// the export writes key-value columns as JSON text or as a MAP.
+    #[test]
+    fn token_rows_keep_their_consumed_quantity_meter_and_details() {
+        let row = |meter: &str, details: &str, quantity: f64| {
+            format!(
+                "('2026-09-01T00:00:00Z', '2026-09-12T00:00:00Z', '2026-09-13T00:00:00Z',
+                  'Usage', '123456789012', 'Bedrock tokens', 'Amazon Bedrock',
+                  'AI and Machine Learning', NULL, NULL, 'us-east-1',
+                  1.0, 1.0, 1.0, 'USD', {pricing}, '1K tokens', '{{\"team\":\"ml\"}}',
+                  NULL, NULL, {quantity}, 'Tokens', '{meter}', {details})",
+                pricing = quantity / 1000.0,
+            )
+        };
+        let bytes = focus_parquet(
+            &format!(
+                "INSERT INTO focus VALUES {}, {}",
+                row(
+                    "USE1-Claude3.5Sonnet-cache-read-input-token-count",
+                    "MAP {'ModelId': 'anthropic.claude-3-5-sonnet'}",
+                    8000.0,
+                ),
+                row("USE1-Claude3.5Sonnet-output-tokens", "MAP {}", 1500.0),
+            ),
+            ", ConsumedQuantity DOUBLE, ConsumedUnit VARCHAR, SkuMeter VARCHAR,
+               SkuPriceDetails MAP(VARCHAR, VARCHAR)",
+        );
+
+        let normalized = normalize(&batch_with(bytes)).unwrap();
+        let read = &normalized.charges[0];
+        assert_eq!(read.consumed_quantity, Some(8000.0));
+        assert_eq!(read.consumed_unit.as_deref(), Some("Tokens"));
+        assert_eq!(
+            read.sku_meter.as_deref(),
+            Some("USE1-Claude3.5Sonnet-cache-read-input-token-count")
+        );
+        assert_eq!(
+            read.sku_price_details.as_deref(),
+            Some(r#"{"ModelId":"anthropic.claude-3-5-sonnet"}"#)
+        );
+        assert_eq!(read.tags.as_deref(), Some(r#"{"team":"ml"}"#));
+        // An empty MAP is no details.
+        assert_eq!(normalized.charges[1].sku_price_details, None);
+
+        // FOCUS 1.2 has no TokenDirection; the write path reads it from
+        // the meter, keeping the ModelId the export gave.
+        let mut read = read.clone();
+        crate::token_meter::fill("AWS", &mut read);
+        assert_eq!(
+            read.sku_price_details.as_deref(),
+            Some(
+                r#"{"ModelId":"anthropic.claude-3-5-sonnet","TokenCacheAction":"Read","TokenDirection":"Input"}"#
+            )
+        );
     }
 
     #[test]

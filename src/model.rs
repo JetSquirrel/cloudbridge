@@ -177,6 +177,14 @@ pub struct Charge {
     /// FOCUS 1.5 model and token properties in it; see
     /// [`crate::token_meter`].
     pub sku_price_details: Option<String>,
+    /// FOCUS `PrincipalId`: the user or service account the charge was
+    /// incurred by. See [`crate::requester`].
+    pub principal_id: Option<String>,
+    /// FOCUS `CredentialId`: the published id of the API key or session
+    /// that authenticated the request, never the secret.
+    pub credential_id: Option<String>,
+    /// FOCUS `RequesterDetails`, JSON array text describing the two.
+    pub requester_details: Option<String>,
 }
 
 impl Charge {
@@ -215,6 +223,9 @@ impl Charge {
             consumed_unit: None,
             sku_meter: None,
             sku_price_details: None,
+            principal_id: None,
+            credential_id: None,
+            requester_details: None,
         }
     }
 }
@@ -562,20 +573,22 @@ pub struct ForecastBands {
     pub daily_stddev: f64,
 }
 
-/// Which side of an LLM bill a token-metered row belongs to, by the pricing
-/// unit the provider reports it in.
+/// Which part of an LLM bill a token row belongs to, by its FOCUS 1.5
+/// `TokenDirection` and `TokenCacheAction`. See
+/// [`crate::token_meter::class_of`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenClass {
-    /// `"Input Tokens"`, and the bare `"Tokens"` aggregate Aliyun and
-    /// Volcengine report, which is input-side.
+    /// Input served from no cache, or whose cache interaction the bill
+    /// does not say.
     Input,
     Output,
-    /// Any cache flavour: cached input, cache read, cache creation.
-    Cache,
-    /// A per-request charge, not a token charge.
-    Request,
-    /// A pricing unit the classification does not know.
-    Other,
+    /// Input served from a prompt cache: `TokenCacheAction` "Read".
+    CacheRead,
+    /// Input placed into a prompt cache: `TokenCacheAction` "Write".
+    CacheWrite,
+    /// Tokens with no `TokenDirection`: a meter that counts input and
+    /// output together, as Model Studio's and Ark's bills do.
+    Unsplit,
 }
 
 /// One model's token economics for a billing period, against the one before
@@ -589,15 +602,38 @@ pub struct ModelTokenSummary {
     pub usage_cost: f64,
     /// The previous period's spend, in the reporting currency.
     pub previous_cost: f64,
+    /// Input that touched no cache, as [`TokenClass::Input`].
     pub tokens_in: f64,
     pub tokens_out: f64,
-    pub tokens_cache: f64,
+    /// Input served from a prompt cache.
+    pub tokens_cache_read: f64,
+    /// Input placed into a prompt cache.
+    pub tokens_cache_write: f64,
+    /// Tokens the bill does not split into input and output.
+    pub tokens_unsplit: f64,
     /// The previous period's tokens, all classes together — what its
     /// `previous_cost` bought, so the two periods' unit costs compare.
     pub previous_tokens: f64,
     /// `false` for a model whose rows carry cost but no token-metered
     /// pricing quantities — unit economics cannot be computed for it.
     pub has_token_data: bool,
+}
+
+impl ModelTokenSummary {
+    /// Every token of the period, each counted once.
+    pub fn tokens(&self) -> f64 {
+        self.tokens_in
+            + self.tokens_out
+            + self.tokens_cache_read
+            + self.tokens_cache_write
+            + self.tokens_unsplit
+    }
+
+    /// Input tokens the bill tells apart from output, cache reads and
+    /// writes included: what a cache-read share is a share of.
+    pub fn input_side(&self) -> f64 {
+        self.tokens_in + self.tokens_cache_read + self.tokens_cache_write
+    }
 }
 
 /// One model's tokens on one day, as the Models page's daily series plots it.

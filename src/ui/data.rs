@@ -2266,11 +2266,9 @@ pub fn load_models(range: Range) -> ModelsData {
         .collect();
 
     let total_cost: f64 = models.iter().map(|m| m.usage_cost).sum();
-    let tokens_in: f64 = models.iter().map(|m| m.tokens_in).sum();
-    let total_tokens: f64 = models
-        .iter()
-        .map(|m| m.tokens_in + m.tokens_out + m.tokens_cache)
-        .sum();
+    let input_side: f64 = models.iter().map(|m| m.input_side()).sum();
+    let cache_read: f64 = models.iter().map(|m| m.tokens_cache_read).sum();
+    let total_tokens: f64 = models.iter().map(|m| m.tokens()).sum();
 
     // A ratio on a dust base is noise — the same rule the change percents
     // follow.
@@ -2278,9 +2276,9 @@ pub fn load_models(range: Range) -> ModelsData {
         .then(|| analytics::blended_unit_cost(total_cost, total_tokens))
         .flatten();
     // cache_read_share is a 0–1 fraction; the page renders a percent.
-    let cache_share = (tokens_in >= fmt::DUST_THRESHOLD)
+    let cache_share = (input_side >= fmt::DUST_THRESHOLD)
         .then(|| {
-            analytics::cache_read_share(models.iter().map(|m| m.tokens_cache).sum(), tokens_in)
+            analytics::cache_read_share(cache_read, input_side - cache_read)
                 .map(|share| share * 100.0)
         })
         .flatten();

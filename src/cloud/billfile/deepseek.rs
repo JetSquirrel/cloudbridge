@@ -49,6 +49,12 @@ static LAYOUT: Layout = Layout {
     scope_id: &["user_id"],
     tokens: &[],
     input_includes: &[],
+    // Its `api_key` column is the masked key itself, not an id, and FOCUS
+    // keeps a secret out of CredentialId; the key's name alone describes
+    // nothing a row can be grouped by.
+    principal_id: &[],
+    credential_id: &[],
+    credential_name: &[],
 };
 
 fn periods(text: &str) -> Result<Vec<BillingPeriod>> {

@@ -14,6 +14,7 @@
 //! would stop matching theirs.
 
 pub mod demo;
+pub mod focus_export;
 pub mod inventory;
 pub mod query;
 pub mod rollup;
@@ -329,12 +330,14 @@ pub(crate) fn write_period(
               pricing_quantity, pricing_unit, tags, created_at,
               sub_account_id, sub_account_name,
               service_subcategory, x_service_code, x_model,
-              consumed_quantity, consumed_unit, sku_meter, sku_price_details)
+              consumed_quantity, consumed_unit, sku_meter, sku_price_details,
+              principal_id, credential_id, requester_details)
              VALUES (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), ?, ?,
                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP),
                      ?, ?,
                      ?, ?, ?,
-                     ?, ?, ?, ?)",
+                     ?, ?, ?, ?,
+                     ?, ?, ?)",
         )?;
 
         for (charge, charge_id) in charges.iter().zip(&ids) {
@@ -378,6 +381,9 @@ pub(crate) fn write_period(
                 charge.consumed_unit,
                 charge.sku_meter,
                 charge.sku_price_details,
+                charge.principal_id,
+                charge.credential_id,
+                charge.requester_details,
             ])?;
         }
     }

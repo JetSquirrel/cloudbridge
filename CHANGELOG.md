@@ -21,6 +21,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   select a model's cache reads with
   `json_extract_string(sku_price_details, '$.TokenCacheAction') = 'Read'`
   instead of matching the provider's meter name.
+- **An AWS Data Export keeps FOCUS's description of tokens.** Its
+  `ConsumedQuantity`, `ConsumedUnit`, `SkuMeter` and `SkuPriceDetails` are
+  read into the ledger, so a row with `ConsumedUnit` "Tokens" (Amazon
+  Bedrock's, for one) appears on the Models page, under the `ModelId` its
+  details give or else under its product. An export written before FOCUS
+  1.5 gives no `TokenDirection`; for a token row, it is read from the
+  meter name when the name says which tokens it counts
+  ("...-cache-read-input-token-count", "...-output-tokens"), and left out
+  when it does not. Not yet checked against a real Bedrock export. A `SkuPriceDetails` or `Tags` column delivered as a
+  Parquet MAP is stored as JSON, like the CSV's.
+- **Settings, Data, Export as FOCUS.** Writes every charge in the ledger
+  to a CSV with FOCUS 1.5 column names, for another FinOps tool to read:
+  `BilledCost`, `EffectiveCost` and `ListCost` in the currency each charge
+  was billed in, `ChargePeriodStart` and the billing period as ISO 8601,
+  `ServiceProviderName` and the rest of the provider columns, and a
+  model's tokens as `ConsumedQuantity`, `ConsumedUnit`, `SkuMeter` and
+  `SkuPriceDetails`. What CloudBridge adds is in `x_` columns, such as
+  `x_CostBasis`. It is not a conformant FOCUS dataset: columns no source
+  reports (`ChargeClass`, `PricingCategory`, `ContractedCost`, ...) are
+  left out, and a row with no reported amount keeps `BilledCost` empty.
+  Desktop only.
+- **The user and API key behind model usage, as FOCUS 1.5 records them.**
+  An OpenAI export grouped by user or API key, and an Anthropic export
+  grouped by API key, keep them in the ledger's new `principal_id`,
+  `credential_id` and `requester_details` columns (schema v8): the key's
+  published id and display name, never the key itself, which is why
+  DeepSeek's masked `api_key` column is not used. The Query page and the
+  FOCUS export carry them; months imported earlier gain them when
+  imported again or replayed.
+
+### Changed
+- **DuckDB 2.0 and GPUI Kit 0.8.1.** The ledger is read and written by
+  DuckDB 2.0.0 (the `duckdb` crate's 1.20000 line), with `json` and
+  `parquet` still compiled in. A ledger written by an earlier release opens
+  unchanged, and remains readable by DuckDB 1.4 afterwards, so going back to
+  0.6.0 keeps working. The Query page shows a UHUGEINT past `i128`'s range
+  in full and a GEOMETRY as its byte count, and a column that is a bare
+  `NULL` (`SELECT NULL`) no longer panics the driver. GPUI Kit 0.8.1 brings
+  GPUI 0.3.10 and wgpu 30.
+- **Models reads tokens by their FOCUS properties.** A token's class
+  comes from `TokenDirection` and `TokenCacheAction` rather than from the
+  provider's meter name, and a model is grouped by `ModelId`, so a bill
+  that reports FOCUS itself reads the same as an import. Cache writes are
+  no longer counted as cache reads: CACHE shows tokens served from the
+  cache, writes are part of IN, and the cache-read share and the "Low
+  cache utilization" finding divide reads by the whole input side.
+  Model Studio's and Ark's token totals, which count input and output
+  together, are no longer taken for input: they stay in IN, with a tooltip
+  saying so, but no longer raise a cache finding.
 
 ### Fixed
 - An OpenAI usage export counted cached input tokens twice: its
