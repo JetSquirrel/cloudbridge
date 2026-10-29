@@ -6,6 +6,7 @@
 
 use anyhow::Result;
 use chrono::{DateTime, NaiveDate, Utc};
+use duckdb::arrow::datatypes::DataType;
 use duckdb::types::{TimeUnit, Value, ValueRef};
 use duckdb::{params, AccessMode, Config, Connection};
 
@@ -2129,6 +2130,17 @@ fn run_adhoc_within(
         .as_ref()
         .map(|statement| statement.column_names())
         .unwrap_or_default();
+    // A column of DuckDB's NULL type (`SELECT NULL`) reaches Arrow as
+    // `DataType::Null`, which `Row::get_ref` panics on. Every cell in one is
+    // NULL, so it is never read.
+    let null_typed: Vec<bool> = rows
+        .as_ref()
+        .map(|statement| {
+            (0..columns.len())
+                .map(|index| statement.column_type(index) == DataType::Null)
+                .collect()
+        })
+        .unwrap_or_default();
     let row_budget = max_rows.min(max_cells / columns.len().max(1));
 
     let mut numeric: Vec<Option<bool>> = vec![None; columns.len()];
@@ -2142,6 +2154,10 @@ fn run_adhoc_within(
         }
         let mut cells = Vec::with_capacity(columns.len());
         for (index, slot) in numeric.iter_mut().enumerate() {
+            if null_typed.get(index).copied().unwrap_or(false) {
+                cells.push(None);
+                continue;
+            }
             let value = row.get_ref(index)?;
             if slot.is_none() {
                 *slot = match value {
@@ -2291,6 +2307,7 @@ fn is_numeric(value: &ValueRef) -> bool {
             | ValueRef::Int(_)
             | ValueRef::BigInt(_)
             | ValueRef::HugeInt(_)
+            | ValueRef::UHugeInt(_)
             | ValueRef::UTinyInt(_)
             | ValueRef::USmallInt(_)
             | ValueRef::UInt(_)
@@ -2323,6 +2340,7 @@ fn format_value(value: &Value) -> String {
         Value::Int(v) => v.to_string(),
         Value::BigInt(v) => v.to_string(),
         Value::HugeInt(v) => v.to_string(),
+        Value::UHugeInt(v) => v.to_string(),
         Value::UTinyInt(v) => v.to_string(),
         Value::USmallInt(v) => v.to_string(),
         Value::UInt(v) => v.to_string(),
@@ -2333,7 +2351,7 @@ fn format_value(value: &Value) -> String {
         Value::Decimal(v) => v.to_string(),
         Value::Timestamp(unit, v) => format_timestamp(*unit, *v),
         Value::Text(v) | Value::Enum(v) => v.clone(),
-        Value::Blob(v) => format!("<{} bytes>", v.len()),
+        Value::Blob(v) | Value::Geometry(v) => format!("<{} bytes>", v.len()),
         Value::Date32(days) => format_date(*days),
         Value::Time64(unit, v) => format_time(*unit, *v),
         Value::Interval {
@@ -2366,6 +2384,9 @@ fn format_value(value: &Value) -> String {
                 .join(", ")
         ),
         Value::Union(inner) => format_value(inner),
+        // `Value` is non-exhaustive: a type a later DuckDB adds still shows
+        // as something rather than failing the whole result.
+        other => format!("{other:?}"),
     }
 }
 
@@ -3565,6 +3586,29 @@ mod tests {
         assert_eq!(mixed.numeric, vec![true]);
         assert_eq!(mixed.rows[0], vec![None]);
         assert_eq!(mixed.rows[1], vec![Some("7".to_string())]);
+
+        // A bare NULL has DuckDB's NULL type, which the driver cannot read
+        // a value of; the cell is NULL without asking.
+        let bare = run_adhoc_of(&conn, "SELECT NULL AS a, NULL AS b").unwrap();
+        assert_eq!(bare.numeric, vec![false, false]);
+        assert_eq!(bare.rows, vec![vec![None, None]]);
+
+        // A DECIMAL keeps its scale, and a UHUGEINT past i128's range is
+        // read whole.
+        let wide = run_adhoc_of(
+            &conn,
+            "SELECT 1.50::DECIMAL(10, 2) AS d, \
+             340282366920938463463374607431768211455::UHUGEINT AS u",
+        )
+        .unwrap();
+        assert_eq!(wide.numeric, vec![true, true]);
+        assert_eq!(
+            wide.rows[0],
+            vec![
+                Some("1.50".to_string()),
+                Some("340282366920938463463374607431768211455".to_string()),
+            ]
+        );
     }
 
     fn midday(day: u32) -> DateTime<Utc> {

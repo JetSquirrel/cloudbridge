@@ -52,6 +52,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   imported again or replayed.
 
 ### Changed
+- **DuckDB 2.0 and GPUI Kit 0.8.1.** The ledger is read and written by
+  DuckDB 2.0.0 (the `duckdb` crate's 1.20000 line), with `json` and
+  `parquet` still compiled in. A ledger written by an earlier release opens
+  unchanged, and remains readable by DuckDB 1.4 afterwards, so going back to
+  0.6.0 keeps working. The Query page shows a UHUGEINT past `i128`'s range
+  in full and a GEOMETRY as its byte count, and a column that is a bare
+  `NULL` (`SELECT NULL`) no longer panics the driver. GPUI Kit 0.8.1 brings
+  GPUI 0.3.10 and wgpu 30.
 - **Models reads tokens by their FOCUS properties.** A token's class
   comes from `TokenDirection` and `TokenCacheAction` rather than from the
   provider's meter name, and a model is grouped by `ModelId`, so a bill
