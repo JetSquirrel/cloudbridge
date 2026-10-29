@@ -75,6 +75,14 @@ billing account's BigQuery export, one query per invoice month, daily by
 service, SKU, project and region with credits as their own rows. Neither
 has a resource scan in Insights yet.
 
+0.7.0 reads model usage in FOCUS 1.5's terms. A token row records its
+count as `ConsumedQuantity` in "Tokens", the meter as `SkuMeter`, and the
+model, direction and cache action in `SkuPriceDetails`; an AWS Data Export
+keeps those columns, so Bedrock's token rows reach the Models page. An
+OpenAI or Anthropic export keeps the user and API key behind the usage,
+and Settings exports the whole ledger as a FOCUS-named CSV. The engine
+moves to DuckDB 2.0; existing ledgers open unchanged.
+
 A source is a `SourceDescriptor` registry entry rather than an enum
 variant. API-backed sources implement `BillingSource`; file-only sources
 provide a bill parser without an API client. The ingest pipeline persists
