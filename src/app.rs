@@ -15,7 +15,7 @@ use crate::ui::{
     attribution::AttributionView, insights::InsightsView, models::ModelsView,
     overview::OverviewView, query::QueryView, rules::RulesView, settings::SettingsView,
 };
-use crate::ui::{fmt, theme};
+use crate::ui::{fmt, platform_key_binding, theme};
 
 actions!(
     cloudbridge,
@@ -259,20 +259,21 @@ impl CloudBridgeApp {
         // itself. No key context, so they fire regardless of which page or
         // input has focus; the action listeners sit on the shell's root
         // element in `render`.
-        cx.bind_keys([
-            KeyBinding::new("secondary-1", SwitchToOverview, None),
-            KeyBinding::new("secondary-2", SwitchToAlerts, None),
-            KeyBinding::new("secondary-3", SwitchToAttribution, None),
-            KeyBinding::new("secondary-4", SwitchToQuery, None),
-            KeyBinding::new("secondary-5", SwitchToAccounts, None),
-            KeyBinding::new("secondary-6", SwitchToRules, None),
-            KeyBinding::new("secondary-7", SwitchToSettings, None),
-            KeyBinding::new("secondary-8", SwitchToAccountDetail, None),
-            KeyBinding::new("secondary-9", SwitchToModels, None),
-            KeyBinding::new("secondary-0", SwitchToInsights, None),
-            KeyBinding::new("secondary-r", ReloadCurrentView, None),
-            KeyBinding::new("secondary-k", OpenCommandPalette, None),
-        ]);
+        let shortcuts = [
+            platform_key_binding("secondary-1", SwitchToOverview, None, cx),
+            platform_key_binding("secondary-2", SwitchToAlerts, None, cx),
+            platform_key_binding("secondary-3", SwitchToAttribution, None, cx),
+            platform_key_binding("secondary-4", SwitchToQuery, None, cx),
+            platform_key_binding("secondary-5", SwitchToAccounts, None, cx),
+            platform_key_binding("secondary-6", SwitchToRules, None, cx),
+            platform_key_binding("secondary-7", SwitchToSettings, None, cx),
+            platform_key_binding("secondary-8", SwitchToAccountDetail, None, cx),
+            platform_key_binding("secondary-9", SwitchToModels, None, cx),
+            platform_key_binding("secondary-0", SwitchToInsights, None, cx),
+            platform_key_binding("secondary-r", ReloadCurrentView, None, cx),
+            platform_key_binding("secondary-k", OpenCommandPalette, None, cx),
+        ];
+        cx.bind_keys(shortcuts);
         let palette = cx.new(|cx| CommandState::new(window, cx));
 
         // Start with focus on the shell, and take it back whenever the

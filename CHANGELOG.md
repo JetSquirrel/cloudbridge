@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-30
+
+### Fixed
+- **0.7.0 quit on launch.** GPUI Kit 0.8.1 brought a GPUI whose
+  `KeyBinding::new` no longer accepts the `secondary-` modifier (⌘ on
+  macOS, Ctrl elsewhere), so the first shortcut registered, the Query
+  page's ⌘Enter, aborted the app before its window opened. The page
+  shortcuts (⌘1 to ⌘0, ⌘R, ⌘K) and ⌘Enter are now resolved against the
+  host OS when they are bound, and work as before.
+
 ## [0.7.0] - 2026-10-29
 
 Model usage is read in FOCUS 1.5's terms: token rows carry
