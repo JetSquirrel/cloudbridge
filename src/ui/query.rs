@@ -244,11 +244,13 @@ impl QueryView {
         // every navigation.
         static BIND_KEYS: std::sync::Once = std::sync::Once::new();
         BIND_KEYS.call_once(|| {
-            cx.bind_keys([KeyBinding::new(
+            let run = super::platform_key_binding(
                 "secondary-enter",
                 RunQuery,
                 Some(QUERY_KEY_CONTEXT),
-            )]);
+                cx,
+            );
+            cx.bind_keys([run]);
         });
 
         // ⌘Enter reaches the focused editor as `secondary-enter`, which the
