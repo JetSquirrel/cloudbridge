@@ -137,7 +137,7 @@ pub fn scan_targets() -> Result<Vec<ScanTarget>> {
     Ok(Vec::new())
 }
 
-pub fn scan_target(_target: &ScanTarget) -> Result<PathBuf> {
+pub fn scan_target(_target: &ScanTarget) -> Result<(PathBuf, Vec<String>)> {
     Err(anyhow!(
         "The web demo scans nothing — it ships with a demo inventory"
     ))

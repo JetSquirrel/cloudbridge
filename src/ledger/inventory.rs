@@ -79,6 +79,7 @@ fn merged_scope(
         // The scans an import reads are the ones CloudBridge just ran, with
         // the release it installs.
         scanner: Some(format!("corkscrew {}", crate::cloud::corkscrew::RELEASE)),
+        complete: scans.iter().all(|s| s.complete),
     })
 }
 
@@ -88,14 +89,20 @@ pub(crate) struct Scan {
     pub scan_id: String,
     pub scanned_at: DateTime<Utc>,
     pub regions: Vec<String>,
+    /// `snapshot_complete`: every service and type was observed.
+    pub complete: bool,
 }
 
-/// Read the newest complete scan out of a corkscrew database, by a plugin
+/// Read the newest usable scan out of a corkscrew database, by a plugin
 /// CloudBridge knows ([`corkscrew::PROVIDERS`]); its resources are filed
 /// under that plugin's source.
 ///
-/// Only a scan corkscrew marked `snapshot_complete` is taken: a partial
-/// one would make every resource it did not reach look deleted.
+/// A complete scan (`snapshot_complete`) is taken, and so is a `partial`
+/// one: since corkscrew reports a failed describe as an error, one
+/// throttled call makes a scan partial although it listed everything. A
+/// partial scan comes back with `complete: false`, and Insights then calls
+/// nothing missing from it. A failed scan, or one still running, is not
+/// taken.
 pub(crate) fn read_scan(corkscrew: &Connection) -> Result<(Scan, Vec<InventoryResource>)> {
     let has_tables: i64 = corkscrew.query_row(
         "SELECT count(*) FROM duckdb_tables()
@@ -109,6 +116,14 @@ pub(crate) fn read_scan(corkscrew: &Connection) -> Result<(Scan, Vec<InventoryRe
         ));
     }
 
+    // `status` arrived in corkscrew with partial scans; a database without
+    // it has only complete ones to offer.
+    let has_status = has_column(corkscrew, "scan_metadata", "status")?;
+    let usable = if has_status {
+        "(coalesce(snapshot_complete, false) OR status = 'partial')"
+    } else {
+        "coalesce(snapshot_complete, false)"
+    };
     let known = corkscrew::PROVIDERS
         .iter()
         .map(|provider| format!("'{}'", provider.plugin))
@@ -120,9 +135,10 @@ pub(crate) fn read_scan(corkscrew: &Connection) -> Result<(Scan, Vec<InventoryRe
                 "SELECT id,
                         CAST(coalesce(scan_end_time, scan_start_time) AS VARCHAR),
                         CAST(regions AS VARCHAR),
-                        lower(provider)
+                        lower(provider),
+                        coalesce(snapshot_complete, false)
                  FROM scan_metadata
-                 WHERE lower(provider) IN ({known}) AND coalesce(snapshot_complete, false)
+                 WHERE lower(provider) IN ({known}) AND {usable}
                  ORDER BY coalesce(scan_end_time, scan_start_time) DESC
                  LIMIT 1"
             ),
@@ -133,16 +149,17 @@ pub(crate) fn read_scan(corkscrew: &Connection) -> Result<(Scan, Vec<InventoryRe
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, String>(3)?,
+                    row.get::<_, bool>(4)?,
                 ))
             },
         )
         .map_err(|e| match e {
             duckdb::Error::QueryReturnedNoRows => {
-                anyhow!("The corkscrew database has no complete scan to import")
+                anyhow!("The corkscrew database has no finished scan to import")
             }
             other => other.into(),
         })?;
-    let (scan_id, scanned_at, regions, plugin) = scan;
+    let (scan_id, scanned_at, regions, plugin, complete) = scan;
     let provider =
         corkscrew::provider_for_plugin(&plugin).expect("the query only returns a known plugin");
     let regions: Vec<String> = regions
@@ -151,14 +168,20 @@ pub(crate) fn read_scan(corkscrew: &Connection) -> Result<(Scan, Vec<InventoryRe
         .map_err(|e| anyhow!("Scan {} lists its regions unreadably: {}", scan_id, e))?
         .unwrap_or_default();
 
-    let mut stmt = corkscrew.prepare(
+    // corkscrew records resources' own times since its schema 7.
+    let times = if has_column(corkscrew, "resource_observations", "created_at")? {
+        "CAST(created_at AS VARCHAR), CAST(modified_at AS VARCHAR)"
+    } else {
+        "NULL::VARCHAR, NULL::VARCHAR"
+    };
+    let mut stmt = corkscrew.prepare(&format!(
         "SELECT DISTINCT ON (resource_id)
                 account_id, resource_id, arn, type, location, name,
-                CAST(tags AS VARCHAR), CAST(raw_data AS VARCHAR)
+                CAST(tags AS VARCHAR), CAST(raw_data AS VARCHAR), {times}
          FROM resource_observations
          WHERE scan_id = ? AND lower(provider) = ?
-         ORDER BY resource_id",
-    )?;
+         ORDER BY resource_id"
+    ))?;
     let resources = stmt
         .query_map(params![scan_id, provider.plugin], |row| {
             Ok(InventoryResource {
@@ -173,6 +196,8 @@ pub(crate) fn read_scan(corkscrew: &Connection) -> Result<(Scan, Vec<InventoryRe
                 name: present(row.get(5)?),
                 tags: json_object(row.get(6)?),
                 properties: json_object(row.get(7)?),
+                created_at: timestamp(row.get(8)?),
+                modified_at: timestamp(row.get(9)?),
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -182,6 +207,7 @@ pub(crate) fn read_scan(corkscrew: &Connection) -> Result<(Scan, Vec<InventoryRe
             scan_id,
             scanned_at: super::parse_timestamp(&scanned_at)?,
             regions,
+            complete,
         },
         resources,
     ))
@@ -200,8 +226,8 @@ pub(crate) fn write_inventory(
         let mut stmt = tx.prepare(
             "INSERT INTO dim_resource
              (provider, resource_id, cloud_account_id, arn, resource_type, region, name,
-              tags, properties)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              tags, properties, created_at, modified_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP))",
         )?;
         for resource in resources {
             stmt.execute(params![
@@ -214,13 +240,20 @@ pub(crate) fn write_inventory(
                 resource.name,
                 resource.tags,
                 resource.properties,
+                resource
+                    .created_at
+                    .map(|t| t.format(TIMESTAMP_FORMAT).to_string()),
+                resource
+                    .modified_at
+                    .map(|t| t.format(TIMESTAMP_FORMAT).to_string()),
             ])?;
         }
     }
     tx.execute(
         "INSERT INTO inventory_scan
-         (scan_id, scanned_at, imported_at, source_path, regions, resource_count, scanner)
-         VALUES (?, CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), ?, ?, ?, ?)",
+         (scan_id, scanned_at, imported_at, source_path, regions, resource_count, scanner,
+          complete)
+         VALUES (?, CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), ?, ?, ?, ?, ?)",
         params![
             scope.scan_id,
             scope.scanned_at.format(TIMESTAMP_FORMAT).to_string(),
@@ -229,10 +262,27 @@ pub(crate) fn write_inventory(
             serde_json::to_string(&scope.regions)?,
             scope.resource_count,
             scope.scanner,
+            scope.complete,
         ],
     )?;
     tx.commit()?;
     Ok(())
+}
+
+/// A corkscrew timestamp as text, or nothing when it is absent or does
+/// not parse: a resource's own time is a detail, not a reason to refuse
+/// the scan.
+fn timestamp(value: Option<String>) -> Option<DateTime<Utc>> {
+    present(value).and_then(|v| super::parse_timestamp(&v).ok())
+}
+
+fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let count: i64 = conn.query_row(
+        "SELECT count(*) FROM duckdb_columns() WHERE table_name = ? AND column_name = ?",
+        params![table, column],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
 }
 
 /// Text that says something, or nothing.
@@ -322,12 +372,78 @@ mod tests {
     }
 
     #[test]
-    fn a_database_without_a_complete_scan_is_refused() {
+    fn a_database_without_a_finished_scan_is_refused() {
         let conn = corkscrew_fixture();
         conn.execute_batch("UPDATE scan_metadata SET snapshot_complete = false")
             .unwrap();
         let error = read_scan(&conn).unwrap_err().to_string();
-        assert!(error.contains("no complete scan"), "{error}");
+        assert!(error.contains("no finished scan"), "{error}");
+    }
+
+    /// corkscrew since its schema 7: a `status`, so a partial scan can be
+    /// told from a failed one, and each resource's own times.
+    fn current_corkscrew() -> Connection {
+        let conn = corkscrew_fixture();
+        conn.execute_batch(
+            "ALTER TABLE scan_metadata ADD COLUMN status VARCHAR;
+             UPDATE scan_metadata SET status = CASE WHEN snapshot_complete THEN 'completed'
+                                                     ELSE 'running' END;
+             ALTER TABLE resource_observations ADD COLUMN created_at TIMESTAMP;
+             ALTER TABLE resource_observations ADD COLUMN modified_at TIMESTAMP;
+             UPDATE resource_observations
+                SET created_at = '2025-03-04 05:06:07', modified_at = '2026-09-01 00:00:00'
+              WHERE type = 'ec2:instance';",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn a_resource_s_own_times_are_read_when_the_scan_has_them() {
+        let (_, resources) = read_scan(&current_corkscrew()).unwrap();
+        let instance = resources
+            .iter()
+            .find(|r| r.resource_type == "ec2:instance")
+            .unwrap();
+        assert_eq!(
+            instance
+                .created_at
+                .unwrap()
+                .format(TIMESTAMP_FORMAT)
+                .to_string(),
+            "2025-03-04 05:06:07"
+        );
+        assert!(instance.modified_at.is_some());
+        let bucket = resources
+            .iter()
+            .find(|r| r.resource_id == "my-bucket")
+            .unwrap();
+        assert_eq!(bucket.created_at, None);
+        // An older database has no such columns, and no times.
+        let (_, old) = read_scan(&corkscrew_fixture()).unwrap();
+        assert!(old.iter().all(|r| r.created_at.is_none()));
+    }
+
+    /// A partial scan is taken, as incomplete; a failed or running one
+    /// is not.
+    #[test]
+    fn a_partial_scan_is_taken_as_incomplete() {
+        let conn = current_corkscrew();
+        conn.execute_batch(
+            "INSERT INTO scan_metadata VALUES
+                 ('throttled', 'aws', '[\"us-east-1\"]', '2026-10-02 00:00:00',
+                  '2026-10-02 00:04:00', false, 'partial'),
+                 ('failed', 'aws', '[\"us-east-1\"]', '2026-10-03 00:00:00',
+                  '2026-10-03 00:01:00', false, 'failed');",
+        )
+        .unwrap();
+        let (scan, _) = read_scan(&conn).unwrap();
+        assert_eq!(scan.scan_id, "throttled");
+        assert!(!scan.complete);
+
+        let (scan, _) = read_scan(&current_corkscrew()).unwrap();
+        assert_eq!(scan.scan_id, "new");
+        assert!(scan.complete);
     }
 
     /// The Cloudflare plugin records its scan and resources under its own
@@ -384,6 +500,7 @@ mod tests {
             regions: scan.regions,
             resource_count: resources.len() as i64,
             scanner: Some("corkscrew test".to_string()),
+            complete: false,
         };
         write_inventory(&mut ledger, &scope, &resources).unwrap();
         write_inventory(&mut ledger, &scope, &resources[..1]).unwrap();
@@ -396,5 +513,9 @@ mod tests {
             .query_row("SELECT count(*) FROM inventory_scan", [], |row| row.get(0))
             .unwrap();
         assert_eq!(scans, 1);
+        let complete: bool = ledger
+            .query_row("SELECT complete FROM inventory_scan", [], |row| row.get(0))
+            .unwrap();
+        assert!(!complete);
     }
 }

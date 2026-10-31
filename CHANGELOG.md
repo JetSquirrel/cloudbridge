@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Resource scans keep up with corkscrew's latest.** The scanner is now
+  corkscrew `cloudbridge-r4`, built from upstream through 2026-10-22. A
+  partial scan, which corkscrew now reports when a single describe fails
+  (a throttled call, say), is imported instead of refused; Insights then
+  calls nothing billed
+  missing from it and says why. A scan's refusals are read from its report
+  as well as its log, since corkscrew no longer logs the plugin's output,
+  and what it could not cover (types the key may not read, features not
+  turned on, services read only partly) is listed after the scan.
+  Resources carry the creation and modification times corkscrew now
+  records; a stopped instance says how long ago it was created, and script
+  rules receive `createdAt` and `modifiedAt`.
+
 ### Added
 - **Idle NAT Gateways on Insights.** A NAT Gateway the bill charges a day or
   more of hours for, while it processed under 1 GB in the period, is listed

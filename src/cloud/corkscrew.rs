@@ -38,7 +38,7 @@ use super::SourceContext;
 use crate::config::get_app_data_dir;
 
 /// The release CloudBridge installs.
-pub const RELEASE: &str = "cloudbridge-r3";
+pub const RELEASE: &str = "cloudbridge-r4";
 const DOWNLOAD_BASE: &str = "https://github.com/JetSquirrel/corkscrew/releases/download";
 
 /// (archive, SHA-256) for this platform's build, or `None` where there is
@@ -47,12 +47,12 @@ fn archive() -> Option<(&'static str, &'static str)> {
     if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
         Some((
             "corkscrew-cloudbridge_darwin_arm64.tar.gz",
-            "4de928e9c526f130236bbd6c9969fcf96728c34ad51efa77c61deb0caf73c772",
+            "91fd927a2e1da4e4b94dedc9f75b957da46a979ab2132a2eab51b1d09f23d05a",
         ))
     } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
         Some((
             "corkscrew-cloudbridge_windows_amd64.zip",
-            "753144533062c97c202eae0870b0ca5daef1bfa5296cdf4ccc518200188b0e16",
+            "82a8304a0ba4b63c695b520da49d402756760bcff5bf56f6a3bbb4c7bd57ca78",
         ))
     } else {
         None
@@ -114,7 +114,7 @@ pub static AWS: ScanProvider = ScanProvider {
     regional: true,
     configure: configure_aws,
     settings: |_| Vec::new(),
-    explain_failure: |output| aws_scan_failure(&output.log),
+    explain_failure: aws_scan_failure,
 };
 
 /// Cloudflare, over the account API: the fork's `cloudflare` plugin, in
@@ -278,13 +278,16 @@ fn unpack(archive: &Path, into: &Path) -> Result<()> {
 
 /// Scan one account's `regions` into a fresh database at `out`, with the
 /// provider's plugin. Blocking; `ensure_installed` first.
+/// Run a scan, writing it to `out`. Returns what it could not cover, in
+/// the user's terms: types the key may not read, features turned off,
+/// services it read only partly. Empty for a scan that saw everything.
 pub fn scan(
     install: &Path,
     provider: &ScanProvider,
     credentials: &SourceContext,
     regions: &[String],
     out: &Path,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     if provider.regional && regions.is_empty() {
         return Err(anyhow!("No regions to scan"));
     }
@@ -363,7 +366,7 @@ pub fn scan(
         );
         return Err(anyhow!("The scan did not finish ({status})"));
     }
-    Ok(())
+    Ok(coverage_notes(&output.report))
 }
 
 /// The AWS plugin reads the standard SDK variables. The shared config
@@ -483,6 +486,18 @@ fn cloudflare_scan_failure(output: &ScanOutput) -> Option<String> {
 /// The per-service errors in a scan's JSON report, across its scopes.
 /// Empty when the report is not that JSON — a scan that wrote nothing.
 fn report_errors(report: &str) -> Vec<String> {
+    report_entries(report, "Errors")
+}
+
+/// The report's notices: what the scan could not cover and why, without
+/// that making it partial. corkscrew writes them since it told the two
+/// apart (`access_denied:`, `not_enabled:`, `unsupported_type:`); an
+/// older report has none.
+fn report_notices(report: &str) -> Vec<String> {
+    report_entries(report, "Notices")
+}
+
+fn report_entries(report: &str, field: &str) -> Vec<String> {
     let Ok(report) = serde_json::from_str::<serde_json::Value>(report) else {
         return Vec::new();
     };
@@ -491,10 +506,83 @@ fn report_errors(report: &str) -> Vec<String> {
         .and_then(serde_json::Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|scope| scope.get("Errors").and_then(serde_json::Value::as_array))
+        .filter_map(|scope| scope.get(field).and_then(serde_json::Value::as_array))
         .flatten()
-        .filter_map(|error| error.as_str().map(str::to_string))
+        .filter_map(|entry| entry.as_str().map(str::to_string))
         .collect()
+}
+
+/// How many resources the report says the scan found; `None` when there
+/// is no report to read.
+fn report_resource_count(report: &str) -> Option<usize> {
+    let report = serde_json::from_str::<serde_json::Value>(report).ok()?;
+    match report.get("Resources")? {
+        serde_json::Value::Array(resources) => Some(resources.len()),
+        serde_json::Value::Null => Some(0),
+        _ => None,
+    }
+}
+
+/// What a notice or error is about: `access_denied:AWS::RDS::DBInstance:
+/// ...` is about `AWS::RDS::DBInstance`, `service:ec2: ...` and
+/// `service ec2: ...` about `ec2`.
+fn entry_subject<'a>(entry: &'a str, prefix: &str) -> Option<&'a str> {
+    let rest = entry.strip_prefix(prefix)?.trim_start();
+    // A CloudFormation type has colons of its own: take up to ": ".
+    let subject = rest.split_once(": ").map_or(rest, |(subject, _)| subject);
+    let subject = subject.trim_end_matches(':').trim();
+    (!subject.is_empty()).then_some(subject)
+}
+
+/// `items` as a short list: the first few, and how many more.
+fn short_list(mut items: Vec<&str>) -> String {
+    const SHOWN: usize = 5;
+    items.sort_unstable();
+    items.dedup();
+    let more = items.len().saturating_sub(SHOWN);
+    let mut text = items.into_iter().take(SHOWN).collect::<Vec<_>>().join(", ");
+    if more > 0 {
+        text.push_str(&format!(" and {more} more"));
+    }
+    text
+}
+
+/// What a finished scan could not cover, one sentence per kind.
+fn coverage_notes(report: &str) -> Vec<String> {
+    let notices = report_notices(report);
+    let errors = report_errors(report);
+    let mut notes = Vec::new();
+    let denied: Vec<&str> = notices
+        .iter()
+        .filter_map(|n| entry_subject(n, "access_denied:"))
+        .collect();
+    if !denied.is_empty() {
+        notes.push(format!(
+            "The key may not read {}; those resources are not in the scan.",
+            short_list(denied)
+        ));
+    }
+    let off: Vec<&str> = notices
+        .iter()
+        .filter_map(|n| entry_subject(n, "not_enabled:"))
+        .collect();
+    if !off.is_empty() {
+        notes.push(format!(
+            "Not turned on in the account: {}.",
+            short_list(off)
+        ));
+    }
+    let partly: Vec<&str> = errors
+        .iter()
+        .filter_map(|e| entry_subject(e, "service:").or_else(|| entry_subject(e, "service ")))
+        .collect();
+    if !partly.is_empty() {
+        notes.push(format!(
+            "Partly read: {}. Nothing billed is called missing until a scan reads everything.",
+            short_list(partly)
+        ));
+    }
+    notes
 }
 
 /// YAML's double-quoted form of `value`.
@@ -544,7 +632,28 @@ fn config_yaml(
 }
 
 /// A failure of an AWS scan worth saying in the user's terms.
-fn aws_scan_failure(log: &str) -> Option<String> {
+///
+/// What AWS said shows up in the log (a release that logged the plugin's
+/// output) or in the report's errors and notices (one that records them
+/// there and keeps the plugin quiet), so both are read.
+fn aws_scan_failure(output: &ScanOutput) -> Option<String> {
+    let mut said = output.log.clone();
+    for entry in report_errors(&output.report)
+        .into_iter()
+        .chain(report_notices(&output.report))
+    {
+        said.push('\n');
+        said.push_str(&entry);
+    }
+    let found_nothing = match report_resource_count(&output.report) {
+        Some(count) => count == 0,
+        // No report: only the log can say whether anything was stored.
+        None => !output.log.contains("Batch scan"),
+    };
+    aws_refusal(&said, found_nothing)
+}
+
+fn aws_refusal(log: &str, found_nothing: bool) -> Option<String> {
     let denied = [
         "AccessDenied",
         "UnauthorizedOperation",
@@ -561,10 +670,10 @@ fn aws_scan_failure(log: &str) -> Option<String> {
                 .to_string(),
         );
     }
-    // A scan logs per-resource failures and carries on; only a scan that
-    // stored nothing because every call was refused is the account's
+    // A scan reports per-type refusals and carries on; only a scan that
+    // found nothing because every call was refused is the account's
     // permissions, which the import that follows reports as an empty scan.
-    if denied.iter().any(|marker| log.contains(marker)) && !log.contains("Batch scan") {
+    if found_nothing && denied.iter().any(|marker| log.contains(marker)) {
         return Some(
             "This account's access key cannot read resources. Grant it read-only access \
              (the AWS ReadOnlyAccess policy) to scan it."
@@ -803,19 +912,113 @@ mod tests {
     fn a_rejected_key_is_reported_in_the_users_terms() {
         let log = "operation error STS: GetCallerIdentity, api error InvalidClientTokenId: \
                    The security token included in the request is invalid";
-        assert!(aws_scan_failure(log).unwrap().contains("access key"));
+        assert!(aws_scan_failure(&logged(log))
+            .unwrap()
+            .contains("access key"));
+    }
+
+    /// A scan as a release before the quiet plugin logs reported it: the
+    /// plugin's output in the log, no report on stdout.
+    fn logged(log: &str) -> ScanOutput {
+        ScanOutput {
+            log: log.to_string(),
+            report: String::new(),
+        }
+    }
+
+    /// A scan as corkscrew reports it since it moved the plugin's refusals
+    /// out of the log: nothing logged, the report carrying them.
+    fn reported(resources: usize, errors: &[&str], notices: &[&str]) -> ScanOutput {
+        let resources: Vec<serde_json::Value> = (0..resources)
+            .map(|i| serde_json::json!({ "Id": format!("r{i}") }))
+            .collect();
+        ScanOutput {
+            log: String::new(),
+            report: serde_json::json!({
+                "ID": "scan_1",
+                "Status": if errors.is_empty() { "completed" } else { "partial" },
+                "Resources": resources,
+                "Scopes": [{ "Scope": "us-east-1", "Errors": errors, "Notices": notices }],
+            })
+            .to_string(),
+        }
+    }
+
+    #[test]
+    fn a_rejected_key_in_the_report_is_reported_in_the_users_terms() {
+        let output = reported(
+            0,
+            &[
+                "service:discovery: operation error STS: GetCallerIdentity, api error \
+               InvalidClientTokenId: The security token included in the request is invalid",
+            ],
+            &[],
+        );
+        assert!(aws_scan_failure(&output).unwrap().contains("access key"));
+    }
+
+    /// Every type refused and nothing found is the key's permissions; a few
+    /// types refused in a scan that found things is coverage, not failure.
+    #[test]
+    fn refusals_in_the_report_fail_only_a_scan_that_found_nothing() {
+        let denied = "access_denied:AWS::EC2::Instance: api error AccessDeniedException: \
+                      User is not authorized to perform cloudformation:DescribeType";
+        assert!(aws_scan_failure(&reported(0, &[], &[denied]))
+            .unwrap()
+            .contains("ReadOnlyAccess"));
+        assert_eq!(aws_scan_failure(&reported(12, &[], &[denied])), None);
+    }
+
+    #[test]
+    fn what_a_scan_could_not_cover_is_said_in_a_sentence_each() {
+        let output = reported(
+            40,
+            &["service:ec2: describe failed for 3 of 40 AWS::EC2::Instance, first: throttled"],
+            &[
+                "access_denied:AWS::RDS::DBInstance: AccessDenied",
+                "access_denied:AWS::Lambda::Function: AccessDenied",
+                "access_denied:AWS::RDS::DBInstance: AccessDenied",
+                "not_enabled:resource-explorer: no aggregator index",
+                "unsupported_type:AWS::Foo::Bar: not listable",
+            ],
+        );
+        let notes = coverage_notes(&output.report);
+        assert_eq!(
+            notes,
+            [
+                "The key may not read AWS::Lambda::Function, AWS::RDS::DBInstance; those \
+                 resources are not in the scan.",
+                "Not turned on in the account: resource-explorer.",
+                "Partly read: ec2. Nothing billed is called missing until a scan reads everything.",
+            ]
+        );
+        assert!(coverage_notes(&reported(3, &[], &[]).report).is_empty());
+        // Cloudflare's errors name the service after a space.
+        let cloudflare = reported(3, &["service workers: 500 Internal Server Error"], &[]);
+        assert_eq!(
+            coverage_notes(&cloudflare.report),
+            ["Partly read: workers. Nothing billed is called missing until a scan reads everything."]
+        );
+    }
+
+    #[test]
+    fn a_long_list_is_cut_short() {
+        assert_eq!(
+            short_list(vec!["g", "f", "e", "d", "c", "b", "a"]),
+            "a, b, c, d, e and 2 more"
+        );
     }
 
     #[test]
     fn missing_read_permissions_are_reported_when_nothing_was_scanned() {
         let refused = "api error AccessDeniedException: User is not authorized to perform \
                        resource-explorer-2:Search";
-        assert!(aws_scan_failure(refused)
+        assert!(aws_scan_failure(&logged(refused))
             .unwrap()
             .contains("ReadOnlyAccess"));
         // Per-resource refusals in a scan that went through are not fatal.
         let partial = format!("{refused}\nBatch scan scan_1: 485 resources across 17 services");
-        assert_eq!(aws_scan_failure(&partial), None);
+        assert_eq!(aws_scan_failure(&logged(&partial)), None);
     }
 
     #[test]

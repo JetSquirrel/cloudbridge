@@ -876,8 +876,9 @@ pub fn scan_targets() -> Result<Vec<ScanTarget>> {
 }
 
 /// Scan one account with its keyring credentials. Returns where the scan
-/// was written, for [`import_scans`]. Blocking; can take minutes.
-pub fn scan_target(target: &ScanTarget) -> Result<PathBuf> {
+/// was written, for [`import_scans`], and what it could not cover.
+/// Blocking; can take minutes.
+pub fn scan_target(target: &ScanTarget) -> Result<(PathBuf, Vec<String>)> {
     let descriptor = target
         .account
         .descriptor()
@@ -894,8 +895,9 @@ pub fn scan_target(target: &ScanTarget) -> Result<PathBuf> {
     let out = crate::config::get_app_data_dir()?
         .join("inventory")
         .join(format!("scan-{}.duckdb", target.account.id));
-    crate::cloud::corkscrew::scan(&install, provider, &credentials, &target.regions, &out)?;
-    Ok(out)
+    let notes =
+        crate::cloud::corkscrew::scan(&install, provider, &credentials, &target.regions, &out)?;
+    Ok((out, notes))
 }
 
 /// Replace the inventory with the scans just taken, merged. Blocking.
