@@ -77,6 +77,9 @@ pub struct SettingsView {
     /// A FOCUS export is being chosen or written.
     #[cfg(not(target_family = "wasm"))]
     exporting: bool,
+    /// The Insights rules section, which keeps its own state.
+    #[cfg(not(target_family = "wasm"))]
+    insight_rules: Entity<super::insight_rules::InsightRulesView>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -137,6 +140,8 @@ impl SettingsView {
             copied: None,
             #[cfg(not(target_family = "wasm"))]
             exporting: false,
+            #[cfg(not(target_family = "wasm"))]
+            insight_rules: cx.new(super::insight_rules::InsightRulesView::new),
             _subscriptions: vec![subscription],
         }
     }
@@ -752,7 +757,8 @@ impl Render for SettingsView {
                 #[cfg(not(target_family = "wasm"))]
                 let el = el
                     .child(self.render_section("Background", self.render_background(cx), cx))
-                    .child(self.render_section("Data", self.render_data(cx), cx));
+                    .child(self.render_section("Data", self.render_data(cx), cx))
+                    .child(self.render_section("Insights rules", self.insight_rules.clone(), cx));
                 el
             })
             // Demo data

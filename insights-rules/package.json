@@ -1,0 +1,16 @@
+{
+  "name": "cloudbridge-insights-rules",
+  "private": true,
+  "description": "Community Insights rules for CloudBridge",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "node build.mjs",
+    "test": "npm run typecheck && npm run build"
+  },
+  "devDependencies": {
+    "esbuild": "0.24.0",
+    "typescript": "5.6.3"
+  }
+}

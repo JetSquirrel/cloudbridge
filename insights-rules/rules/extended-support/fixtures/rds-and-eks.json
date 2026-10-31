@@ -1,0 +1,82 @@
+{
+  "description": "An RDS instance and an EKS cluster paying Extended Support are flagged with that part of their cost; a cluster on a supported version is not.",
+  "input": {
+    "apiVersion": 1,
+    "period": "2026-10",
+    "currency": "USD",
+    "scan": null,
+    "resources": [],
+    "billed": [
+      {
+        "provider": "AWS",
+        "accountId": "111111111111",
+        "id": "arn:aws:rds:us-east-1:111111111111:db:legacy-mysql",
+        "name": null,
+        "service": "Amazon Relational Database Service",
+        "region": "us-east-1",
+        "cost": 267.12,
+        "resource": null,
+        "lines": [
+          {
+            "description": "$0.171 per RDS db.m5.large Single-AZ instance hour (or partial hour) running MySQL",
+            "unit": "Hrs",
+            "quantity": 720,
+            "cost": 123.12
+          },
+          {
+            "description": "$0.100 per vCPU-hour for RDS Extended Support Year 1 and 2 - MySQL",
+            "unit": "vCPU-Hrs",
+            "quantity": 1440,
+            "cost": 144.0
+          }
+        ]
+      },
+      {
+        "provider": "AWS",
+        "accountId": "111111111111",
+        "id": "arn:aws:eks:us-east-1:111111111111:cluster/old",
+        "name": null,
+        "service": "Amazon Elastic Container Service for Kubernetes",
+        "region": "us-east-1",
+        "cost": 432.0,
+        "resource": null,
+        "lines": [
+          {
+            "description": "Amazon EKS cluster usage in extended support - US East (N. Virginia)",
+            "unit": "Hrs",
+            "quantity": 720,
+            "cost": 432.0
+          }
+        ]
+      },
+      {
+        "provider": "AWS",
+        "accountId": "111111111111",
+        "id": "arn:aws:eks:us-east-1:111111111111:cluster/current",
+        "name": null,
+        "service": "Amazon Elastic Container Service for Kubernetes",
+        "region": "us-east-1",
+        "cost": 72.0,
+        "resource": null,
+        "lines": [
+          {
+            "description": "Amazon EKS cluster usage - US East (N. Virginia)",
+            "unit": "Hrs",
+            "quantity": 720,
+            "cost": 72.0
+          }
+        ]
+      }
+    ]
+  },
+  "expect": [
+    {
+      "id": "arn:aws:rds:us-east-1:111111111111:db:legacy-mysql",
+      "evidence": "Extended Support is 54% of what it cost this period"
+    },
+    {
+      "id": "arn:aws:eks:us-east-1:111111111111:cluster/old",
+      "evidence": "Extended Support is 100% of what it cost this period"
+    }
+  ]
+}

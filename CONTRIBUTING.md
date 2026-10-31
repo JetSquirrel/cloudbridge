@@ -247,6 +247,20 @@ than adding provider-name branches. To add one:
 The registry module's tests document these contracts precisely — read them
 before adding a row.
 
+## Adding an Insights rule
+
+A check for something worth cutting (an idle resource, an old storage class,
+a surcharge) does not need a change to the app. Write it as a rule in
+[`insights-rules/`](insights-rules/README.md): a TypeScript function over the
+period's bill, with fixtures that show what it finds and what it leaves
+alone. `npm test` there type-checks, builds and runs it; once merged, the
+desktop app offers it under **Settings → Insights rules**. No Rust toolchain
+is needed.
+
+If you know the check but not the code, open a
+[rule idea](https://github.com/JetSquirrel/cloudbridge/issues/new?template=insight-rule.yml)
+with the bill line that shows it.
+
 ## Pull requests
 
 1. Fork the repo and create your branch from `main`.

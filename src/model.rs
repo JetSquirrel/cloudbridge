@@ -861,6 +861,28 @@ pub struct ResourceCost {
     /// Whether any of the charges is for an idle public IPv4 address: AWS
     /// bills an address that is allocated but not attached to anything.
     pub idle_public_ip: bool,
+    /// NAT Gateway hours the bill charges for this resource: the fixed
+    /// part of a NAT Gateway's price, paid whether traffic flows or not.
+    pub nat_gateway_hours: f64,
+    /// Gigabytes the bill says this resource processed as a NAT Gateway.
+    pub nat_gateway_gb: f64,
+}
+
+/// One kind of charge on one resource in a period: the bill's description
+/// line, how much of it and what it cost. What a script rule reads to tell
+/// an hour charge from a traffic charge.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResourceChargeLine {
+    pub provider: String,
+    pub resource_id: String,
+    pub description: Option<String>,
+    /// `consumed_unit`, else `pricing_unit`.
+    pub unit: Option<String>,
+    /// `consumed_quantity`, else `pricing_quantity`; 0 when the bill has
+    /// neither.
+    pub quantity: f64,
+    /// Usage cost in the reporting currency.
+    pub cost: f64,
 }
 
 /// How much of one service a resource used in a period, in the bill's
@@ -883,11 +905,49 @@ pub enum InsightKind {
     StoppedInstance,
     /// A public IPv4 address the bill charges as idle.
     IdlePublicIp,
+    /// A NAT Gateway the bill charges hours for while it processed next to
+    /// no traffic.
+    IdleNatGateway,
     /// A resource with no owner tag and no stack or app that manages it.
     Unclaimed,
+    /// A finding from a script rule: the index of the rule in
+    /// [`ScriptRun::rules`]. Desktop only; the browser runs only the
+    /// built-in kinds.
+    Script(u16),
     /// A resource the bill charges for that the inventory does not have,
     /// in a region the scan covered.
     NotInInventory,
+}
+
+/// A script rule as the Insights page names it. `id` is the file's stem.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InsightRuleInfo {
+    pub id: String,
+    /// The stat card's label, upper case by convention.
+    pub label: String,
+    pub title: String,
+    pub explanation: String,
+}
+
+/// A script rule that could not run, or returned something unusable.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScriptError {
+    /// The file, by name.
+    pub file: String,
+    pub message: String,
+}
+
+/// What the script rules made of one period.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ScriptRun {
+    /// Where the rules are read from; `None` where there are none to read
+    /// (the browser).
+    pub dir: Option<String>,
+    /// The rules that loaded, in file-name order; a finding's
+    /// [`InsightKind::Script`] indexes into this.
+    pub rules: Vec<InsightRuleInfo>,
+    pub findings: Vec<InsightFinding>,
+    pub errors: Vec<ScriptError>,
 }
 
 /// One resource worth a look, and what it costs.

@@ -43,6 +43,15 @@ const TAGGED_SOURCES: &[&str] = &["AWS"];
 /// [`inventory_by_source`] so it does not vanish from the page.
 pub const JUDGED_SOURCES: &[&str] = &["AWS"];
 
+/// A NAT Gateway that processed less than this many gigabytes in a period
+/// is idle: at AWS's $0.045 a gigabyte that is under five cents of traffic
+/// against about $32 a month of hourly charge.
+pub const IDLE_NAT_GATEWAY_GB: f64 = 1.0;
+
+/// Hours a NAT Gateway must be billed for before its traffic is judged, so
+/// one created this morning is not called idle by lunchtime.
+pub const IDLE_NAT_GATEWAY_MIN_HOURS: f64 = 24.0;
+
 /// One source's resources, counted by type.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceInventory {
@@ -193,15 +202,12 @@ pub fn insights(
     scope: Option<&InventoryScope>,
     owner_tag_keys: &[&str],
 ) -> InsightsReport {
-    let index = Index::new(resources);
-    let mut matched: Vec<Option<usize>> = Vec::with_capacity(costs.len());
+    let matched = match_costs(resources, costs);
     let mut cost_of = vec![0.0; resources.len()];
-    for cost in costs {
-        let hit = index.find(cost);
+    for (cost, hit) in costs.iter().zip(&matched) {
         if let Some(i) = hit {
-            cost_of[i] += cost.usage_cost;
+            cost_of[*i] += cost.usage_cost;
         }
-        matched.push(hit);
     }
     let cost_by_key: HashMap<(&str, &str), f64> =
         costs.iter().fold(HashMap::new(), |mut map, c| {
@@ -280,6 +286,24 @@ pub fn insights(
                 evidence: "Billed as an idle public IPv4 address: allocated, attached to nothing"
                     .to_string(),
             });
+        } else if is_idle_nat_gateway(cost) {
+            findings.push(InsightFinding {
+                kind: InsightKind::IdleNatGateway,
+                provider: cost.provider.clone(),
+                cloud_account_id: cost.cloud_account_id.clone(),
+                resource_id: cost.resource_id.clone(),
+                name: hit
+                    .and_then(|i| resources[i].name.clone())
+                    .or_else(|| cost.resource_name.clone()),
+                resource_kind: cost.service.clone(),
+                region: cost.region.clone(),
+                cost: cost.usage_cost,
+                evidence: format!(
+                    "Billed for {:.0} NAT Gateway hours while it processed {}",
+                    cost.nat_gateway_hours,
+                    processed(cost.nat_gateway_gb)
+                ),
+            });
         } else if hit.is_none() && cost.usage_cost > 0.0 {
             if let Some(scope) = scope.filter(|s| covers(s, cost.region.as_deref())) {
                 findings.push(InsightFinding {
@@ -300,12 +324,7 @@ pub fn insights(
         }
     }
 
-    findings.sort_by(|a, b| {
-        a.kind
-            .cmp(&b.kind)
-            .then(b.cost.total_cmp(&a.cost))
-            .then_with(|| a.resource_id.cmp(&b.resource_id))
-    });
+    sort_findings(&mut findings);
 
     let billed_cost = costs.iter().map(|c| c.usage_cost).sum();
     let matched_cost = costs
@@ -324,6 +343,23 @@ pub fn insights(
         billed_cost,
         resource_cost: cost_of,
     }
+}
+
+/// The inventory resource each bill row is for, where it can be told: the
+/// join every finding, built-in or scripted, is judged from.
+pub fn match_costs(resources: &[InventoryResource], costs: &[ResourceCost]) -> Vec<Option<usize>> {
+    let index = Index::new(resources);
+    costs.iter().map(|cost| index.find(cost)).collect()
+}
+
+/// Kind by kind in the page's order, costliest first within a kind.
+pub fn sort_findings(findings: &mut [InsightFinding]) {
+    findings.sort_by(|a, b| {
+        a.kind
+            .cmp(&b.kind)
+            .then(b.cost.total_cmp(&a.cost))
+            .then_with(|| a.resource_id.cmp(&b.resource_id))
+    });
 }
 
 /// The inventory looked up by resource key, the way bill rows look for it.
@@ -402,6 +438,23 @@ fn covers(scope: &InventoryScope, region: Option<&str>) -> bool {
     match region {
         Some(region) if region != "global" => scope.regions.iter().any(|r| r == region),
         _ => false,
+    }
+}
+
+/// Whether the bill charges `cost` as a NAT Gateway that has been up long
+/// enough to judge and carried next to no traffic.
+pub fn is_idle_nat_gateway(cost: &ResourceCost) -> bool {
+    cost.nat_gateway_hours >= IDLE_NAT_GATEWAY_MIN_HOURS
+        && cost.nat_gateway_gb < IDLE_NAT_GATEWAY_GB
+}
+
+fn processed(gb: f64) -> String {
+    if gb <= 0.0 {
+        "no data".to_string()
+    } else if gb < 0.01 {
+        "under 0.01 GB".to_string()
+    } else {
+        format!("{gb:.2} GB")
     }
 }
 
@@ -499,6 +552,8 @@ mod tests {
             region: Some(region.to_string()),
             usage_cost: amount,
             idle_public_ip: false,
+            nat_gateway_hours: 0.0,
+            nat_gateway_gb: 0.0,
         }
     }
 
@@ -805,6 +860,42 @@ mod tests {
             kinds(&report),
             [(InsightKind::IdlePublicIp, "eipalloc-1", 3.6)]
         );
+    }
+
+    /// A NAT Gateway is idle when it bills a day or more of hours and
+    /// moves next to nothing; a busy one, or one created today, is not.
+    /// An idle one is not also reported as missing from the scan.
+    #[test]
+    fn an_idle_nat_gateway_is_found_in_the_bill_alone() {
+        let nat = |id: &str, hours: f64, gb: f64| {
+            let mut c = cost(id, "us-east-1", hours * 0.045 + gb * 0.045);
+            c.service = "Amazon Virtual Private Cloud".to_string();
+            c.nat_gateway_hours = hours;
+            c.nat_gateway_gb = gb;
+            c
+        };
+        let costs = [
+            nat("arn:aws:ec2:us-east-1:1:natgateway/nat-idle", 720.0, 0.0),
+            nat("nat-quiet", 300.0, 0.2),
+            nat("nat-busy", 720.0, 450.0),
+            nat("nat-new", 6.0, 0.0),
+        ];
+        let report = insights(&[], &costs, Some(&scope(&["us-east-1"])), OWNER_TAG_KEYS);
+        let idle: Vec<_> = kinds(&report)
+            .into_iter()
+            .filter(|(kind, ..)| *kind == InsightKind::IdleNatGateway)
+            .map(|(_, id, _)| id)
+            .collect();
+        assert_eq!(idle, ["nat-idle", "nat-quiet"]);
+        assert!(report.findings[0]
+            .evidence
+            .contains("720 NAT Gateway hours"));
+        assert!(report.findings[0].evidence.contains("no data"));
+        assert!(report.findings[1].evidence.contains("0.20 GB"));
+        assert!(!report
+            .findings
+            .iter()
+            .any(|f| f.kind == InsightKind::NotInInventory && f.resource_id.contains("nat-idle")));
     }
 
     /// Only a region the scan covered can be missing a resource; without a

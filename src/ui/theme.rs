@@ -289,7 +289,12 @@ pub fn range_pill(cx: &App, active: bool) -> ButtonCustomVariant {
 }
 
 /// KPI card with a reserved value tier and a separate supporting caption.
-pub fn stat_card(cx: &App, label: &'static str, value: String, sub: impl IntoElement) -> Div {
+pub fn stat_card(
+    cx: &App,
+    label: impl Into<SharedString>,
+    value: String,
+    sub: impl IntoElement,
+) -> Div {
     card(cx)
         .flex_1()
         // min_w_0: four equal cards must shrink below their content
@@ -303,7 +308,7 @@ pub fn stat_card(cx: &App, label: &'static str, value: String, sub: impl IntoEle
                 .text_sm()
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(text_muted(cx))
-                .child(label),
+                .child(label.into()),
         )
         .child(
             div()
@@ -319,12 +324,12 @@ pub fn stat_card(cx: &App, label: &'static str, value: String, sub: impl IntoEle
 }
 
 /// Bold section heading inside a page.
-pub fn section_title(cx: &App, text: &'static str) -> Div {
+pub fn section_title(cx: &App, text: impl Into<SharedString>) -> Div {
     div()
         .text_base()
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(text_primary(cx))
-        .child(text)
+        .child(text.into())
 }
 
 /// Muted table header cell. Between xs and sm: 0.85rem ≈ 12px at the 14px base.

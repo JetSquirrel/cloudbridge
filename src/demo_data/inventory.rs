@@ -1,7 +1,8 @@
 //! The demo inventory: a handful of resources and the current period's
 //! charges for them, shaped so the Insights page has one of each finding
 //! to show — a stopped instance still paying for its volume, an idle public
-//! address, an unclaimed bucket, a billed volume the scan no longer finds —
+//! address, a NAT Gateway that bills hours and carries no traffic, an
+//! unclaimed bucket, a billed volume the scan no longer finds —
 //! beside resources that are owned, running and cheap.
 //!
 //! The charges join the demo AWS account's current period, so they also
@@ -62,6 +63,14 @@ const RESOURCES: &[DemoResource] = &[
         None,
     ),
     (
+        "arn:aws:ec2:us-east-1:123456789012:natgateway/nat-0d3m0staging",
+        "ec2:natgateway",
+        REGION,
+        Some("staging-egress"),
+        Some(r#"{"team":"platform","Name":"staging-egress"}"#),
+        None,
+    ),
+    (
         "arn:aws:s3:::analytics-scratch-2024",
         "s3:bucket",
         "global",
@@ -106,6 +115,13 @@ const BILLED: &[(&str, &str, &str, f64)] = &[
         "Amazon Virtual Private Cloud",
         "$0.005 per Idle public IPv4 address per hour",
         3.6,
+    ),
+    (
+        // Up all month, and nothing routes through it.
+        "arn:aws:ec2:us-east-1:123456789012:natgateway/nat-0d3m0staging",
+        "Amazon Virtual Private Cloud",
+        "$0.045 per NAT Gateway Hour",
+        32.4,
     ),
     (
         "analytics-scratch-2024",
@@ -158,6 +174,11 @@ pub fn inventory(now: DateTime<Utc>) -> (InventoryScope, Vec<InventoryResource>)
     (scope, resources)
 }
 
+/// Hours a day of a NAT Gateway Hour row; other rows carry no quantity.
+fn daily_quantity(description: &str) -> Option<f64> {
+    description.contains("NAT Gateway Hour").then_some(24.0)
+}
+
 /// Daily usage rows for the inventory's resources, from the first of the
 /// current period through `now`'s day.
 pub fn resource_charges(now: DateTime<Utc>) -> Vec<Charge> {
@@ -177,6 +198,8 @@ pub fn resource_charges(now: DateTime<Utc>) -> Vec<Charge> {
                 sub_account_id: Some(DEMO_CLOUD_ACCOUNT.to_string()),
                 billed_cost: Some(daily),
                 effective_cost: Some(daily),
+                pricing_quantity: daily_quantity(description),
+                consumed_quantity: daily_quantity(description),
                 ..Charge::new(start, start + Duration::days(1), "USD")
             });
         }
@@ -207,6 +230,8 @@ mod tests {
                 region: Some(REGION.to_string()),
                 usage_cost: *monthly,
                 idle_public_ip: description.contains("Idle public IPv4"),
+                nat_gateway_hours: daily_quantity(description).map_or(0.0, |h| h * 30.0),
+                nat_gateway_gb: 0.0,
             })
             .collect();
 
@@ -217,6 +242,7 @@ mod tests {
             [
                 InsightKind::StoppedInstance,
                 InsightKind::IdlePublicIp,
+                InsightKind::IdleNatGateway,
                 InsightKind::Unclaimed,
                 InsightKind::NotInInventory,
             ]

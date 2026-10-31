@@ -27,25 +27,39 @@ use gpui_kit::*;
 
 use super::{data, dialogs, fmt, theme};
 use crate::analytics::insights::{
-    findings_by_type, insights, inventory_by_source, resource_key, FindingGroup, SourceInventory,
-    JUDGED_SOURCES, OWNER_TAG_KEYS,
+    findings_by_type, insights, inventory_by_source, resource_key, sort_findings, FindingGroup,
+    SourceInventory, JUDGED_SOURCES, OWNER_TAG_KEYS,
 };
 use crate::cloud::BillingPeriod;
 use crate::ingest;
 use crate::ledger::query;
 use crate::model::{
-    InsightFinding, InsightKind, InsightsReport, InventoryResource, InventoryScope, ResourceUsage,
+    InsightFinding, InsightKind, InsightRuleInfo, InsightsReport, InventoryResource,
+    InventoryScope, ResourceUsage, ScriptRun,
 };
 use crate::ui::theme::CardOutline as _;
 
-/// The kinds in the order the page shows them: the ones a person can act
-/// on first, the one that may just be a scan's blind spot last.
-const KINDS: [InsightKind; 4] = [
+/// The built-in kinds in the order the page shows them: the ones a person
+/// can act on first, the one that may just be a scan's blind spot last.
+/// Script rules go before that last one.
+const BUILT_IN: [InsightKind; 5] = [
     InsightKind::StoppedInstance,
     InsightKind::IdlePublicIp,
+    InsightKind::IdleNatGateway,
     InsightKind::Unclaimed,
     InsightKind::NotInInventory,
 ];
+
+/// Every kind this load can show, built-in and scripted, in page order.
+fn kinds(scripts: &ScriptRun) -> Vec<InsightKind> {
+    let (last, first) = BUILT_IN.split_last().expect("built-in kinds");
+    first
+        .iter()
+        .copied()
+        .chain((0..scripts.rules.len()).map(|i| InsightKind::Script(i as u16)))
+        .chain([*last])
+        .collect()
+}
 
 /// One load of the page: the period's report and what it was judged from.
 pub struct InsightsData {
@@ -63,6 +77,10 @@ pub struct InsightsData {
     /// This period's usage by resource, keyed as the inventory meets the
     /// bill: `(provider, resource_key)`.
     pub usage: HashMap<(String, String), Vec<ResourceUsage>>,
+    /// The script rules that ran, and those that could not.
+    pub scripts: ScriptRun,
+    /// Every kind the page shows, in order.
+    pub kinds: Vec<InsightKind>,
 }
 
 /// Read the inventory and the period's resource costs, and judge them.
@@ -72,7 +90,19 @@ pub fn load_insights() -> Result<InsightsData> {
     let resources = query::inventory_resources()?;
     let scope = query::inventory_scope()?;
     let costs = query::resource_usage_costs(&period)?;
-    let report = insights(&resources, &costs, scope.as_ref(), OWNER_TAG_KEYS);
+    let currency = data::reporting_currency();
+    let mut report = insights(&resources, &costs, scope.as_ref(), OWNER_TAG_KEYS);
+    let scripts = crate::insight_scripts::run(
+        &period,
+        &currency,
+        &resources,
+        &costs,
+        scope.as_ref(),
+        &report,
+    );
+    report.findings.extend(scripts.findings.iter().cloned());
+    sort_findings(&mut report.findings);
+    let kinds = kinds(&scripts);
     let mut usage: HashMap<(String, String), Vec<ResourceUsage>> = HashMap::new();
     for row in query::resource_usage_quantities(&period)? {
         usage
@@ -83,12 +113,12 @@ pub fn load_insights() -> Result<InsightsData> {
             .or_default()
             .push(row);
     }
-    let finding_groups = KINDS
+    let finding_groups = kinds
         .iter()
         .map(|kind| (*kind, findings_by_type(&report.findings, *kind)))
         .collect();
     Ok(InsightsData {
-        currency: data::reporting_currency(),
+        currency,
         period_label: period,
         report,
         scope,
@@ -96,6 +126,8 @@ pub fn load_insights() -> Result<InsightsData> {
         resources,
         finding_groups,
         usage,
+        scripts,
+        kinds,
     })
 }
 
@@ -498,36 +530,48 @@ impl InsightsView {
                 100.0 * report.matched_cost / report.billed_cost
             ));
         }
+        if let (Some(dir), false) = (&d.scripts.dir, d.scripts.rules.is_empty()) {
+            let n = d.scripts.rules.len();
+            parts.push(format!(
+                "{n} script rule{} from {dir}",
+                if n == 1 { "" } else { "s" }
+            ));
+        }
         theme::caption(cx, parts.join("; "))
     }
 
     fn render_stats(&self, d: &InsightsData, cx: &Context<Self>) -> impl IntoElement {
-        div()
-            .w_full()
-            .h_flex()
-            .items_stretch()
-            .gap_4()
-            .children(KINDS.iter().map(|kind| {
-                let of_kind = d.report.findings.iter().filter(|f| f.kind == *kind);
-                let (count, cost) = of_kind.fold((0, 0.0), |(n, c), f| (n + 1, c + f.cost));
-                let plural = if count == 1 { "" } else { "s" };
-                // Without a resource-level bill there is no price to lead
-                // with; the count is the figure.
-                let (value, sub) = if d.report.priced {
-                    (
-                        fmt::amount(cost, &d.currency),
-                        format!("{count} resource{plural}"),
+        div().w_full().h_flex().items_stretch().gap_4().children(
+            d.kinds
+                .iter()
+                .filter(|kind| {
+                    // A script rule's card shows only when it found something;
+                    // the built-in cards are always there.
+                    !matches!(kind, InsightKind::Script(_))
+                        || d.report.findings.iter().any(|f| f.kind == **kind)
+                })
+                .map(|kind| {
+                    let of_kind = d.report.findings.iter().filter(|f| f.kind == *kind);
+                    let (count, cost) = of_kind.fold((0, 0.0), |(n, c), f| (n + 1, c + f.cost));
+                    let plural = if count == 1 { "" } else { "s" };
+                    // Without a resource-level bill there is no price to lead
+                    // with; the count is the figure.
+                    let (value, sub) = if d.report.priced {
+                        (
+                            fmt::amount(cost, &d.currency),
+                            format!("{count} resource{plural}"),
+                        )
+                    } else {
+                        (count.to_string(), format!("resource{plural}, not priced"))
+                    };
+                    theme::stat_card(
+                        cx,
+                        stat_label(d, *kind),
+                        value,
+                        div().text_color(theme::text_muted(cx)).child(sub),
                     )
-                } else {
-                    (count.to_string(), format!("resource{plural}, not priced"))
-                };
-                theme::stat_card(
-                    cx,
-                    stat_label(*kind),
-                    value,
-                    div().text_color(theme::text_muted(cx)).child(sub),
-                )
-            }))
+                }),
+        )
     }
 
     fn render_kind(&self, d: &InsightsData, kind: InsightKind, cx: &Context<Self>) -> AnyElement {
@@ -561,8 +605,8 @@ impl InsightsView {
                 div()
                     .v_flex()
                     .gap_1()
-                    .child(theme::section_title(cx, section_title(kind)))
-                    .child(theme::caption(cx, explanation(kind))),
+                    .child(theme::section_title(cx, section_title(d, kind)))
+                    .child(theme::caption(cx, explanation(d, kind))),
             )
             .child(
                 div()
@@ -1343,25 +1387,48 @@ fn type_label(source: &str, resource_type: &str) -> String {
     named.to_string()
 }
 
-fn stat_label(kind: InsightKind) -> &'static str {
+/// A script rule's names, by its kind.
+fn script_rule(d: &InsightsData, kind: InsightKind) -> Option<&InsightRuleInfo> {
+    match kind {
+        InsightKind::Script(i) => d.scripts.rules.get(i as usize),
+        _ => None,
+    }
+}
+
+fn stat_label(d: &InsightsData, kind: InsightKind) -> SharedString {
+    if let Some(rule) = script_rule(d, kind) {
+        return rule.label.clone().into();
+    }
     match kind {
         InsightKind::StoppedInstance => "STOPPED INSTANCES",
         InsightKind::IdlePublicIp => "IDLE ADDRESSES",
+        InsightKind::IdleNatGateway => "IDLE NAT GATEWAYS",
         InsightKind::Unclaimed => "UNCLAIMED",
         InsightKind::NotInInventory => "NOT IN THE SCAN",
+        InsightKind::Script(_) => "SCRIPT RULE",
     }
+    .into()
 }
 
-fn section_title(kind: InsightKind) -> &'static str {
+fn section_title(d: &InsightsData, kind: InsightKind) -> SharedString {
+    if let Some(rule) = script_rule(d, kind) {
+        return rule.title.clone().into();
+    }
     match kind {
         InsightKind::StoppedInstance => "Stopped instances",
         InsightKind::IdlePublicIp => "Idle public addresses",
+        InsightKind::IdleNatGateway => "Idle NAT Gateways",
         InsightKind::Unclaimed => "Unclaimed resources",
         InsightKind::NotInInventory => "Billed, but not in the scan",
+        InsightKind::Script(_) => "Script rule",
     }
+    .into()
 }
 
-fn explanation(kind: InsightKind) -> &'static str {
+fn explanation(d: &InsightsData, kind: InsightKind) -> SharedString {
+    if let Some(rule) = script_rule(d, kind) {
+        return rule.explanation.clone().into();
+    }
     match kind {
         InsightKind::StoppedInstance => {
             "Stopped when scanned. Compute stops billing; attached volumes and addresses do not. \
@@ -1371,6 +1438,11 @@ fn explanation(kind: InsightKind) -> &'static str {
             "Public IPv4 addresses the bill charges as idle: allocated, attached to nothing. \
              Release the ones nobody needs."
         }
+        InsightKind::IdleNatGateway => {
+            "NAT Gateways billed by the hour that processed under 1 GB this period. Each costs \
+             about $32 a month before any traffic. Delete the ones no private subnet routes \
+             through."
+        }
         InsightKind::Unclaimed => {
             "No owner tag (owner, team, project, cost-center, business_line) and no stack or app \
              that manages them. Find an owner, or remove them."
@@ -1379,7 +1451,9 @@ fn explanation(kind: InsightKind) -> &'static str {
             "Charged this period in a region the scan covered, but not found by it: deleted \
              since, or a type the scan does not list."
         }
+        InsightKind::Script(_) => "",
     }
+    .into()
 }
 
 impl Render for InsightsView {
@@ -1409,6 +1483,12 @@ impl Render for InsightsView {
                 .when(d.scope.is_some() || d.report.billed_cost > 0.0, |el| {
                     el.child(self.render_scope(d, cx))
                 })
+                .children(d.scripts.errors.iter().map(|e| {
+                    self.render_message(
+                        cx,
+                        &Err(format!("Script rule {} did not run: {}", e.file, e.message)),
+                    )
+                }))
                 .map(|el| {
                     if empty {
                         el.child(self.render_empty(Some(d), cx))
@@ -1417,7 +1497,7 @@ impl Render for InsightsView {
                             el.child(self.render_unpriced(cx))
                         })
                         .child(self.render_stats(d, cx))
-                        .children(KINDS.iter().map(|kind| self.render_kind(d, *kind, cx)))
+                        .children(d.kinds.iter().map(|kind| self.render_kind(d, *kind, cx)))
                     }
                 })
                 .children(

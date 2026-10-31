@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Idle NAT Gateways on Insights.** A NAT Gateway the bill charges a day or
+  more of hours for, while it processed under 1 GB in the period, is listed
+  with its cost: about $32 a month each before any traffic. Read from the
+  bill's NAT Gateway Hour and Data Processed lines, so it needs no scan. The
+  demo bill has one.
+- **Insights rules in JavaScript (desktop).** Each `.js` file in the data
+  directory's `insights/` folder is one more Insights rule, read again
+  whenever the page loads, so a new check needs no release. A rule is an
+  ES module that receives the period's bill per resource (with its charge
+  lines and matched scan resource) and returns findings; it runs in QuickJS
+  with no file or network access, a 64 MiB heap and a two-second limit, and
+  a rule that fails is listed on the page with its error. The browser demo
+  runs only the built-in rules.
+- **Community rules catalog.** Settings has an Insights rules section that
+  lists the rules in effect and, on Browse catalog, the community rules
+  built from `insights-rules/`: install, update or remove each one. Every
+  download is checked against the catalog's SHA-256 before it is written,
+  an update never overwrites a rule edited locally without asking, and
+  nothing is fetched until the catalog is opened. The first rules find
+  load balancers that served no traffic, EBS volumes still on gp2, and
+  RDS, Aurora and EKS paying Extended Support.
+- **`insights-rules/` for contributors.** Rules are written in TypeScript
+  with fixtures; `npm test` type-checks them and runs every fixture, CI runs
+  them again in QuickJS, and each merge to `main` publishes the catalog to
+  the rolling `insight-rules` release. A rule idea can be filed as an issue
+  without writing code.
+
 ## [0.7.1] - 2026-10-30
 
 ### Fixed

@@ -463,14 +463,27 @@ pub fn resource_usage_costs(billing_period: &str) -> Result<Vec<ResourceCost>> {
                     region: row.region_id.clone(),
                     usage_cost: 0.0,
                     idle_public_ip: false,
+                    nat_gateway_hours: 0.0,
+                    nat_gateway_gb: 0.0,
                 });
             if row.charge_category == ChargeCategory::Usage {
                 cost.usage_cost += row.billed_cost_base.unwrap_or(0.0);
             }
-            cost.idle_public_ip |= row
+            let description = row
                 .charge_description
                 .as_deref()
-                .is_some_and(|d| d.to_lowercase().contains("idle public ipv4"));
+                .map(str::to_lowercase)
+                .unwrap_or_default();
+            cost.idle_public_ip |= description.contains("idle public ipv4");
+            let quantity = row
+                .consumed_quantity
+                .or(row.pricing_quantity)
+                .unwrap_or(0.0);
+            if description.contains("nat gateway hour") {
+                cost.nat_gateway_hours += quantity;
+            } else if description.contains("processed by nat gateway") {
+                cost.nat_gateway_gb += quantity;
+            }
         }
         grouped.into_values().collect()
     })
