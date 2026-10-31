@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-31
+
+Insights can be extended without a release: rules written in JavaScript
+run on the desktop, and a community catalog built from `insights-rules/`
+installs them from Settings. Idle NAT Gateways are a new built-in finding.
+Resource scans move to corkscrew `cloudbridge-r4`, and a partial scan is
+imported instead of refused. On Windows the app no longer opens a console
+and carries its own icon.
+
 ### Changed
 - **Resource scans keep up with corkscrew's latest.** The scanner is now
   corkscrew `cloudbridge-r4`, built from upstream through 2026-10-22. A
@@ -48,6 +57,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them again in QuickJS, and each merge to `main` publishes the catalog to
   the rolling `insight-rules` release. A rule idea can be filed as an issue
   without writing code.
+
+### Fixed
+- **Windows: no console window, and an application icon.** A release build
+  starts as a GUI program, so no console opens beside the app (debug builds
+  keep theirs for logs). The exe, title bar, taskbar and Alt+Tab show the
+  CloudBridge icon instead of the default one.
 
 ## [0.7.1] - 2026-10-30
 
