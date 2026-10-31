@@ -39,7 +39,15 @@ export interface Input {
   /** The reporting currency every cost is in. */
   currency: string;
   /** The last resource scan, if one was imported. */
-  scan: { scannedAt: string; regions: string[] } | null;
+  scan: {
+    scannedAt: string;
+    regions: string[];
+    /**
+     * `false` for a partial scan: some service or type reported errors, so
+     * a billed resource missing from `resources` may only be one it did not reach.
+     */
+    complete: boolean;
+  } | null;
   /** The scanned inventory. */
   resources: Resource[];
   /** Every resource the period's bill names, with its charge lines. */
@@ -60,6 +68,10 @@ export interface Resource {
   properties: Record<string, unknown> | null;
   /** This period's usage cost matched to it from the bill. */
   cost: number;
+  /** When the provider says it was created, RFC 3339; `null` when it does not say. */
+  createdAt: string | null;
+  /** When the provider says it last changed, RFC 3339; `null` when it does not say. */
+  modifiedAt: string | null;
 }
 
 export interface Billed {

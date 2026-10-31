@@ -56,7 +56,13 @@ use duckdb::{params, Connection};
 /// `requester_details`: the user and API key a model provider's usage is
 /// reported under. Nothing earlier recorded them apart, so existing rows
 /// keep NULL until their month is imported again or replayed.
-pub const SCHEMA_VERSION: i32 = 8;
+///
+/// v9 adds the resources' own `created_at` and `modified_at` to
+/// `dim_resource`, which corkscrew records since its schema 7, and
+/// `complete` to `inventory_scan`, since a partial scan is now imported.
+/// An inventory imported before keeps NULL times and counts as complete,
+/// which is what an earlier import required.
+pub const SCHEMA_VERSION: i32 = 9;
 
 /// The view the application reads: every charge with its amount also
 /// expressed in the reporting currency.
@@ -297,6 +303,17 @@ fn migrate(conn: &Connection) -> Result<()> {
         conn.execute_batch(
             "ALTER TABLE fct_charge ADD COLUMN sub_account_id VARCHAR;
              ALTER TABLE fct_charge ADD COLUMN sub_account_name VARCHAR;",
+        )?;
+    }
+    if !has_column(conn, "dim_resource", "created_at")? {
+        conn.execute_batch(
+            "ALTER TABLE dim_resource ADD COLUMN created_at TIMESTAMP;
+             ALTER TABLE dim_resource ADD COLUMN modified_at TIMESTAMP;",
+        )?;
+    }
+    if !has_column(conn, "inventory_scan", "complete")? {
+        conn.execute_batch(
+            "ALTER TABLE inventory_scan ADD COLUMN complete BOOLEAN NOT NULL DEFAULT true",
         )?;
     }
     if !has_column(conn, "inventory_scan", "scanner")? {

@@ -159,6 +159,10 @@ pub fn inventory(now: DateTime<Utc>) -> (InventoryScope, Vec<InventoryResource>)
                 name: name.map(str::to_string),
                 tags: tags.map(str::to_string),
                 properties: properties.map(str::to_string),
+                // Old enough to have been forgotten: the build runner was
+                // set up well over a year before the scan.
+                created_at: Some(now - Duration::days(if id.contains("build") { 430 } else { 90 })),
+                modified_at: None,
             },
         )
         .collect();
@@ -170,6 +174,7 @@ pub fn inventory(now: DateTime<Utc>) -> (InventoryScope, Vec<InventoryResource>)
         regions: vec![REGION.to_string()],
         resource_count: resources.len() as i64,
         scanner: Some("demo".to_string()),
+        complete: true,
     };
     (scope, resources)
 }

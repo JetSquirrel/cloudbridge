@@ -1595,7 +1595,7 @@ pub fn inventory_resources() -> Result<Vec<InventoryResource>> {
 fn inventory_resources_of(conn: &Connection) -> Result<Vec<InventoryResource>> {
     let mut stmt = conn.prepare(
         "SELECT provider, cloud_account_id, resource_id, arn, resource_type, region, name,
-                tags, properties
+                tags, properties, CAST(created_at AS VARCHAR), CAST(modified_at AS VARCHAR)
          FROM dim_resource
          ORDER BY provider, resource_id",
     )?;
@@ -1611,6 +1611,12 @@ fn inventory_resources_of(conn: &Connection) -> Result<Vec<InventoryResource>> {
                 name: row.get(6)?,
                 tags: row.get(7)?,
                 properties: row.get(8)?,
+                created_at: row
+                    .get::<_, Option<String>>(9)?
+                    .and_then(|t| super::parse_timestamp(&t).ok()),
+                modified_at: row
+                    .get::<_, Option<String>>(10)?
+                    .and_then(|t| super::parse_timestamp(&t).ok()),
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -1625,7 +1631,7 @@ pub fn inventory_scope() -> Result<Option<InventoryScope>> {
 fn inventory_scope_of(conn: &Connection) -> Result<Option<InventoryScope>> {
     let mut stmt = conn.prepare(
         "SELECT scan_id, CAST(scanned_at AS VARCHAR), CAST(imported_at AS VARCHAR),
-                source_path, regions, resource_count, scanner
+                source_path, regions, resource_count, scanner, complete
          FROM inventory_scan
          ORDER BY imported_at DESC
          LIMIT 1",
@@ -1639,12 +1645,14 @@ fn inventory_scope_of(conn: &Connection) -> Result<Option<InventoryScope>> {
             row.get::<_, String>(4)?,
             row.get::<_, i64>(5)?,
             row.get::<_, Option<String>>(6)?,
+            row.get::<_, bool>(7)?,
         ))
     })?;
     let Some(row) = rows.next() else {
         return Ok(None);
     };
-    let (scan_id, scanned_at, imported_at, source_path, regions, resource_count, scanner) = row?;
+    let (scan_id, scanned_at, imported_at, source_path, regions, resource_count, scanner, complete) =
+        row?;
     Ok(Some(InventoryScope {
         scan_id,
         scanned_at: super::parse_timestamp(&scanned_at)?,
@@ -1653,6 +1661,7 @@ fn inventory_scope_of(conn: &Connection) -> Result<Option<InventoryScope>> {
         regions: serde_json::from_str(&regions)?,
         resource_count,
         scanner,
+        complete,
     }))
 }
 

@@ -158,6 +158,14 @@ pub struct ScriptInput {
 pub struct ScanInput {
     pub scanned_at: String,
     pub regions: Vec<String>,
+    /// `false` for a partial scan: a resource it does not have may only be
+    /// one it did not reach.
+    #[serde(default = "complete_by_default")]
+    pub complete: bool,
+}
+
+fn complete_by_default() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -177,6 +185,12 @@ pub struct ResourceInput {
     pub properties: Json,
     /// This period's usage cost matched to it from the bill.
     pub cost: f64,
+    /// When the provider says it was created and last changed, RFC 3339;
+    /// `null` when it does not say.
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub modified_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -236,6 +250,7 @@ pub fn build_input(
         scan: scope.map(|s| ScanInput {
             scanned_at: s.scanned_at.to_rfc3339(),
             regions: s.regions.clone(),
+            complete: s.complete,
         }),
         resources: resources
             .iter()
@@ -251,6 +266,8 @@ pub fn build_input(
                 tags: object(r.tags.as_deref(), Json::Object(Default::default())),
                 properties: object(r.properties.as_deref(), Json::Null),
                 cost: report.resource_cost.get(i).copied().unwrap_or(0.0),
+                created_at: r.created_at.map(|t| t.to_rfc3339()),
+                modified_at: r.modified_at.map(|t| t.to_rfc3339()),
             })
             .collect(),
         billed: costs
@@ -486,6 +503,8 @@ mod tests {
                 tags: Json::Object(Default::default()),
                 properties: Json::Null,
                 cost: 16.2,
+                created_at: Some("2025-03-04T05:06:07+00:00".to_string()),
+                modified_at: None,
             }],
             billed: vec![
                 BilledInput {

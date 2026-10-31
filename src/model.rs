@@ -825,6 +825,11 @@ pub struct InventoryResource {
     /// The configuration a describe returned, as JSON object text; `None`
     /// when the scan found the resource but could not describe it.
     pub properties: Option<String>,
+    /// When the provider says the resource was created, and last changed.
+    /// `None` when the provider does not say, or the scan predates
+    /// corkscrew recording it.
+    pub created_at: Option<DateTime<Utc>>,
+    pub modified_at: Option<DateTime<Utc>>,
 }
 
 /// What the current inventory covers: the one scan it was imported from.
@@ -839,10 +844,15 @@ pub struct InventoryScope {
     pub regions: Vec<String>,
     pub resource_count: i64,
     /// Which enrichment plugin wrote the inventory, and at what version —
-    /// `corkscrew cloudbridge-r3`, or `demo`. `None` for a scan imported
+    /// `corkscrew cloudbridge-r4`, or `demo`. `None` for a scan imported
     /// before the ledger recorded it. The ledger reads only the two tables,
     /// so this is what tells one scanner's inventory from another's.
     pub scanner: Option<String>,
+    /// Whether every part of the scan was observed. A partial scan listed
+    /// what it could but reported errors for some service or type (a
+    /// describe that failed, a page it did not get), so a billed resource
+    /// it does not have may only be one it did not reach.
+    pub complete: bool,
 }
 
 /// One resource's usage cost in a billing period, as the bill names it.
