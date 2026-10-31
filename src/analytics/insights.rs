@@ -238,19 +238,25 @@ pub fn insights(
                 .iter()
                 .filter_map(|v| cost_by_key.get(&(resource.provider.as_str(), v.as_str())))
                 .sum();
+            let mut evidence = if volumes.is_empty() {
+                "Stopped when scanned; storage and addresses it holds still bill".to_string()
+            } else {
+                format!(
+                    "Stopped when scanned; its {} attached volume{} still bill",
+                    volumes.len(),
+                    if volumes.len() == 1 { "" } else { "s" }
+                )
+            };
+            if let Some(age) = scope.zip(resource.created_at).and_then(|(scope, created)| {
+                age_in_words(scope.scanned_at.signed_duration_since(created))
+            }) {
+                evidence.push_str(&format!(". Created {age} ago"));
+            }
             findings.push(finding(
                 InsightKind::StoppedInstance,
                 resource,
                 cost_of[i] + volume_cost,
-                if volumes.is_empty() {
-                    "Stopped when scanned; storage and addresses it holds still bill".to_string()
-                } else {
-                    format!(
-                        "Stopped when scanned; its {} attached volume{} still bill",
-                        volumes.len(),
-                        if volumes.len() == 1 { "" } else { "s" }
-                    )
-                },
+                evidence,
             ));
         }
 
@@ -433,8 +439,12 @@ impl<'a> Index<'a> {
 
 /// Whether the scan looked where a bill row says the resource is. A row
 /// with no region, or a global one, could be anywhere, so is not counted
-/// as missing.
+/// as missing; nor is anything from a partial scan, which may only have
+/// failed to reach it.
 fn covers(scope: &InventoryScope, region: Option<&str>) -> bool {
+    if !scope.complete {
+        return false;
+    }
     match region {
         Some(region) if region != "global" => scope.regions.iter().any(|r| r == region),
         _ => false,
@@ -455,6 +465,20 @@ fn processed(gb: f64) -> String {
         "under 0.01 GB".to_string()
     } else {
         format!("{gb:.2} GB")
+    }
+}
+
+/// How long ago, roughly, in the units a person would say it in: days
+/// under two months, months under two years, years after. `None` for a
+/// time in the future (a clock that disagrees) or under a day.
+pub fn age_in_words(age: chrono::Duration) -> Option<String> {
+    let days = age.num_days();
+    let plural = |n: i64, unit: &str| format!("{n} {unit}{}", if n == 1 { "" } else { "s" });
+    match days {
+        ..=0 => None,
+        1..=59 => Some(plural(days, "day")),
+        60..=729 => Some(plural(days / 30, "month")),
+        _ => Some(plural(days / 365, "year")),
     }
 }
 
@@ -539,6 +563,8 @@ mod tests {
             name: None,
             tags: None,
             properties: None,
+            created_at: None,
+            modified_at: None,
         }
     }
 
@@ -567,6 +593,7 @@ mod tests {
             regions: regions.iter().map(|r| r.to_string()).collect(),
             resource_count: 0,
             scanner: None,
+            complete: true,
         }
     }
 
@@ -918,6 +945,46 @@ mod tests {
         assert!(insights(&[], &costs, None, OWNER_TAG_KEYS)
             .findings
             .is_empty());
+    }
+
+    /// A partial scan may only have failed to reach a resource, so nothing
+    /// billed is called missing from it.
+    #[test]
+    fn nothing_is_missing_from_a_partial_scan() {
+        let costs = [cost("vol-gone", "us-east-1", 2.0)];
+        let mut partial = scope(&["us-east-1"]);
+        partial.complete = false;
+        assert!(insights(&[], &costs, Some(&partial), OWNER_TAG_KEYS)
+            .findings
+            .is_empty());
+    }
+
+    #[test]
+    fn a_stopped_instance_says_how_old_it_is() {
+        let mut instance = resource("i-old", "ec2:instance", "us-east-1");
+        instance.properties = Some(r#"{"State":{"Name":"stopped"}}"#.to_string());
+        instance.tags = Some(r#"{"team":"x"}"#.to_string());
+        let scan = scope(&["us-east-1"]);
+        instance.created_at = Some(scan.scanned_at - chrono::Duration::days(400));
+        let report = insights(&[instance], &[], Some(&scan), OWNER_TAG_KEYS);
+        assert!(
+            report.findings[0]
+                .evidence
+                .ends_with(". Created 13 months ago"),
+            "{}",
+            report.findings[0].evidence
+        );
+    }
+
+    #[test]
+    fn an_age_is_said_in_days_months_or_years() {
+        let days = chrono::Duration::days;
+        assert_eq!(age_in_words(days(0)), None);
+        assert_eq!(age_in_words(days(-3)), None);
+        assert_eq!(age_in_words(days(1)).as_deref(), Some("1 day"));
+        assert_eq!(age_in_words(days(45)).as_deref(), Some("45 days"));
+        assert_eq!(age_in_words(days(400)).as_deref(), Some("13 months"));
+        assert_eq!(age_in_words(days(1100)).as_deref(), Some("3 years"));
     }
 
     #[test]

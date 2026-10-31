@@ -356,6 +356,7 @@ impl InsightsView {
 
                 let mut scans = Vec::new();
                 let mut failures = Vec::new();
+                let mut notes = Vec::new();
                 for target in targets {
                     // A provider scanned whole has no regions to name.
                     let place = if target.regions.is_empty() {
@@ -373,7 +374,10 @@ impl InsightsView {
                     );
                     let name = target.account.name.clone();
                     match smol::unblock(move || ingest::scan_target(&target)).await {
-                        Ok(path) => scans.push(path),
+                        Ok((path, covered)) => {
+                            scans.push(path);
+                            notes.extend(covered.into_iter().map(|n| format!("{name}: {n}")));
+                        }
                         Err(e) => failures.push(format!("{name}: {e}")),
                     }
                 }
@@ -388,11 +392,12 @@ impl InsightsView {
                 tracing::info!("Insights scan: {} resources", scope.resource_count);
                 // A complete scan says so in the page itself; only what
                 // it could not reach needs a message.
-                Ok(if failures.is_empty() {
-                    String::new()
-                } else {
-                    format!("Not scanned: {}", failures.join("; "))
-                })
+                let mut message: Vec<String> = Vec::new();
+                if !failures.is_empty() {
+                    message.push(format!("Not scanned: {}", failures.join("; ")));
+                }
+                message.extend(notes);
+                Ok(message.join("\n"))
             }
             .await;
 
@@ -516,6 +521,9 @@ impl InsightsView {
                 report.resources,
                 by_source.join(", ")
             ));
+            if !scope.complete {
+                parts.push("the scan was partial, so nothing billed is called missing".to_string());
+            }
             if report.described < report.resources {
                 // Stopped instances can only be told from configuration.
                 parts.push(format!(
