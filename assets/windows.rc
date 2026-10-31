@@ -1,0 +1,3 @@
+// Resource ID 1 is the one GPUI's Windows backend loads for every window's
+// title bar and taskbar icon; Explorer shows the lowest-numbered icon too.
+1 ICON "icon.ico"
