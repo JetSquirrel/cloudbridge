@@ -83,6 +83,14 @@ OpenAI or Anthropic export keeps the user and API key behind the usage,
 and Settings exports the whole ledger as a FOCUS-named CSV. The engine
 moves to DuckDB 2.0; existing ledgers open unchanged.
 
+0.8.0 opens Insights to rules that ship without a release. A `.js` file in
+the data directory's `insights/` folder is one more rule, run in QuickJS
+on the desktop against the period's bill per resource; Settings installs
+community rules from the catalog `insights-rules/` publishes. Idle NAT
+Gateways join the built-in findings, read from the bill alone. Scans move
+to corkscrew `cloudbridge-r4`, whose partial scans are imported and whose
+gaps are listed after the scan.
+
 A source is a `SourceDescriptor` registry entry rather than an enum
 variant. API-backed sources implement `BillingSource`; file-only sources
 provide a bill parser without an API client. The ingest pipeline persists
