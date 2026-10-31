@@ -32,6 +32,11 @@ required.
   scan of AWS and Cloudflare accounts: stopped instances, idle addresses,
   unclaimed resources and billed resources missing from the scan, each priced
   from the bill, summarized by type and opened down to the resource.
+- **Add checks without an update.** Insights rules are small TypeScript
+  functions over the bill. Install community rules from **Settings →
+  Insights rules**, or write your own; see
+  [insights-rules](insights-rules/README.md). Rules run locally with no
+  network or file access.
 - **Keep watching with the window closed.** On macOS and Windows, CloudBridge
   stays in the menu bar (notification area) with the month's spend as the
   icon's title. Every 15 minutes it fetches the accounts that are due, runs

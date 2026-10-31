@@ -1,0 +1,58 @@
+name: Publish Insights rules
+
+# The community Insights rules in `insights-rules/`, built and published for
+# the desktop app's catalog (Settings -> Insights rules). The app reads
+# `index.json` and the rule files from the rolling `insight-rules` release
+# and checks each download against the SHA-256 the index names. The release
+# is a prerelease, so it never shows up as "latest". CI's check job has
+# already run every rule against its fixtures in Node and in QuickJS before
+# a change reaches main.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'insights-rules/**'
+      - '.github/workflows/insight-rules.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: insight-rules
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: insights-rules/package-lock.json
+
+      - name: Build and test the rules
+        working-directory: insights-rules
+        run: |
+          npm ci
+          npm test
+
+      - name: Publish to the insight-rules release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view insight-rules >/dev/null 2>&1; then
+            gh release create insight-rules --prerelease --target "$GITHUB_SHA" \
+              --title "Insights rules (rolling)" \
+              --notes "The community Insights rules built from main, for the desktop app's catalog. Replaced on every change to insights-rules/; not a release of the app."
+          fi
+          # Rule files first, the index last: an index never names a file
+          # that is not there yet.
+          gh release upload insight-rules insights-rules/dist/*.js --clobber
+          gh release upload insight-rules insights-rules/dist/index.json --clobber

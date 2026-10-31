@@ -58,6 +58,14 @@ uuid = { version = "1", features = ["v4"] }
 # Sync HTTP client (avoids aws-lc-sys compilation issues)
 ureq = { version = "3", features = ["json"] }
 
+# The Insights page's script rules: JavaScript a user drops into the data
+# directory's `insights/` folder, run in QuickJS with no I/O of its own.
+# Longbridge's distribution of rquickjs; the Rust name stays `rquickjs`.
+# The JIT (`quickjs-jit-runtime`) is not used: a rule reads a few thousand
+# rows, which the interpreter does in milliseconds. The browser demo runs
+# only the built-in rules, so this is desktop-only.
+rquickjs = { package = "quickjs-jit", version = "0.14" }
+
 # AWS signing
 hmac = "0.12"
 sha2 = "0.10"

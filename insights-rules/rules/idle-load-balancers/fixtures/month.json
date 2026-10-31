@@ -1,0 +1,78 @@
+{
+  "description": "A month-old balancer with no capacity units is idle; one serving traffic, and one created today, are not.",
+  "input": {
+    "apiVersion": 1,
+    "period": "2026-10",
+    "currency": "USD",
+    "scan": null,
+    "resources": [],
+    "billed": [
+      {
+        "provider": "AWS",
+        "accountId": "111111111111",
+        "id": "arn:aws:elasticloadbalancing:us-east-1:111111111111:loadbalancer/app/old-api/0123456789abcdef",
+        "name": null,
+        "service": "Elastic Load Balancing",
+        "region": "us-east-1",
+        "cost": 16.2,
+        "resource": null,
+        "lines": [
+          {
+            "description": "$0.0225 per Application LoadBalancer-hour (or partial hour)",
+            "unit": "Hrs",
+            "quantity": 720,
+            "cost": 16.2
+          }
+        ]
+      },
+      {
+        "provider": "AWS",
+        "accountId": "111111111111",
+        "id": "arn:aws:elasticloadbalancing:us-east-1:111111111111:loadbalancer/app/busy/0123456789abcdef",
+        "name": null,
+        "service": "Elastic Load Balancing",
+        "region": "us-east-1",
+        "cost": 40.0,
+        "resource": null,
+        "lines": [
+          {
+            "description": "$0.0225 per Application LoadBalancer-hour (or partial hour)",
+            "unit": "Hrs",
+            "quantity": 720,
+            "cost": 16.2
+          },
+          {
+            "description": "$0.008 per used Application load balancer capacity unit-hour (or partial hour)",
+            "unit": "LCU-Hrs",
+            "quantity": 2975,
+            "cost": 23.8
+          }
+        ]
+      },
+      {
+        "provider": "AWS",
+        "accountId": "111111111111",
+        "id": "arn:aws:elasticloadbalancing:us-east-1:111111111111:loadbalancer/app/new/0123456789abcdef",
+        "name": null,
+        "service": "Elastic Load Balancing",
+        "region": "us-east-1",
+        "cost": 0.135,
+        "resource": null,
+        "lines": [
+          {
+            "description": "$0.0225 per Application LoadBalancer-hour (or partial hour)",
+            "unit": "Hrs",
+            "quantity": 6,
+            "cost": 0.135
+          }
+        ]
+      }
+    ]
+  },
+  "expect": [
+    {
+      "id": "arn:aws:elasticloadbalancing:us-east-1:111111111111:loadbalancer/app/old-api/0123456789abcdef",
+      "evidence": "Billed for 720 hours with no capacity units used"
+    }
+  ]
+}

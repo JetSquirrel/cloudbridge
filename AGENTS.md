@@ -137,6 +137,26 @@ stays where it is.
 | `ar: ... libduckdb.a` failing with no message | Disk full |
 | Notarization `In Progress` for hours | Apple's queue, not a configuration problem. Verified by `notarytool history` showing sibling submissions Accepted |
 
+## Insights rules
+
+Insights findings come from two places. The built-in kinds are Rust in
+`src/analytics/insights.rs` and run on both targets. Script rules are
+JavaScript run by `src/insight_scripts.rs` in QuickJS (`quickjs-jit`, used
+as plain `rquickjs`, JIT off), desktop only; the browser gets the no-op in
+`src/web/insight_scripts.rs`. `src/insight_catalog.rs` installs community
+rules from the rolling `insight-rules` release that
+`.github/workflows/insight-rules.yml` publishes from `insights-rules/`.
+
+- A new check that needs only the bill belongs in `insights-rules/` as a
+  rule, not in Rust. A built-in kind is for what both targets must show.
+- The script input is versioned (`API_VERSION`, mirrored by `ApiVersion`
+  in `insights-rules/types/`). Adding a field is free; removing or
+  redefining one means bumping both, and old rules stop running.
+- `cargo test` runs the community rules' fixtures in QuickJS only when
+  `CLOUDBRIDGE_RULES_DIST` names a built `insights-rules/dist/`; CI sets it.
+  Locally: `npm test` in `insights-rules/`, then
+  `CLOUDBRIDGE_RULES_DIST=$PWD/insights-rules/dist cargo test insight_scripts`.
+
 ## The web demo (wasm32)
 
 The same crate builds a browser version:

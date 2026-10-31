@@ -9,6 +9,8 @@ pub mod data;
 mod data_health;
 mod dialogs;
 pub mod fmt;
+#[cfg(not(target_family = "wasm"))]
+mod insight_rules;
 pub mod insights;
 pub mod models;
 pub mod overview;

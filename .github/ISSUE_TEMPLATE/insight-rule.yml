@@ -1,0 +1,56 @@
+name: Insights rule idea
+description: A check the Insights page should run on the bill
+title: "Rule: "
+labels: ["insights-rule"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe a check that would find something worth cutting. You do not
+        need to write the code; a bill line that shows it is the most useful
+        thing you can add. Rules are written in `insights-rules/`.
+  - type: input
+    id: finds
+    attributes:
+      label: What it finds
+      placeholder: Load balancers billed by the hour that served no traffic
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      options:
+        - AWS
+        - Azure
+        - Google Cloud
+        - Alibaba Cloud
+        - Cloudflare
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: How the bill shows it
+      description: >-
+        The charge descriptions and units that identify it, copied from a
+        bill or Cost and Usage Report. Replace account ids, resource names
+        and tags with made-up ones.
+      placeholder: |
+        $0.0225 per Application LoadBalancer-hour (or partial hour)   Hrs   720
+        (no "capacity unit-hour" line for the same resource)
+    validations:
+      required: true
+  - type: textarea
+    id: action
+    attributes:
+      label: What someone should do about it
+      placeholder: Delete it if no DNS record points at it.
+    validations:
+      required: true
+  - type: textarea
+    id: caveats
+    attributes:
+      label: When it would be wrong
+      description: Cases that look the same on the bill but are fine.

@@ -17,8 +17,8 @@ pub use crate::model::{
     AdhocResult, Balance, BreakdownDim, CategoryDelta, CostChangeDecomposition, DailyModelTokens,
     DailyTotal, DataQualityIssue, DataQualityKind, ForecastBands, InventoryResource,
     InventoryScope, IssueSeverity, LedgerAccount, ModelTokenSummary, MovementKind, PeriodForecast,
-    PeriodOverPeriod, ResourceCost, ResourceUsage, ServiceDailyTotal, ServiceMovement,
-    ServiceTagUsage, TopResource, UntaggedServiceUsage,
+    PeriodOverPeriod, ResourceChargeLine, ResourceCost, ResourceUsage, ServiceDailyTotal,
+    ServiceMovement, ServiceTagUsage, TopResource, UntaggedServiceUsage,
 };
 use crate::model::{BillingPeriod, BreakdownPart};
 
@@ -1674,7 +1674,11 @@ fn resource_usage_costs_of(conn: &Connection, billing_period: &str) -> Result<Ve
                 any_value(region_id),
                 coalesce(sum(billed_cost_base) FILTER (WHERE charge_category = 'Usage'), 0),
                 coalesce(bool_or(lower(coalesce(charge_description, '')) LIKE '%idle public ipv4%'),
-                         false)
+                         false),
+                coalesce(sum(coalesce(consumed_quantity, pricing_quantity)) FILTER (
+                    WHERE lower(charge_description) LIKE '%nat gateway hour%'), 0),
+                coalesce(sum(coalesce(consumed_quantity, pricing_quantity)) FILTER (
+                    WHERE lower(charge_description) LIKE '%processed by nat gateway%'), 0)
          FROM {NORMALIZED_VIEW}
          WHERE billing_period = ? AND resource_id IS NOT NULL
          GROUP BY provider, resource_id
@@ -1691,6 +1695,44 @@ fn resource_usage_costs_of(conn: &Connection, billing_period: &str) -> Result<Ve
                 region: row.get(5)?,
                 usage_cost: row.get(6)?,
                 idle_public_ip: row.get(7)?,
+                nat_gateway_hours: row.get(8)?,
+                nat_gateway_gb: row.get(9)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Each resource's usage charges in `billing_period`, one line per charge
+/// description and unit: the detail the Insights script rules read.
+pub fn resource_charge_lines(billing_period: &str) -> Result<Vec<ResourceChargeLine>> {
+    with_connection_ref(|conn| resource_charge_lines_of(conn, billing_period))
+}
+
+fn resource_charge_lines_of(
+    conn: &Connection,
+    billing_period: &str,
+) -> Result<Vec<ResourceChargeLine>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT provider, resource_id, charge_description,
+                coalesce(consumed_unit, pricing_unit) AS unit,
+                coalesce(sum(coalesce(consumed_quantity, pricing_quantity)), 0),
+                coalesce(sum(billed_cost_base), 0)
+         FROM {NORMALIZED_VIEW}
+         WHERE billing_period = ? AND resource_id IS NOT NULL
+           AND charge_category = 'Usage'
+         GROUP BY provider, resource_id, charge_description, unit
+         ORDER BY provider, resource_id, charge_description"
+    ))?;
+    let rows = stmt
+        .query_map(params![billing_period], |row| {
+            Ok(ResourceChargeLine {
+                provider: row.get(0)?,
+                resource_id: row.get(1)?,
+                description: row.get(2)?,
+                unit: row.get(3)?,
+                quantity: row.get(4)?,
+                cost: row.get(5)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -2723,6 +2765,63 @@ mod tests {
         assert_eq!(usage[0].resource_id, "acct/r2/aiops");
         assert_eq!(usage[0].quantity, 734.0);
         assert_eq!(usage[0].unit.as_deref(), Some("Count"));
+    }
+
+    /// A NAT Gateway's hours and the gigabytes it processed are read apart
+    /// from its description lines, and the same lines reach the script
+    /// rules one per description and unit, summed over the days.
+    #[test]
+    fn nat_gateway_hours_and_traffic_read_apart() {
+        let mut conn = conn("USD");
+        let nat = "arn:aws:ec2:us-east-1:1:natgateway/nat-1";
+        let line = |day, description: &str, unit: &str, quantity: f64, cost: f64| Charge {
+            resource_id: Some(nat.to_string()),
+            charge_description: Some(description.to_string()),
+            consumed_quantity: Some(quantity),
+            consumed_unit: Some(unit.to_string()),
+            ..charge("Amazon Virtual Private Cloud", cost, "USD", day)
+        };
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                line(1, "$0.045 per NAT Gateway Hour", "Hrs", 24.0, 1.08),
+                line(2, "$0.045 per NAT Gateway Hour", "Hrs", 24.0, 1.08),
+                line(
+                    2,
+                    "$0.045 per GB Data Processed by NAT Gateways",
+                    "GB",
+                    0.25,
+                    0.01,
+                ),
+            ],
+        );
+
+        let costs = resource_usage_costs_of(&conn, &aws().billing_period).unwrap();
+        assert_eq!(costs.len(), 1);
+        assert_eq!(costs[0].nat_gateway_hours, 48.0);
+        assert_eq!(costs[0].nat_gateway_gb, 0.25);
+        assert!(crate::analytics::insights::is_idle_nat_gateway(&costs[0]));
+
+        let lines = resource_charge_lines_of(&conn, &aws().billing_period).unwrap();
+        let read: Vec<(&str, &str, f64)> = lines
+            .iter()
+            .map(|l| {
+                (
+                    l.description.as_deref().unwrap(),
+                    l.unit.as_deref().unwrap(),
+                    l.quantity,
+                )
+            })
+            .collect();
+        assert_eq!(
+            read,
+            [
+                ("$0.045 per GB Data Processed by NAT Gateways", "GB", 0.25),
+                ("$0.045 per NAT Gateway Hour", "Hrs", 48.0),
+            ]
+        );
+        assert!((lines[1].cost - 2.16).abs() < 1e-9);
     }
 
     /// Only an API fetch is something a later fetch can compare against;

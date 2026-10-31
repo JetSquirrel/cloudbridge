@@ -64,6 +64,19 @@ pub mod ingest;
 #[path = "web/ingest.rs"]
 pub mod ingest;
 
+// Insights rules in JavaScript, read from the data directory and run in
+// QuickJS. The browser demo runs only the built-in rules.
+#[cfg(not(target_family = "wasm"))]
+pub mod insight_scripts;
+#[cfg(target_family = "wasm")]
+#[path = "web/insight_scripts.rs"]
+pub mod insight_scripts;
+
+// The community catalog those rules are installed from. Desktop only: the
+// browser has no folder to install into.
+#[cfg(not(target_family = "wasm"))]
+pub mod insight_catalog;
+
 // Configuration is one file for both targets: the structs are shared and only
 // the place a config is kept differs, so the gating is inside it.
 pub mod config;

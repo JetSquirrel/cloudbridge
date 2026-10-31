@@ -7,6 +7,7 @@ on:
       - 'src/**'
       - 'web/**'
       - 'scripts/**'
+      - 'insights-rules/**'
       - 'rust-toolchain*'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -17,6 +18,7 @@ on:
       - 'src/**'
       - 'web/**'
       - 'scripts/**'
+      - 'insights-rules/**'
       - 'rust-toolchain*'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -50,7 +52,22 @@ jobs:
         run: cargo clippy -- -D warnings
       - name: Check compilation
         run: cargo check
+      # The community Insights rules: type-checked and run against their
+      # fixtures in Node by their own build, then run again by `cargo test`
+      # in QuickJS, the engine the app has, from the `dist/` just built.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: insights-rules/package-lock.json
+      - name: Build and test the community Insights rules
+        working-directory: insights-rules
+        run: |
+          npm ci
+          npm test
       - name: Tests
+        env:
+          CLOUDBRIDGE_RULES_DIST: ${{ github.workspace }}/insights-rules/dist
         run: cargo test
 
   wasm:

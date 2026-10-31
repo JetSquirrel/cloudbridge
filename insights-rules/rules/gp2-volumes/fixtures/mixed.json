@@ -1,0 +1,54 @@
+{
+  "description": "A gp2 volume is flagged with a fifth of its storage cost as the saving; a gp3 volume is not.",
+  "input": {
+    "apiVersion": 1,
+    "period": "2026-10",
+    "currency": "USD",
+    "scan": null,
+    "resources": [],
+    "billed": [
+      {
+        "provider": "AWS",
+        "accountId": "111111111111",
+        "id": "arn:aws:ec2:us-east-1:111111111111:volume/vol-0gp2",
+        "name": null,
+        "service": "Amazon Elastic Compute Cloud",
+        "region": "us-east-1",
+        "cost": 50.0,
+        "resource": null,
+        "lines": [
+          {
+            "description": "$0.10 per GB-month of General Purpose SSD (gp2) provisioned storage - US East (Northern Virginia)",
+            "unit": "GB-Mo",
+            "quantity": 500,
+            "cost": 50.0
+          }
+        ]
+      },
+      {
+        "provider": "AWS",
+        "accountId": "111111111111",
+        "id": "arn:aws:ec2:us-east-1:111111111111:volume/vol-0gp3",
+        "name": null,
+        "service": "Amazon Elastic Compute Cloud",
+        "region": "us-east-1",
+        "cost": 40.0,
+        "resource": null,
+        "lines": [
+          {
+            "description": "$0.08 per GB-month of General Purpose SSD (gp3) provisioned storage - US East (Northern Virginia)",
+            "unit": "GB-Mo",
+            "quantity": 500,
+            "cost": 40.0
+          }
+        ]
+      }
+    ]
+  },
+  "expect": [
+    {
+      "id": "arn:aws:ec2:us-east-1:111111111111:volume/vol-0gp2",
+      "evidence": "500.0 GB-months of gp2; as gp3 about 10.00 USD less this period"
+    }
+  ]
+}
