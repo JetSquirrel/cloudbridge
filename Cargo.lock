@@ -1197,6 +1197,7 @@ dependencies = [
  "console_error_panic_hook",
  "directories",
  "duckdb",
+ "embed-resource",
  "flate2",
  "getrandom 0.2.16",
  "gpui-kit",

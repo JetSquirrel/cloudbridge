@@ -151,6 +151,11 @@ getrandom = { version = "0.2", features = ["js"] }
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 flate2 = "1"
 
+# `build.rs` embeds the Windows executable's icon. Already in the tree
+# through a dependency's own build script.
+[build-dependencies]
+embed-resource = "3.0.6"
+
 [workspace]
 members = ["web/smol-bridge"]
 # `cargo build` at the root still means the desktop application.
