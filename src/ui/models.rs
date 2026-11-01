@@ -163,24 +163,28 @@ impl ModelsView {
             .items_stretch()
             .gap_4()
             .child(theme::stat_card(
+                "stat-models-1",
                 cx,
                 tr!("models.ai_spend"),
                 fmt::amount(d.total_cost, currency),
                 muted(tr!("models.models_this_range", n = d.models.len())),
             ))
             .child(theme::stat_card(
+                "stat-models-2",
                 cx,
                 tr!("models.tokens"),
                 fmt::quantity(d.total_tokens),
                 muted(tr!("models.tokens_caption")),
             ))
             .child(theme::stat_card(
+                "stat-models-3",
                 cx,
                 tr!("models.blended"),
                 fmt::unit_cost(d.blended, currency),
                 muted(tr!("models.blended_caption")),
             ))
             .child(theme::stat_card(
+                "stat-models-4",
                 cx,
                 tr!("models.cache_share"),
                 d.cache_share
@@ -217,9 +221,16 @@ impl ModelsView {
                             .text_right(),
                     )
                     .child(
-                        theme::header_cell(cx, tr!("models.col_delta"))
-                            .w_20()
-                            .text_right(),
+                        theme::header_cell(
+                            cx,
+                            match self.range {
+                                Range::Mtd => tr!("models.col_delta_mtd"),
+                                Range::Days30 => tr!("overview.col_vs_prior_30d"),
+                                Range::Months12 => tr!("overview.col_vs_prior_12m"),
+                            },
+                        )
+                        .w_20()
+                        .text_right(),
                     )
                     .child(
                         theme::header_cell(cx, tr!("models.col_in"))
@@ -236,7 +247,11 @@ impl ModelsView {
                             .w_20()
                             .text_right(),
                     )
-                    .child(theme::header_cell(cx, "$/1M").w_20().text_right())
+                    .child(
+                        theme::header_cell(cx, tr!("models.col_unit", currency = d.currency))
+                            .w_20()
+                            .text_right(),
+                    )
                     .child(
                         theme::header_cell(cx, tr!("models.col_share"))
                             .w_32()
@@ -263,51 +278,77 @@ impl ModelsView {
         // The chart's dashed-baseline slot is empty — token volume has no
         // trailing-mean series here.
         let baseline: Vec<data::ChartPoint> = Vec::new();
+        let title = tr!("models.tokens_per_day");
         theme::card(cx)
             .w_full()
             .p_5()
             .v_flex()
             .gap_4()
-            .child(theme::section_title(cx, tr!("models.tokens_per_day")))
+            .child(theme::section_title(cx, title.clone()))
             .child(
                 div()
-                    .id("tokens-chart")
-                    .w_full()
-                    .relative()
-                    .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
-                        let x: f32 = event.position.x.into();
-                        let nearest = this.chart_hover.nearest(x);
-                        if nearest.is_some() && nearest != this.chart_hover.index() {
-                            this.chart_hover.set(nearest);
-                            cx.notify();
-                        }
-                    }))
-                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                        if !*hovered && this.chart_hover.index().is_some() {
-                            this.chart_hover.clear();
-                            cx.notify();
-                        }
-                    }))
-                    .child(chart::spend_area_chart(
+                    .h_flex()
+                    .gap_3()
+                    .child(chart::y_axis(
                         cx,
-                        &d.daily_tokens,
-                        &baseline,
-                        // 260px at the default 16px rem.
+                        d.daily_tokens.iter().map(|p| p.amount),
                         rems(16.25),
-                        self.chart_hover.points_cell(),
-                        self.chart_hover.bounds_cell(),
+                        &fmt::quantity,
                     ))
-                    .when_some(
-                        chart::hover_overlay_with(
-                            cx,
-                            &self.chart_hover,
-                            &d.daily_tokens,
-                            &fmt::quantity,
-                            window.rem_size(),
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            div()
+                                .id("tokens-chart")
+                                .role(Role::Image)
+                                .aria_label(chart::summary(&title, &d.daily_tokens, &fmt::quantity))
+                                .w_full()
+                                .relative()
+                                .on_mouse_move(cx.listener(
+                                    |this, event: &MouseMoveEvent, _, cx| {
+                                        let x: f32 = event.position.x.into();
+                                        let nearest = this.chart_hover.nearest(x);
+                                        if nearest.is_some() && nearest != this.chart_hover.index()
+                                        {
+                                            this.chart_hover.set(nearest);
+                                            cx.notify();
+                                        }
+                                    },
+                                ))
+                                .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                                    if !*hovered && this.chart_hover.index().is_some() {
+                                        this.chart_hover.clear();
+                                        cx.notify();
+                                    }
+                                }))
+                                .child(chart::spend_area_chart(
+                                    cx,
+                                    &d.daily_tokens,
+                                    &baseline,
+                                    // 260px at the default 16px rem.
+                                    rems(16.25),
+                                    self.chart_hover.points_cell(),
+                                    self.chart_hover.bounds_cell(),
+                                ))
+                                .when_some(
+                                    chart::hover_overlay_with(
+                                        cx,
+                                        &self.chart_hover,
+                                        &d.daily_tokens,
+                                        &fmt::quantity,
+                                        window.rem_size(),
+                                    ),
+                                    |el, overlay| el.children(overlay),
+                                ),
                         ),
-                        |el, overlay| el.children(overlay),
                     ),
             )
+            .children(
+                chart::axis_row(cx, &d.daily_tokens, &fmt::quantity)
+                    .map(|axis| axis.pl(chart::Y_AXIS_INSET)),
+            )
+            .when(d.daily_tokens.is_empty(), |el| {
+                el.child(theme::caption(cx, tr!("models.no_daily")))
+            })
     }
 
     fn render_findings(&self, cx: &Context<Self>, findings: &[TokenFinding]) -> impl IntoElement {
@@ -340,7 +381,6 @@ impl ModelsView {
                 div().pt_1().flex().child(
                     Button::new("models-open-accounts")
                         .label(tr!("models.open_accounts"))
-                        .small()
                         .custom(theme::outline_variant(cx))
                         .card_outline(cx)
                         .on_click(|_, _, cx| {

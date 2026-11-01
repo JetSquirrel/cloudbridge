@@ -215,7 +215,11 @@ impl SettingsView {
     fn render_background(&self, cx: &Context<Self>) -> impl IntoElement {
         let windowless = crate::background::RUNS_WINDOWLESS;
         let open_at_login_description = if windowless && self.config.keep_in_menu_bar {
-            tr!("settings.open_at_login_hint_menu_bar")
+            if cfg!(target_os = "windows") {
+                tr!("settings.open_at_login_hint_tray")
+            } else {
+                tr!("settings.open_at_login_hint_menu_bar")
+            }
         } else {
             tr!("settings.open_at_login_hint")
         };
@@ -241,7 +245,11 @@ impl SettingsView {
             ))
             .when(windowless, |el| {
                 el.child(Self::setting_row(
-                    tr!("settings.keep_in_menu_bar"),
+                    if cfg!(target_os = "windows") {
+                        tr!("settings.keep_in_tray")
+                    } else {
+                        tr!("settings.keep_in_menu_bar")
+                    },
                     if cfg!(target_os = "windows") {
                         tr!("settings.keep_in_tray_hint")
                     } else {
@@ -291,7 +299,6 @@ impl SettingsView {
             let selected = chosen.as_deref() == value;
             Button::new(id)
                 .label(label)
-                .small()
                 .when(selected, |button| button.primary())
                 .when(!selected, |button| {
                     button.custom(theme::outline_variant(cx)).card_outline(cx)
@@ -624,7 +631,6 @@ impl SettingsView {
             tr!("settings.export_focus_hint"),
             Button::new("export-focus")
                 .label(tr!("settings.export"))
-                .small()
                 .custom(theme::outline_variant(cx))
                 .card_outline(cx)
                 .loading(self.exporting)
@@ -750,7 +756,6 @@ impl Render for SettingsView {
                                 let selected = *currency == reporting_currency;
                                 Button::new(SharedString::from(format!("currency-{currency}")))
                                     .label(*currency)
-                                    .small()
                                     .when(selected, |button| button.primary())
                                     .when(!selected, |button| {
                                         button.custom(theme::outline_variant(cx)).card_outline(cx)
@@ -780,7 +785,6 @@ impl Render for SettingsView {
                                 let selected = *hours == refresh_interval_hours;
                                 Button::new(SharedString::from(format!("refresh-{hours}h")))
                                     .label(tr!("settings.hours", n = hours))
-                                    .small()
                                     .when(selected, |button| button.primary())
                                     .when(!selected, |button| {
                                         button.custom(theme::outline_variant(cx)).card_outline(cx)
@@ -842,7 +846,6 @@ impl Render for SettingsView {
                                 .child(
                                     Button::new("clear-demo-data")
                                         .label(tr!("settings.clear_demo"))
-                                        .small()
                                         .custom(theme::outline_variant(cx))
                                         .card_outline(cx)
                                         .disabled(self.demo_running)
@@ -902,7 +905,6 @@ impl Render for SettingsView {
                                         } else {
                                             IconName::Copy
                                         })
-                                        .small()
                                         .custom(theme::outline_variant(cx))
                                         .card_outline(cx)
                                         .tooltip(tr!("settings.copy_system_info_tooltip"))

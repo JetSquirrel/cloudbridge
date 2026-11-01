@@ -692,7 +692,6 @@ impl RulesView {
                     let selected = self.budget_account.as_deref() == Some(id.as_str());
                     Button::new(SharedString::from(format!("budget-account-{id}")))
                         .label(name.clone())
-                        .small()
                         .when(selected, |button| button.primary())
                         .when(!selected, |button| {
                             button.custom(theme::outline_variant(cx)).card_outline(cx)
@@ -717,7 +716,10 @@ impl RulesView {
                     .w_40()
                     .v_flex()
                     .gap_1()
-                    .child(div().text_sm().child(tr!("rules.monthly_budget")))
+                    .child(div().text_sm().child(tr!(
+                        "rules.monthly_budget",
+                        currency = data::reporting_currency()
+                    )))
                     .child(Input::new(&self.budget_amount_input)),
             )
             .child(
@@ -732,7 +734,6 @@ impl RulesView {
                 Button::new("save-budget")
                     .label(tr!("rules.save_budget"))
                     .primary()
-                    .small()
                     .disabled(self.saving_budget || self.budget_account.is_none())
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.save_budget(cx);
@@ -780,7 +781,6 @@ impl RulesView {
                         .child(
                             Button::new("budget-add-account")
                                 .label(tr!("palette.add_account"))
-                                .small()
                                 .custom(theme::outline_variant(cx))
                                 .card_outline(cx)
                                 .on_click(|_, _, cx| crate::app::open_add_account(cx)),
@@ -821,7 +821,6 @@ impl RulesView {
                 let kind = spec.kind;
                 Button::new(SharedString::from(format!("rule-kind-{kind}")))
                     .label(tr!(spec.name))
-                    .small()
                     .when(kind == self.selected_kind, |button| button.primary())
                     .when(kind != self.selected_kind, |button| {
                         button.custom(theme::outline_variant(cx)).card_outline(cx)
@@ -884,7 +883,6 @@ impl RulesView {
                                 let selected = self.rule_account.as_deref() == Some(id.as_str());
                                 Button::new(SharedString::from(format!("rule-account-{id}")))
                                     .label(name.clone())
-                                    .small()
                                     .when(selected, |button| button.primary())
                                     .when(!selected, |button| {
                                         button.custom(theme::outline_variant(cx)).card_outline(cx)
@@ -907,7 +905,6 @@ impl RulesView {
                                 let selected = self.rule_based == value;
                                 Button::new(SharedString::from(format!("rule-based-{value}")))
                                     .label(tr!(*label))
-                                    .small()
                                     .when(selected, |button| button.primary())
                                     .when(!selected, |button| {
                                         button.custom(theme::outline_variant(cx)).card_outline(cx)
@@ -933,12 +930,19 @@ impl RulesView {
                                         "rule-threshold-type-{value}"
                                     )))
                                     .label(tr!(*label))
-                                    .small()
                                     .when(selected, |button| button.primary())
                                     .when(!selected, |button| {
                                         button.custom(theme::outline_variant(cx)).card_outline(cx)
                                     })
-                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        // 80 would silently go from a percent
+                                        // to an amount, so the unit change
+                                        // clears it.
+                                        if this.rule_threshold_type != value {
+                                            this.threshold_input.update(cx, |state, cx| {
+                                                state.set_value("", window, cx);
+                                            });
+                                        }
                                         this.rule_threshold_type = value;
                                         cx.notify();
                                     }))
@@ -964,7 +968,10 @@ impl RulesView {
                                     .gap_1()
                                     .child(div().text_sm().child(
                                         if self.rule_threshold_type == "absolute" {
-                                            tr!("rules.amount_reporting")
+                                            tr!(
+                                                "rules.amount_reporting",
+                                                currency = data::reporting_currency()
+                                            )
                                         } else {
                                             tr!("rules.percent_of_budget")
                                         },
@@ -1158,7 +1165,6 @@ impl Render for RulesView {
                             .child(
                                 Button::new("retry-load-rules")
                                     .label(tr!("common.retry"))
-                                    .small()
                                     .custom(theme::outline_variant(cx))
                                     .card_outline(cx)
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -1197,7 +1203,6 @@ impl Render for RulesView {
                     div().h_flex().child(
                         Button::new("retry-first-load-rules")
                             .label(tr!("common.retry"))
-                            .small()
                             .custom(theme::outline_variant(cx))
                             .card_outline(cx)
                             .on_click(cx.listener(|this, _, _, cx| {

@@ -17,7 +17,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as before. An alert keeps the language it fired in, and the tray menu
   picks up a new language at the next launch.
 
+### Changed
+- **Buttons are one size.** Buttons with a border or fill are now one
+  height across every page, and refreshing, adding an account and alert
+  actions no longer use the black emphasis.
+- **Plainer wording.** "Cost workspace", "Local ledger" and other internal
+  terms are gone from the sidebar, window title and page captions, and the
+  status bar now says when the next refresh is due.
+- **Charts carry their own scale.** The Overview, Models and Account detail
+  charts have value and date axes, and name their range to a screen reader.
+- **Figures say what they measure.** Net totals and before-credits usage are
+  labelled as such, an early forecast says how few days it rests on, Models
+  and Insights name what a percentage is measured against, and amounts show
+  the reporting currency rather than a fixed dollar sign.
+- **Alert and allocation links go somewhere useful.** "See the charges" opens
+  the alert's service in Query, across months, and "See untagged spend"
+  replaces a link to alert rules, which could not allocate anything.
+- **Insights findings can be checked.** Each shows its full ID, with a copy
+  button, its account, and a link to its charges. Its cards wrap, and it says
+  when demo accounts may be behind what it shows.
+- **Keyboard and screen readers.** The sidebar and Insights groups can be
+  reached and opened from the keyboard, and pages, cards and charts have
+  names in the accessibility tree.
+
 ### Fixed
+- **Query failed on Windows.** Every query stopped with an IO error because
+  the page opened the ledger file a second time.
+- **A chart with one day of data looked empty.** It now shows a marker with
+  the date and amount.
+- **Totals missing charges said nothing.** The Overview warns when charges in
+  the range have no exchange rate and so are not counted.
+- **A kept Query result looked current.** It is marked once the SQL or the
+  reporting currency has changed since it ran.
+- **The Query page highlights SQL.**
+- **Text lines up.** An alert's title, figures and actions share one left
+  edge, the Overview card links sit under their captions, and the actions on
+  the Accounts table hold their columns from row to row.
 - **Installing the scanner failed on a dropped connection.** The Insights
   scanner is a 46 MB download, and a connection cut partway through
   stopped the install with "io: unexpected end of file". A dropped or

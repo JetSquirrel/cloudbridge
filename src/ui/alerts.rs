@@ -1,23 +1,12 @@
-//! Alerts View — open alerts evaluated locally against the ledger after each ingest.
+//! Alerts View: open alerts, checked after every refresh or import.
 
-use gpui_kit::component::{button::*, skeleton::Skeleton, Disableable, Icon, IconName, StyledExt};
+use gpui_kit::component::{button::*, skeleton::Skeleton, Disableable, StyledExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use super::{data, theme};
-use crate::alerts::{AlertField, AlertKind, AlertStat, AlertView, Severity};
+use crate::alerts::{AlertField, AlertStat, AlertView, Severity};
 use crate::ui::theme::CardOutline as _;
-
-fn kind_icon(kind: AlertKind) -> Icon {
-    match kind {
-        AlertKind::CostAnomaly => Icon::new(IconName::ChartPie),
-        AlertKind::Balance => Icon::new(IconName::TriangleAlert),
-        AlertKind::UntaggedRatio => Icon::new(IconName::Info),
-        // The component icon subset has no money icon; the assets crate's
-        // full catalog does, and Icon accepts any IconNamed.
-        AlertKind::Budget => Icon::new(gpui_kit::assets::IconName::Wallet),
-    }
-}
 
 /// An unselected filter chip: a bordered card-colored pill. The selected
 /// chip is a primary Button.
@@ -27,24 +16,6 @@ fn inactive_chip_variant(cx: &App) -> ButtonCustomVariant {
         .foreground(theme::text_muted(cx))
         .hover(theme::sidebar_bg(cx))
         .active(theme::surface_pressed(cx))
-}
-
-/// The tinted circle at the left of an alert card.
-fn icon_badge(alert: &AlertView, cx: &App) -> Div {
-    let (bg, fg) = match alert.severity {
-        Severity::Critical => (theme::alert_tint(cx), theme::accent(cx)),
-        Severity::Warning => (theme::warning_bg(cx), theme::warning_text(cx)),
-    };
-
-    div()
-        .flex_shrink_0()
-        .size_12()
-        .rounded_full()
-        .bg(bg)
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(kind_icon(alert.kind).size_5().text_color(fg))
 }
 
 /// The severity marker next to an alert title.
@@ -104,6 +75,20 @@ fn field_column(field: &AlertField, cx: &App) -> Div {
                 .text_color(theme::text_primary(cx))
                 .child(field.value.clone()),
         )
+}
+
+/// The query behind an alert's Trace action. Nothing in the browser demo,
+/// which has no Query page, or for an alert fired without a service.
+fn trace_query(alert: &AlertView) -> Option<String> {
+    if cfg!(target_family = "wasm") {
+        return None;
+    }
+    let text = |key: &str| alert.context.get(key).and_then(|value| value.as_str());
+    Some(data::alert_trace_query(
+        text("provider")?,
+        text("service")?,
+        alert.created_at,
+    ))
 }
 
 fn divider(cx: &App) -> Div {
@@ -246,76 +231,56 @@ impl AlertsView {
             // Only the unselected chip is outlined; the selected one is
             // solid accent.
             .when(!active, |chip| chip.card_outline(cx))
-            .rounded_full()
-            .h_auto()
-            .px_3()
-            .py_1()
-            .text_sm()
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.select_filter(label.clone(), cx);
             }))
     }
 
-    /// One action of an alert card. Chrome follows the action's semantics:
-    /// Dismiss is always a text button, the first non-Dismiss action is the
-    /// primary, and any remaining ones are outlined. Behaviour follows the
-    /// label the backend emitted — only the lifecycle actions do anything
-    /// yet. All actions are disabled while an action or reload is in flight
-    /// so rapid clicks can't race.
-    fn render_action(
-        &self,
-        primary: bool,
-        alert_id: &str,
-        action: &str,
-        cx: &Context<Self>,
-    ) -> AnyElement {
-        let id = SharedString::from(format!("alert-{alert_id}-action-{action}"));
-        let alert_id = alert_id.to_string();
+    /// One action of an alert card: Dismiss is ghost, the others outlined,
+    /// so an action looks the same on every card. Behaviour follows the
+    /// label the backend emitted. All actions are disabled while an action
+    /// or reload is in flight so rapid clicks can't race.
+    fn render_action(&self, alert: &AlertView, action: &str, cx: &Context<Self>) -> AnyElement {
+        let id = SharedString::from(format!("alert-{}-action-{action}", alert.id));
+        let alert_id = alert.id.clone();
+        let trace = trace_query(alert);
         let action_owned = action.to_string();
 
         let on_click = move |this: &mut Self, cx: &mut Context<Self>| match action_owned.as_str() {
             "Snooze 24h" => this.snooze_alert(alert_id.clone(), cx),
             "Dismiss" => this.dismiss_alert(alert_id.clone(), cx),
-            "Trace in attribution" => {
-                crate::app::navigate_to(crate::app::CurrentView::Attribution, cx)
-            }
+            "Trace in attribution" => match trace.clone() {
+                Some(sql) => crate::app::open_query(sql, cx),
+                None => crate::app::navigate_to(crate::app::CurrentView::Attribution, cx),
+            },
             _ => {}
         };
 
+        let button = Button::new(id)
+            .label(
+                if action == "Trace in attribution" && trace_query(alert).is_some() {
+                    tr!("alerts.action_trace_charges")
+                } else {
+                    action_name(action)
+                },
+            )
+            .disabled(self.loading)
+            .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)));
         if action == "Dismiss" {
-            Button::new(id)
-                .label(action_name(action))
-                .text()
-                .text_sm()
-                .text_color(theme::accent(cx))
-                .disabled(self.loading)
-                .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
-                .into_any_element()
-        } else if primary {
-            Button::new(id)
-                .label(action_name(action))
-                .primary()
-                .disabled(self.loading)
-                .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
-                .into_any_element()
+            button.ghost().into_any_element()
         } else {
-            Button::new(id)
-                .label(action_name(action))
+            button
                 .custom(theme::outline_variant(cx))
                 .card_outline(cx)
-                .disabled(self.loading)
-                .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
                 .into_any_element()
         }
     }
 
     fn render_alert(&self, alert: &AlertView, cx: &Context<Self>) -> impl IntoElement {
-        let primary_action = alert.actions.iter().position(|action| action != "Dismiss");
         let top_row = div()
             .h_flex()
             .gap_4()
-            .items_center()
-            .child(icon_badge(alert, cx))
+            .items_start()
             .child(
                 div()
                     .flex_1()
@@ -334,7 +299,14 @@ impl AlertsView {
                                     .text_color(theme::text_primary(cx))
                                     .child(alert.title.clone()),
                             )
-                            .child(severity_badge(alert.severity, cx)),
+                            .child(severity_badge(alert.severity, cx))
+                            .child(theme::caption(
+                                cx,
+                                tr!(
+                                    "alerts.fired",
+                                    time = super::fmt::relative_time(alert.created_at)
+                                ),
+                            )),
                     )
                     .child(
                         div()
@@ -363,11 +335,14 @@ impl AlertsView {
                 )
             })
             .child(divider(cx))
-            .child(div().h_flex().items_center().gap_3().children(
-                alert.actions.iter().enumerate().map(|(i, action)| {
-                    self.render_action(Some(i) == primary_action, &alert.id, action, cx)
-                }),
-            ))
+            .child(
+                div().h_flex().items_center().gap_2().children(
+                    alert
+                        .actions
+                        .iter()
+                        .map(|action| self.render_action(alert, action, cx)),
+                ),
+            )
     }
 
     /// One row of the resolved list: the alert's title and when it resolved.

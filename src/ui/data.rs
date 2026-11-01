@@ -354,6 +354,8 @@ pub struct OverviewData {
     /// 6-month trailing daily average; `None` without the history to
     /// average (the chart then draws no benchmark line).
     pub chart_benchmark: Option<f64>,
+    /// Charges in the range with no exchange rate, so missing from its totals.
+    pub unconverted_charges: i64,
     /// Data-quality findings for the current period, worst severity first;
     /// empty when the period is clean (or the check failed — a missing
     /// Data health card must not take the page down).
@@ -388,7 +390,7 @@ pub struct AccountCounts {
 }
 
 impl AccountCounts {
-    fn load() -> Result<Self> {
+    pub fn load() -> Result<Self> {
         let mut counts = Self::default();
         for account in db::get_all_accounts()? {
             if account.id.starts_with(crate::demo_data::DEMO_PREFIX) {
@@ -548,7 +550,9 @@ fn load_overview_mtd(now: DateTime<Utc>) -> Result<OverviewData> {
 
     let data_quality = load_data_quality(&current.label());
 
+    let unconverted_charges = query::unconverted_between(midnight_of(current.start()), now)?;
     Ok(OverviewData {
+        unconverted_charges,
         currency: reporting_currency(),
         range: Range::Mtd,
         stats: OverviewStats {
@@ -582,6 +586,12 @@ fn load_overview_mtd(now: DateTime<Utc>) -> Result<OverviewData> {
         month_over_month: Some(month_over_month),
         accounts: AccountCounts::default(),
     })
+}
+
+fn midnight_of(date: NaiveDate) -> DateTime<Utc> {
+    date.and_hms_opt(0, 0, 0)
+        .expect("midnight exists")
+        .and_utc()
 }
 
 /// A rolling-range page (30 days or 12 months): everything re-queries for
@@ -649,7 +659,9 @@ fn load_overview_window(range: Range, now: DateTime<Utc>) -> Result<OverviewData
     // window the page shows.
     let data_quality = load_data_quality(&BillingPeriod::containing(now).label());
 
+    let unconverted_charges = query::unconverted_between(since, until)?;
     Ok(OverviewData {
+        unconverted_charges,
         currency: reporting_currency(),
         range,
         stats: OverviewStats {
@@ -1605,7 +1617,7 @@ pub fn load_attribution() -> Result<AttributionData> {
                 0.0
             },
             largest,
-            action: tr!("alerts.action_write_rule").into(),
+            action: tr!("attribution.see_untagged").into(),
         },
     })
 }
@@ -2221,6 +2233,66 @@ ORDER BY s.provider, s.account_id",
 ];
 
 /// The starter queries the Query page's template picker lists.
+/// The built-in query for the spend no business line claims.
+pub fn unallocated_query() -> Option<&'static str> {
+    query_templates()
+        .iter()
+        .find(|template| template.title == "Unallocated spend by service")
+        .map(|template| template.sql)
+}
+
+/// The daily charges behind a cost alert: its provider and service, for the
+/// 30 days up to the day it fired, so the spike shows against what came
+/// before it. A past month's alert stays traceable this way, which the
+/// Attribution page, showing only the current period, cannot do.
+pub fn alert_trace_query(provider: &str, service: &str, fired: DateTime<Utc>) -> String {
+    let quoted = |text: &str| text.replace('\'', "''");
+    format!(
+        "SELECT CAST(charge_period_start AS DATE) AS day,
+       provider,
+       service_name,
+       reporting_currency AS currency,
+       ROUND(SUM(billed_cost_base), 2) AS spend
+FROM v_charge_normalized
+WHERE provider = '{}'
+  AND service_name = '{}'
+  AND charge_period_start >= DATE '{}' - INTERVAL 30 DAY
+  AND charge_period_start < DATE '{}' + INTERVAL 1 DAY
+GROUP BY day, provider, service_name, reporting_currency
+ORDER BY day DESC",
+        quoted(provider),
+        quoted(service),
+        fired.format("%Y-%m-%d"),
+        fired.format("%Y-%m-%d"),
+    )
+}
+
+/// A resource's charges by month, what a finding on the Insights page rests
+/// on. The bill can name it by a longer id than the scan, an ARN for one, so
+/// it matches on the id's last part as the Insights arithmetic does.
+pub fn resource_trace_query(provider: &str, resource_id: &str, resource_key: &str) -> String {
+    let quoted = |text: &str| text.replace('\'', "''");
+    let pattern = quoted(resource_key)
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!(
+        "SELECT billing_period,
+       service_name,
+       charge_description,
+       reporting_currency AS currency,
+       ROUND(SUM(billed_cost_base), 2) AS spend
+FROM v_charge_normalized
+WHERE lower(provider) = lower('{}')
+  AND (resource_id = '{}' OR resource_id LIKE '%{}' ESCAPE '\\')
+GROUP BY billing_period, service_name, charge_description, reporting_currency
+ORDER BY billing_period DESC, spend DESC",
+        quoted(provider),
+        quoted(resource_id),
+        pattern,
+    )
+}
+
 pub fn query_templates() -> &'static [QueryTemplate] {
     &QUERY_TEMPLATES
 }
@@ -2675,6 +2747,26 @@ mod tests {
         "Composition",
         "Data health",
     ];
+
+    #[test]
+    fn an_alert_trace_query_quotes_its_names() {
+        let fired = at(NaiveDate::from_ymd_opt(2026, 10, 31).expect("a real date"));
+        let sql = alert_trace_query("OpenAI", "it's; DROP TABLE t", fired);
+        assert!(sql.contains("service_name = 'it''s; DROP TABLE t'"));
+        assert!(sql.contains("DATE '2026-10-31'"));
+    }
+
+    #[test]
+    fn a_resource_trace_query_matches_literally() {
+        let sql = resource_trace_query("AWS", "arn:aws:ec2:i_1%'", "i_1%'");
+        assert!(sql.contains(r"resource_id = 'arn:aws:ec2:i_1%''' OR"));
+        assert!(sql.contains(r"LIKE '%i\_1\%''' ESCAPE"));
+    }
+
+    #[test]
+    fn the_unallocated_query_is_a_real_template() {
+        assert!(unallocated_query().is_some());
+    }
 
     #[test]
     fn templates_exist() {

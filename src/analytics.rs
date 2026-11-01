@@ -1483,8 +1483,8 @@ mod tests {
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].title, "Unit price rising");
         assert_eq!(findings[0].severity, FindingSeverity::Warning);
-        assert!(findings[0].detail.contains("$100.00"));
-        assert!(findings[0].detail.contains("$150.00"));
+        assert!(findings[0].detail.contains("100.00"));
+        assert!(findings[0].detail.contains("150.00"));
     }
 
     #[test]

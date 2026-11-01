@@ -287,8 +287,8 @@ impl OverviewView {
                             } else {
                                 tr!("common.refresh")
                             })
-                            .small()
-                            .primary()
+                            .custom(theme::outline_variant(cx))
+                            .card_outline(cx)
                             .loading(busy)
                             .tooltip(if cfg!(target_family = "wasm") {
                                 tr!("overview.reload_demo_tooltip")
@@ -305,7 +305,6 @@ impl OverviewView {
                             Button::new("force-refresh")
                                 .label(tr!("common.force_refresh"))
                                 .tooltip(tr!("overview.force_refresh_tooltip"))
-                                .small()
                                 .custom(theme::outline_variant(cx))
                                 .card_outline(cx)
                                 .disabled(busy)
@@ -363,7 +362,11 @@ impl OverviewView {
                                     .flex_wrap()
                                     .items_center()
                                     .gap_4()
-                                    .child(legend_solid(cx, theme::accent(cx), "Actual"))
+                                    .child(legend_solid(
+                                        cx,
+                                        theme::accent(cx),
+                                        tr!("overview.actual"),
+                                    ))
                                     // The 12-month range has no baseline
                                     // series, so it gets no legend entry.
                                     .when(!d.chart.baseline.is_empty(), |el| {
@@ -385,29 +388,13 @@ impl OverviewView {
                             ),
                     )
                     .child(self.render_chart_with_axis(d, window, cx))
-                    // Endpoints make every range readable without hovering.
-                    .when(!d.chart.actual.is_empty(), |el| {
-                        let first = d
-                            .chart
-                            .actual
-                            .first()
-                            .map(|p| p.label.clone())
-                            .unwrap_or_default();
-                        let last = d
-                            .chart
-                            .actual
-                            .last()
-                            .map(|p| p.label.clone())
-                            .unwrap_or_default();
-                        el.child(
-                            div()
-                                .h_flex()
-                                .pl(rems(6.25))
-                                .justify_between()
-                                .child(theme::caption(cx, first))
-                                .child(theme::caption(cx, last)),
-                        )
-                    })
+                    // Dates make every range readable without hovering.
+                    .when_some(
+                        chart::axis_row(cx, &d.chart.actual, &|value| {
+                            fmt::amount(value, &d.currency)
+                        }),
+                        |el, axis| el.child(axis.pl(chart::Y_AXIS_INSET)),
+                    )
                     // Only the 12-month caption adds information beyond
                     // the legend; MTD/30d just restate it.
                     .when(d.range == Range::Months12, |el| {
@@ -424,7 +411,13 @@ impl OverviewView {
                     .p_5()
                     .v_flex()
                     .gap_4()
-                    .child(theme::section_title(cx, tr!("overview.spend_breakdown")))
+                    .child(
+                        div()
+                            .v_flex()
+                            .gap_1()
+                            .child(theme::section_title(cx, tr!("overview.spend_breakdown")))
+                            .child(theme::caption(cx, tr!("overview.before_credits"))),
+                    )
                     .child(
                         div()
                             .v_flex()
@@ -443,7 +436,7 @@ impl OverviewView {
                                                 div()
                                                     .text_sm()
                                                     .text_color(theme::text_primary(cx))
-                                                    .child(line.name.clone()),
+                                                    .child(crate::i18n::bucket_label(&line.name)),
                                             )
                                             .child(
                                                 div()
@@ -472,10 +465,9 @@ impl OverviewView {
                     .child(
                         Button::new("open-attribution")
                             .label(tr!("overview.view_attribution"))
-                            .small()
-                            .w_full()
-                            .custom(theme::outline_variant(cx))
-                            .card_outline(cx)
+                            .text()
+                            .self_start()
+                            .text_color(theme::accent(cx))
                             .on_click(|_, _, cx| {
                                 crate::app::navigate_to(crate::app::CurrentView::Attribution, cx)
                             }),
@@ -490,35 +482,19 @@ impl OverviewView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let (min, max) = chart::padded_y_range(
-            d.chart
-                .actual
-                .iter()
-                .chain(&d.chart.baseline)
-                .map(|p| p.amount),
-        );
         div()
             .h_flex()
             .gap_3()
-            .child(
-                div()
-                    .w(rems(5.5))
-                    .flex_shrink_0()
-                    .h(rems(16.25))
-                    .relative()
-                    .text_right()
-                    .children((0..=3).map(|i| {
-                        div()
-                            .absolute()
-                            .right_0()
-                            .top(relative(i as f32 / 3.0))
-                            .mt(rems(-0.5))
-                            .line_height(rems(1.0))
-                            .text_xs()
-                            .text_color(theme::text_muted(cx))
-                            .child(fmt::amount(max - (max - min) * i as f64 / 3.0, &d.currency))
-                    })),
-            )
+            .child(chart::y_axis(
+                cx,
+                d.chart
+                    .actual
+                    .iter()
+                    .chain(&d.chart.baseline)
+                    .map(|p| p.amount),
+                rems(16.25),
+                &|value| fmt::amount(value, &d.currency),
+            ))
             .child(
                 div()
                     .flex_1()
@@ -539,6 +515,10 @@ impl OverviewView {
     ) -> impl IntoElement {
         div()
             .id("spend-chart")
+            .role(Role::Image)
+            .aria_label(chart::summary(&d.chart_title, &d.chart.actual, &|value| {
+                fmt::amount(value, &d.currency)
+            }))
             .w_full()
             .relative()
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
@@ -829,6 +809,20 @@ impl Render for OverviewView {
                         self.data.as_ref().filter(|d| d.accounts.demo > 0),
                         |el, d| el.child(self.render_demo_notice(d, cx)),
                     )
+                    .when_some(
+                        self.data.as_ref().filter(|d| d.unconverted_charges > 0),
+                        |el, d| {
+                            el.child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme::warning_text(cx))
+                                    .child(tr!(
+                                        "overview.incomplete_total",
+                                        n = d.unconverted_charges
+                                    )),
+                            )
+                        },
+                    )
                     .child(body),
             )
     }
@@ -911,6 +905,7 @@ fn render_stats(cx: &App, d: &data::OverviewData, columns: u16) -> impl IntoElem
         .items_stretch()
         .gap_4()
         .child(theme::stat_card(
+            "stat-overview-1",
             cx,
             d.spend_label.clone(),
             fmt::amount(stats.spend, currency),
@@ -937,6 +932,7 @@ fn render_stats(cx: &App, d: &data::OverviewData, columns: u16) -> impl IntoElem
                 }),
         ))
         .child(theme::stat_card(
+            "stat-overview-2",
             cx,
             d.card2_label.clone(),
             fmt::amount(d.card2_value, currency),
@@ -944,17 +940,13 @@ fn render_stats(cx: &App, d: &data::OverviewData, columns: u16) -> impl IntoElem
                 .text_color(theme::text_muted(cx))
                 .child(match &d.forecast_band {
                     // MTD: the confidence band under the point forecast.
-                    Some(band) => tr!(
-                        "overview.range",
-                        low = fmt::amount(band.pessimistic, currency),
-                        high = fmt::amount(band.optimistic, currency)
-                    )
-                    .to_string(),
+                    Some(band) => forecast_caption(band, d.chart.actual.len(), currency),
                     None => d.card2_caption.to_string(),
                 }),
         ))
         .child(
             theme::stat_card(
+                "stat-overview-3",
                 cx,
                 tr!("overview.unallocated"),
                 format!("{:.1}%", stats.unallocated_pct),
@@ -966,9 +958,8 @@ fn render_stats(cx: &App, d: &data::OverviewData, columns: u16) -> impl IntoElem
             .child(
                 Button::new("review-allocation")
                     .label(tr!("overview.review_allocation"))
-                    .ghost()
-                    .small()
-                    .justify_start()
+                    .text()
+                    .self_start()
                     .text_color(theme::accent(cx))
                     .on_click(|_, _, cx| {
                         crate::app::navigate_to(crate::app::CurrentView::Attribution, cx)
@@ -977,6 +968,7 @@ fn render_stats(cx: &App, d: &data::OverviewData, columns: u16) -> impl IntoElem
         )
         .child(
             theme::stat_card(
+                "stat-overview-4",
                 cx,
                 tr!("overview.open_alerts"),
                 stats.open_alerts.to_string(),
@@ -992,9 +984,8 @@ fn render_stats(cx: &App, d: &data::OverviewData, columns: u16) -> impl IntoElem
             .child(
                 Button::new("review-alerts")
                     .label(tr!("overview.view_alerts"))
-                    .ghost()
-                    .small()
-                    .justify_start()
+                    .text()
+                    .self_start()
                     .text_color(theme::accent(cx))
                     .on_click(|_, _, cx| {
                         crate::app::navigate_to(crate::app::CurrentView::Alerts, cx)
@@ -1369,7 +1360,7 @@ fn delta_amount(cx: &App, delta: f64, currency: &str) -> Div {
         .child(text)
 }
 
-fn legend_solid(cx: &App, color: Hsla, label: &'static str) -> Div {
+fn legend_solid(cx: &App, color: Hsla, label: SharedString) -> Div {
     div()
         .h_flex()
         .items_center()
@@ -1429,6 +1420,28 @@ fn legend_dotted(cx: &App, color: Hsla, label: SharedString) -> Div {
                 .text_color(theme::text_muted(cx))
                 .child(label),
         )
+}
+
+/// A band from fewer days than this is shown with how many it rests on.
+const FORECAST_SETTLED_DAYS: usize = 7;
+
+/// The forecast card's caption. A band with no width is not certainty: it
+/// means too few days to measure any spread, so it says that instead.
+fn forecast_caption(band: &data::ForecastBand, days: usize, currency: &str) -> String {
+    if band.pessimistic == band.optimistic {
+        return if days == 1 {
+            tr!("overview.forecast_rough_one").to_string()
+        } else {
+            tr!("overview.forecast_rough", n = days).to_string()
+        };
+    }
+    let low = fmt::amount(band.pessimistic, currency);
+    let high = fmt::amount(band.optimistic, currency);
+    if days < FORECAST_SETTLED_DAYS {
+        tr!("overview.range_from_days", low = low, high = high, n = days).to_string()
+    } else {
+        tr!("overview.range", low = low, high = high).to_string()
+    }
 }
 
 /// Where the flat benchmark value falls on the chart's y-axis (0.0 =

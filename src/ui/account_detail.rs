@@ -215,44 +215,74 @@ impl AccountDetailView {
             .p_5()
             .v_flex()
             .gap_4()
-            .child(theme::section_title(cx, title))
+            .child(theme::section_title(cx, title.clone()))
             .child(
                 div()
-                    .id("account-chart")
-                    .w_full()
-                    .relative()
-                    .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
-                        let x: f32 = event.position.x.into();
-                        let nearest = this.chart_hover.nearest(x);
-                        if nearest.is_some() && nearest != this.chart_hover.index() {
-                            this.chart_hover.set(nearest);
-                            cx.notify();
-                        }
-                    }))
-                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                        if !*hovered && this.chart_hover.index().is_some() {
-                            this.chart_hover.clear();
-                            cx.notify();
-                        }
-                    }))
-                    .child(chart::spend_area_chart(
+                    .h_flex()
+                    .gap_3()
+                    .child(chart::y_axis(
                         cx,
-                        &d.chart.actual,
-                        &d.chart.baseline,
+                        d.chart
+                            .actual
+                            .iter()
+                            .chain(&d.chart.baseline)
+                            .map(|p| p.amount),
                         rems(16.25),
-                        self.chart_hover.points_cell(),
-                        self.chart_hover.bounds_cell(),
+                        &|value| fmt::amount(value, &d.currency),
                     ))
-                    .when_some(
-                        chart::hover_overlay(
-                            cx,
-                            &self.chart_hover,
-                            &d.chart.actual,
-                            &d.currency,
-                            window.rem_size(),
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            div()
+                                .id("account-chart")
+                                .role(Role::Image)
+                                .aria_label(chart::summary(&title, &d.chart.actual, &|value| {
+                                    fmt::amount(value, &d.currency)
+                                }))
+                                .w_full()
+                                .relative()
+                                .on_mouse_move(cx.listener(
+                                    |this, event: &MouseMoveEvent, _, cx| {
+                                        let x: f32 = event.position.x.into();
+                                        let nearest = this.chart_hover.nearest(x);
+                                        if nearest.is_some() && nearest != this.chart_hover.index()
+                                        {
+                                            this.chart_hover.set(nearest);
+                                            cx.notify();
+                                        }
+                                    },
+                                ))
+                                .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                                    if !*hovered && this.chart_hover.index().is_some() {
+                                        this.chart_hover.clear();
+                                        cx.notify();
+                                    }
+                                }))
+                                .child(chart::spend_area_chart(
+                                    cx,
+                                    &d.chart.actual,
+                                    &d.chart.baseline,
+                                    rems(16.25),
+                                    self.chart_hover.points_cell(),
+                                    self.chart_hover.bounds_cell(),
+                                ))
+                                .when_some(
+                                    chart::hover_overlay(
+                                        cx,
+                                        &self.chart_hover,
+                                        &d.chart.actual,
+                                        &d.currency,
+                                        window.rem_size(),
+                                    ),
+                                    |el, overlay| el.children(overlay),
+                                ),
                         ),
-                        |el, overlay| el.children(overlay),
                     ),
+            )
+            .children(
+                chart::axis_row(cx, &d.chart.actual, &|value| {
+                    fmt::amount(value, &d.currency)
+                })
+                .map(|axis| axis.pl(chart::Y_AXIS_INSET)),
             )
     }
 
@@ -284,7 +314,6 @@ impl AccountDetailView {
                         Button::new("go-to-accounts")
                             .label(tr!("models.open_accounts"))
                             .outline()
-                            .small()
                             .on_click(|_, _, cx| {
                                 crate::app::navigate_to(crate::app::CurrentView::Accounts, cx)
                             }),
@@ -439,6 +468,7 @@ impl AccountDetailView {
         let dismiss_keys = health.dismiss_keys.clone();
 
         HealthCard::new("account-health", rows)
+            .scope(tr!("health.all_accounts"))
             .expanded(self.health_expanded)
             .on_toggle(cx.listener(|this, _, _, cx| {
                 this.health_expanded = !this.health_expanded;
@@ -507,6 +537,7 @@ fn render_stats(d: &AccountDetailData, cx: &App) -> impl IntoElement {
         .items_stretch()
         .gap_4()
         .child(theme::stat_card(
+            "stat-account-1",
             cx,
             tr!("detail.spend"),
             fmt::amount(d.spend, currency),
@@ -517,6 +548,7 @@ fn render_stats(d: &AccountDetailData, cx: &App) -> impl IntoElement {
             )),
         ))
         .child(theme::stat_card(
+            "stat-account-2",
             cx,
             tr!("overview.col_change"),
             d.change_pct

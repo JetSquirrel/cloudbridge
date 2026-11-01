@@ -655,6 +655,24 @@ pub fn total_between(since: DateTime<Utc>, until: DateTime<Utc>) -> Result<f64> 
     })
 }
 
+/// Charges in a window with an amount but no rate into the reporting currency,
+/// which every converted total leaves out.
+pub fn unconverted_between(since: DateTime<Utc>, until: DateTime<Utc>) -> Result<i64> {
+    read(|all| {
+        selected(
+            all,
+            &Scope {
+                since: Some(since),
+                until: Some(until),
+                ..Default::default()
+            },
+        )
+        .iter()
+        .filter(|row| row.billed_cost.is_some() && row.billed_cost_base.is_none())
+        .count() as i64
+    })
+}
+
 /// Gross usage and credits of one period, in the reporting currency.
 ///
 /// Net totals hide credit-covered spend: an account whose usage is fully

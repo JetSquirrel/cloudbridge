@@ -657,6 +657,34 @@ fn total_between_of(conn: &Connection, since: DateTime<Utc>, until: DateTime<Utc
     )
 }
 
+/// Charges in a window with an amount but no rate into the reporting currency,
+/// which every converted total leaves out. A row with no amount at all, such
+/// as a token count, is not one of them.
+pub fn unconverted_between(since: DateTime<Utc>, until: DateTime<Utc>) -> Result<i64> {
+    with_connection_ref(|conn| unconverted_between_of(conn, since, until))
+}
+
+fn unconverted_between_of(
+    conn: &Connection,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+) -> Result<i64> {
+    Ok(conn.query_row(
+        &format!(
+            "SELECT count(*)
+             FROM {NORMALIZED_VIEW}
+             WHERE billed_cost IS NOT NULL AND billed_cost_base IS NULL
+               AND charge_period_start >= CAST(? AS TIMESTAMP)
+               AND charge_period_start < CAST(? AS TIMESTAMP)"
+        ),
+        params![
+            since.format(TIMESTAMP_FORMAT).to_string(),
+            until.format(TIMESTAMP_FORMAT).to_string()
+        ],
+        |row| row.get(0),
+    )?)
+}
+
 /// Usage totals per billing period since an instant, as `(YYYY-MM,
 /// amount)` ordered by period label — the 12-month Overview chart's
 /// series. Grouped by `billing_period` rather than by charge-time month
@@ -4436,6 +4464,79 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    /// The SQL the Alerts and Insights pages send to the Query page has to
+    /// pass the read-only guard, run, and find what it was opened for.
+    #[test]
+    fn the_trace_queries_run_and_find_their_charges() {
+        let mut conn = conn("USD");
+        let provider = aws().provider;
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                Charge {
+                    resource_id: Some("arn:aws:ec2:us-east-1:1:instance/i-1".to_string()),
+                    ..charge("EC2", 40.0, "USD", 5)
+                },
+                Charge {
+                    resource_id: Some("arn:aws:ec2:us-east-1:1:instance/i-2".to_string()),
+                    ..charge("EC2", 7.0, "USD", 5)
+                },
+                charge("S3", 2.0, "USD", 5),
+            ],
+        );
+
+        let by_resource = run_adhoc_of(
+            &conn,
+            &crate::ui::data::resource_trace_query(&provider, "i-1", "i-1"),
+        )
+        .unwrap();
+        assert_eq!(by_resource.rows.len(), 1);
+        assert_eq!(by_resource.rows[0][4].as_deref(), Some("40"));
+
+        let fired = NaiveDate::from_ymd_opt(2026, 8, 6)
+            .expect("a real date")
+            .and_hms_opt(12, 0, 0)
+            .expect("noon exists")
+            .and_utc();
+        let by_service = run_adhoc_of(
+            &conn,
+            &crate::ui::data::alert_trace_query(&provider, "EC2", fired),
+        )
+        .unwrap();
+        assert_eq!(by_service.rows.len(), 1);
+        assert_eq!(by_service.rows[0][4].as_deref(), Some("47"));
+    }
+
+    #[test]
+    fn a_window_counts_only_charges_with_an_amount_and_no_rate() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                charge("Converted", 100.0, "USD", 1),
+                charge("No rate, in the window", 100.0, "JPY", 5),
+                charge("No rate, after it", 100.0, "JPY", 20),
+                Charge {
+                    billed_cost: None,
+                    ..charge("A token count", 0.0, "JPY", 5)
+                },
+            ],
+        );
+        let day = |d: u32| {
+            NaiveDate::from_ymd_opt(2026, 8, d)
+                .expect("a real date")
+                .and_hms_opt(0, 0, 0)
+                .expect("midnight exists")
+                .and_utc()
+        };
+
+        assert_eq!(unconverted_between_of(&conn, day(1), day(10)).unwrap(), 1);
+        assert_eq!(unconverted_between_of(&conn, day(1), day(31)).unwrap(), 2);
+        assert_eq!(unconverted_between_of(&conn, day(25), day(31)).unwrap(), 0);
     }
 
     #[test]
