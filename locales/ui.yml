@@ -736,8 +736,8 @@ models:
     en: "Δ VS PREV"
     zh-CN: "较上期"
   col_delta_mtd:
-    en: "VS ALL OF LAST MONTH"
-    zh-CN: "较上月全月"
+    en: "VS SAME DAYS LAST MONTH"
+    zh-CN: "较上月同期"
   no_daily:
     en: "No day-by-day token counts for this period."
     zh-CN: "本期没有按日的 token 数据。"

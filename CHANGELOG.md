@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names in the accessibility tree.
 
 ### Fixed
+- **Models compared part of a month with all of the last.** Early in a month
+  every model read as a large fall. Month to date now compares with the same
+  days of last month, as the Overview does.
 - **A low balance piled up a card a day.** It is now one alert, kept to the
   latest figures, until it recovers or is dismissed. Older cards for the same
   balance merge into it on the next check.
