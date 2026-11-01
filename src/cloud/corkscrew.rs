@@ -245,16 +245,41 @@ fn install_into(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Tries a dropped connection again: the archive is tens of megabytes, and a
+/// connection cut partway through ("unexpected end of file") is common
+/// enough that one attempt fails installs that a second would finish.
+const DOWNLOAD_ATTEMPTS: u32 = 3;
+
 fn download(url: &str) -> Result<Vec<u8>> {
     let agent = http::strict_agent(Duration::from_secs(300));
-    let mut response = agent
-        .get(url)
-        .call()
-        .map_err(|e| anyhow!("Could not download the scanner: {e}"))?;
+    let mut attempt = 1;
+    loop {
+        match download_once(&agent, url) {
+            Ok(bytes) => return Ok(bytes),
+            Err(e) if attempt < DOWNLOAD_ATTEMPTS && download_retryable(&e) => {
+                tracing::warn!("Scanner download attempt {attempt} failed, retrying: {e}");
+                std::thread::sleep(Duration::from_secs(2 * u64::from(attempt)));
+                attempt += 1;
+            }
+            Err(e) => return Err(anyhow!("Could not download the scanner: {e}")),
+        }
+    }
+}
+
+fn download_once(agent: &ureq::Agent, url: &str) -> std::result::Result<Vec<u8>, ureq::Error> {
+    let mut response = agent.get(url).call()?;
     let mut bytes = Vec::new();
-    std::io::Read::read_to_end(&mut response.body_mut().as_reader(), &mut bytes)
-        .map_err(|e| anyhow!("Could not download the scanner: {e}"))?;
+    std::io::Read::read_to_end(&mut response.body_mut().as_reader(), &mut bytes)?;
     Ok(bytes)
+}
+
+/// A refusal (a missing asset, say) will not change on a retry; a dropped
+/// or timed-out connection, or a server error, may.
+fn download_retryable(error: &ureq::Error) -> bool {
+    match error {
+        ureq::Error::StatusCode(status) => *status == 429 || *status >= 500,
+        _ => true,
+    }
 }
 
 /// Unpack with the system `tar`, which reads both the macOS `.tar.gz` and
@@ -694,6 +719,15 @@ fn tail(log: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_dropped_download_is_retried_and_a_refusal_is_not() {
+        let dropped = std::io::Error::from(std::io::ErrorKind::UnexpectedEof);
+        assert!(download_retryable(&ureq::Error::Io(dropped)));
+        assert!(download_retryable(&ureq::Error::StatusCode(503)));
+        assert!(download_retryable(&ureq::Error::StatusCode(429)));
+        assert!(!download_retryable(&ureq::Error::StatusCode(404)));
+    }
 
     /// Downloads the pinned release: run with `--ignored` when changing it.
     #[test]

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Installing the scanner failed on a dropped connection.** The Insights
+  scanner is a 46 MB download, and a connection cut partway through
+  stopped the install with "io: unexpected end of file". A dropped or
+  timed-out download, or a server error, is now tried up to three times.
+
 ## [0.8.0] - 2026-10-31
 
 Insights can be extended without a release: rules written in JavaScript
