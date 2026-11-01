@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **A new app icon.** An off-white arch bridge on black, with three
+  turquoise dots above it. It replaces the bar chart over an arc.
+  `assets/icon.svg` is the source, and `scripts/generate-icon.py` writes the
+  PNG, ICNS and ICO from it.
+
 ### Fixed
 - **Installing the scanner failed on a dropped connection.** The Insights
   scanner is a 46 MB download, and a connection cut partway through
