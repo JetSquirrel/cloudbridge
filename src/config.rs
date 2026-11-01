@@ -72,6 +72,10 @@ pub struct AppConfig {
     /// the window closes. Off, closing the window quits, as on Linux.
     #[serde(default = "default_true")]
     pub keep_in_menu_bar: bool,
+    /// Interface language, as a locale code ("en", "zh-CN"); `None`
+    /// follows the system. See [`crate::i18n`].
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -97,6 +101,7 @@ impl Default for AppConfig {
             background_refresh: true,
             alert_notifications: true,
             keep_in_menu_bar: true,
+            language: None,
         }
     }
 }

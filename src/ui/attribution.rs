@@ -191,12 +191,12 @@ impl DrillDim {
         DrillDim::ServiceCategory,
     ];
 
-    fn label(self) -> &'static str {
+    fn label(self) -> SharedString {
         match self {
-            DrillDim::Tag => "Tag",
-            DrillDim::Service => "Service",
-            DrillDim::Region => "Region",
-            DrillDim::ServiceCategory => "Category",
+            DrillDim::Tag => tr!("attribution.dim_tag"),
+            DrillDim::Service => tr!("attribution.dim_service"),
+            DrillDim::Region => tr!("detail.dim_region"),
+            DrillDim::ServiceCategory => tr!("detail.dim_category"),
         }
     }
 
@@ -211,33 +211,33 @@ impl DrillDim {
 
     /// The breakdown card's title in this dimension. `Tag` never renders
     /// the card; its title only keeps the match total.
-    fn title(self) -> &'static str {
+    fn title(self) -> SharedString {
         match self {
-            DrillDim::Tag => "By business line",
-            DrillDim::Service => "By service",
-            DrillDim::Region => "By region",
-            DrillDim::ServiceCategory => "By service category",
+            DrillDim::Tag => tr!("attribution.by_business_line"),
+            DrillDim::Service => tr!("overview.by_service"),
+            DrillDim::Region => tr!("detail.by_region"),
+            DrillDim::ServiceCategory => tr!("detail.by_category"),
         }
     }
 
     /// The bucket column's table header.
-    fn bucket_header(self) -> &'static str {
+    fn bucket_header(self) -> SharedString {
         match self {
-            DrillDim::Tag => "BUSINESS LINE",
-            DrillDim::Service => "SERVICE",
-            DrillDim::Region => "REGION",
-            DrillDim::ServiceCategory => "SERVICE CATEGORY",
+            DrillDim::Tag => tr!("attribution.col_business_line"),
+            DrillDim::Service => tr!("overview.col_service"),
+            DrillDim::Region => tr!("detail.col_region"),
+            DrillDim::ServiceCategory => tr!("detail.col_category"),
         }
     }
 
     /// Footnote under a breakdown that has an 'Other' bucket, naming what
     /// landed there.
-    fn other_caption(self) -> &'static str {
+    fn other_caption(self) -> SharedString {
         match self {
-            DrillDim::Tag => "Charges with no business-line tag read as 'Other'.",
-            DrillDim::Service => "Charges with no service read as 'Other'.",
-            DrillDim::Region => "Charges with no region read as 'Other'.",
-            DrillDim::ServiceCategory => "Charges with no service category read as 'Other'.",
+            DrillDim::Tag => tr!("attribution.other_tag"),
+            DrillDim::Service => tr!("attribution.other_service"),
+            DrillDim::Region => tr!("detail.other_region"),
+            DrillDim::ServiceCategory => tr!("detail.other_category"),
         }
     }
 
@@ -263,12 +263,12 @@ impl DrillDim {
 
     /// The breadcrumb's first crumb: the whole dimension, before a tile
     /// was opened.
-    fn all_label(self) -> &'static str {
+    fn all_label(self) -> SharedString {
         match self {
-            DrillDim::Tag => "All business lines",
-            DrillDim::Service => "All services",
-            DrillDim::Region => "All regions",
-            DrillDim::ServiceCategory => "All categories",
+            DrillDim::Tag => tr!("attribution.all_business_lines"),
+            DrillDim::Service => tr!("attribution.all_services"),
+            DrillDim::Region => tr!("attribution.all_regions"),
+            DrillDim::ServiceCategory => tr!("attribution.all_categories"),
         }
     }
 
@@ -276,23 +276,23 @@ impl DrillDim {
     /// the card uses for it: the noun, its table header and its 'Other'
     /// footnote. A service opens into its resources; a region or a
     /// category into its services.
-    fn inner_noun(self) -> &'static str {
+    fn inner_noun(self) -> SharedString {
         match self {
-            DrillDim::Service => "resource",
-            _ => "service",
+            DrillDim::Service => tr!("attribution.noun_resource"),
+            _ => tr!("attribution.noun_service"),
         }
     }
 
-    fn inner_header(self) -> &'static str {
+    fn inner_header(self) -> SharedString {
         match self {
-            DrillDim::Service => "RESOURCE",
-            _ => "SERVICE",
+            DrillDim::Service => tr!("attribution.col_resource"),
+            _ => tr!("overview.col_service"),
         }
     }
 
-    fn inner_other_caption(self) -> &'static str {
+    fn inner_other_caption(self) -> SharedString {
         match self {
-            DrillDim::Service => "Charges with no resource read as 'Other'.",
+            DrillDim::Service => tr!("attribution.other_resource"),
             _ => DrillDim::Service.other_caption(),
         }
     }
@@ -331,10 +331,10 @@ enum BreakdownMode {
 impl BreakdownMode {
     const ALL: [BreakdownMode; 2] = [BreakdownMode::Map, BreakdownMode::Table];
 
-    fn label(self) -> &'static str {
+    fn label(self) -> SharedString {
         match self {
-            BreakdownMode::Map => "Map",
-            BreakdownMode::Table => "Table",
+            BreakdownMode::Map => tr!("attribution.mode_map"),
+            BreakdownMode::Table => tr!("attribution.mode_table"),
         }
     }
 
@@ -458,7 +458,7 @@ impl AttributionView {
                         view.treemap_hover.clear();
                     }
                     Err(e) => {
-                        view.error = Some(format!("Could not load attribution: {e}"));
+                        view.error = Some(tr!("attribution.load_failed", error = e).into());
                     }
                 }
                 view.loading = false;
@@ -475,7 +475,10 @@ impl AttributionView {
         total: Option<(f64, &str)>,
     ) -> impl IntoElement {
         let caption = total.map(|(amount, currency)| {
-            format!("{} this billing period", fmt::amount(amount, currency))
+            tr!(
+                "attribution.this_period",
+                amount = fmt::amount(amount, currency)
+            )
         });
         let selected = self.dim;
         div()
@@ -487,7 +490,7 @@ impl AttributionView {
                 div()
                     .v_flex()
                     .gap_1()
-                    .child(theme::page_title(cx, "Attribution"))
+                    .child(theme::page_title(cx, tr!("nav.attribution")))
                     .when_some(caption, |el, text| el.child(theme::caption(cx, text))),
             )
             .child(
@@ -534,7 +537,7 @@ impl AttributionView {
                 div()
                     .text_xs()
                     .text_color(theme::text_muted(cx))
-                    .child("PATH"),
+                    .child(tr!("attribution.path")),
             )
             .child(
                 div().h_flex().items_center().gap_2().children(
@@ -680,7 +683,7 @@ impl AttributionView {
                     .whitespace_nowrap()
                     .text_ellipsis()
                     .when(height >= MIN_LABEL_HEIGHT, |el| {
-                        el.child(node.label.clone())
+                        el.child(crate::i18n::bucket_label(&node.label))
                     })
                     .into_any_element()
             });
@@ -788,7 +791,7 @@ impl AttributionView {
             div()
                 .text_sm()
                 .text_color(theme::text_muted(cx))
-                .child("Every charge this period reached a business line.")
+                .child(tr!("attribution.all_allocated"))
                 .into_any_element()
         } else {
             div()
@@ -799,7 +802,7 @@ impl AttributionView {
                     let what = item
                         .service
                         .clone()
-                        .unwrap_or_else(|| "untagged charge".to_string());
+                        .unwrap_or_else(|| tr!("attribution.untagged_charge").into());
                     let mut label = format!("{} {}", item.provider, what);
                     if let Some(description) = &item.description {
                         label.push_str(&format!(": {description}"));
@@ -837,10 +840,10 @@ impl AttributionView {
                 div()
                     .font_weight(FontWeight::BOLD)
                     .text_color(theme::text_primary(cx))
-                    .child(format!(
-                        "Unallocated: {} ({:.1}%)",
-                        fmt::amount(card.amount, currency),
-                        card.pct
+                    .child(tr!(
+                        "attribution.unallocated_title",
+                        amount = fmt::amount(card.amount, currency),
+                        pct = format!("{:.1}", card.pct)
                     )),
             )
             .child(body)
@@ -1010,7 +1013,7 @@ impl AttributionView {
         };
 
         if rows.is_empty() {
-            return card.child(theme::caption(cx, "No usage in this period."));
+            return card.child(theme::caption(cx, tr!("attribution.no_usage")));
         }
 
         let (header, other_caption) = if opened.is_some() {
@@ -1023,19 +1026,19 @@ impl AttributionView {
             el.child(theme::caption(
                 cx,
                 if totals.adjustments < 0.0 {
-                    format!(
-                        "Net {} = positive costs {} + credits / adjustments {}. {}",
-                        fmt::amount(totals.net, currency),
-                        fmt::amount(totals.positive, currency),
-                        fmt::amount(totals.adjustments, currency),
-                        if self.breakdown_mode == BreakdownMode::Map {
-                            "Tiles show positive costs; adjustments are listed below."
+                    tr!(
+                        "attribution.net_breakdown",
+                        net = fmt::amount(totals.net, currency),
+                        positive = fmt::amount(totals.positive, currency),
+                        adjustments = fmt::amount(totals.adjustments, currency),
+                        note = if self.breakdown_mode == BreakdownMode::Map {
+                            tr!("attribution.net_note_map")
                         } else {
-                            "Shares use the net total."
+                            tr!("attribution.net_note_table")
                         }
                     )
                 } else {
-                    format!("Net {}", fmt::amount(totals.net, currency))
+                    tr!("attribution.net", net = fmt::amount(totals.net, currency))
                 },
             ))
         });
@@ -1046,7 +1049,7 @@ impl AttributionView {
                     el.child(
                         div()
                             .v_flex()
-                            .child(theme::caption(cx, "Credits / adjustments (share of net)"))
+                            .child(theme::caption(cx, tr!("attribution.adjustments")))
                             .children(rows.iter().filter(|row| row.amount < 0.0).map(|row| {
                                 breakdown_row(cx, &row.label, row.amount, totals.net, currency)
                             })),
@@ -1055,7 +1058,7 @@ impl AttributionView {
                 .when(opened.is_none(), |el| {
                     el.child(theme::caption(
                         cx,
-                        format!("Click a tile to split it by {}.", dim.inner_noun()),
+                        tr!("attribution.click_tile", noun = dim.inner_noun()),
                     ))
                 }),
             BreakdownMode::Table => card
@@ -1065,14 +1068,18 @@ impl AttributionView {
                         .items_center()
                         .pb_2()
                         .child(theme::header_cell(cx, header).flex_1().min_w_0())
-                        .child(theme::header_cell(cx, "AMOUNT").w_24().text_right())
+                        .child(
+                            theme::header_cell(cx, tr!("detail.col_amount"))
+                                .w_24()
+                                .text_right(),
+                        )
                         .child(
                             theme::header_cell(
                                 cx,
                                 if opened.is_some() {
-                                    "SHARE OF NET"
+                                    tr!("attribution.col_share_of_net")
                                 } else {
-                                    "SHARE"
+                                    tr!("models.col_share")
                                 },
                             )
                             .w_32()
@@ -1189,7 +1196,7 @@ impl AttributionView {
             .p_5()
             .v_flex()
             .gap_4()
-            .child(theme::section_title(cx, "Top resources"));
+            .child(theme::section_title(cx, tr!("attribution.top_resources")));
 
         if resources.is_empty() {
             return card.child(theme::caption(
@@ -1204,9 +1211,17 @@ impl AttributionView {
                 .h_flex()
                 .items_center()
                 .pb_2()
-                .child(theme::header_cell(cx, "RESOURCE").flex_1().min_w_0())
-                .child(theme::header_cell(cx, "SERVICE").w_40())
-                .child(theme::header_cell(cx, "AMOUNT").w_24().text_right()),
+                .child(
+                    theme::header_cell(cx, tr!("attribution.col_resource"))
+                        .flex_1()
+                        .min_w_0(),
+                )
+                .child(theme::header_cell(cx, tr!("overview.col_service")).w_40())
+                .child(
+                    theme::header_cell(cx, tr!("detail.col_amount"))
+                        .w_24()
+                        .text_right(),
+                ),
         )
         .child(div().v_flex().children(resources.iter().map(|resource| {
             let name = resource
@@ -1258,16 +1273,18 @@ impl AttributionView {
                 div()
                     .font_weight(FontWeight::BOLD)
                     .text_color(theme::text_primary(cx))
-                    .child("Nothing to attribute yet"),
+                    .child(tr!("attribution.empty")),
             )
-            .child(div().text_sm().text_color(theme::text_muted(cx)).child(
-                "The source → service → business line flow appears once this \
-                 period has charges. Fetch or import a bill from Accounts.",
-            ))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme::text_muted(cx))
+                    .child(tr!("attribution.empty_hint")),
+            )
             .child(
                 div().pt_1().flex().child(
                     Button::new("attribution-open-accounts")
-                        .label("Open Accounts")
+                        .label(tr!("models.open_accounts"))
                         .small()
                         .custom(theme::outline_variant(cx))
                         .card_outline(cx)
@@ -1334,7 +1351,7 @@ impl AttributionView {
             .child(
                 div().h_flex().child(
                     Button::new("retry-load")
-                        .label("Retry")
+                        .label(tr!("common.retry"))
                         .custom(theme::outline_variant(cx))
                         .card_outline(cx)
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -1595,7 +1612,7 @@ fn breakdown_row(cx: &App, label: &str, amount: f64, total: f64, currency: &str)
                 .tooltip(move |window, cx| {
                     gpui_kit::component::tooltip::Tooltip::new(full_label.clone()).build(window, cx)
                 })
-                .child(label.to_string()),
+                .child(crate::i18n::bucket_label(label)),
         )
         .child(
             div()

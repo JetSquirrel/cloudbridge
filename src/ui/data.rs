@@ -17,6 +17,7 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
+use gpui_kit::SharedString;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -66,11 +67,11 @@ pub enum Range {
 impl Range {
     pub const ALL: [Range; 3] = [Range::Mtd, Range::Days30, Range::Months12];
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> SharedString {
         match self {
-            Range::Mtd => "MTD",
-            Range::Days30 => "30d",
-            Range::Months12 => "12m",
+            Range::Mtd => tr!("range.mtd"),
+            Range::Days30 => tr!("range.30d"),
+            Range::Months12 => tr!("range.12m"),
         }
     }
 
@@ -123,9 +124,13 @@ impl Range {
     /// date"; the view appends the reporting currency.
     pub fn header_caption(self, now: DateTime<Utc>) -> String {
         match self {
-            Range::Mtd => format!("{}, month to date", now.format("%B %Y")),
-            Range::Days30 => "Last 30 days".to_string(),
-            Range::Months12 => "Last 12 months".to_string(),
+            Range::Mtd => tr!(
+                "range.mtd_caption",
+                month = now.format(&rust_i18n::t!("range.month_format"))
+            )
+            .into(),
+            Range::Days30 => tr!("overview.range_30d").into(),
+            Range::Months12 => tr!("overview.range_12m").into(),
         }
     }
 }
@@ -246,12 +251,12 @@ pub enum MovementBadge {
 }
 
 impl MovementBadge {
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> SharedString {
         match self {
-            Self::Appeared => "Appeared",
-            Self::Vanished => "Vanished",
-            Self::Grown => "Grown",
-            Self::Shrunk => "Shrunk",
+            Self::Appeared => tr!("movement.appeared"),
+            Self::Vanished => tr!("movement.vanished"),
+            Self::Grown => tr!("movement.grown"),
+            Self::Shrunk => tr!("movement.shrunk"),
         }
     }
 }
@@ -334,14 +339,14 @@ pub struct OverviewData {
     pub range: Range,
     pub stats: OverviewStats,
     /// Card 1 label above the net number ("MONTH TO DATE", …).
-    pub spend_label: &'static str,
+    pub spend_label: SharedString,
     /// Text after card 1's change percent ("vs same day last month", …).
-    pub change_caption: &'static str,
+    pub change_caption: SharedString,
     /// Card 2: the month-end forecast for MTD, the window's mean usage for
     /// the rolling ranges.
-    pub card2_label: &'static str,
+    pub card2_label: SharedString,
     pub card2_value: f64,
-    pub card2_caption: &'static str,
+    pub card2_caption: SharedString,
     /// The optimistic/pessimistic band around card 2's forecast; only a
     /// forecast range (MTD) carries one — a mean has no confidence band.
     pub forecast_band: Option<ForecastBand>,
@@ -356,13 +361,13 @@ pub struct OverviewData {
     /// The header caption's range part; the view appends the currency.
     pub window_caption: String,
     /// Movers table delta column header ("VS LAST MONTH", …).
-    pub movers_delta_header: &'static str,
+    pub movers_delta_header: SharedString,
     /// Movers card title.
-    pub movers_title: &'static str,
+    pub movers_title: SharedString,
     /// Movers amount column header ("MTD", "30D", "12M").
     pub movers_amount_header: String,
-    pub chart_title: &'static str,
-    pub chart_caption: &'static str,
+    pub chart_title: SharedString,
+    pub chart_caption: SharedString,
     pub chart: SpendChart,
     pub business_lines: Vec<BusinessLineRow>,
     pub movers: Vec<MoverRow>,
@@ -395,11 +400,6 @@ impl AccountCounts {
         Ok(counts)
     }
 }
-
-/// Chart title and caption of the daily ranges — MTD and 30d both plot
-/// daily points against the 7-day trailing mean.
-const DAILY_CHART_TITLE: &str = "Daily spend, all sources";
-const DAILY_CHART_CAPTION: &str = "Actual against the 7-day trailing mean.";
 
 /// Load the Overview page's data for a range. Blocking; wrap in
 /// `smol::unblock`.
@@ -562,20 +562,20 @@ fn load_overview_mtd(now: DateTime<Utc>) -> Result<OverviewData> {
             critical_alerts: critical,
             warning_alerts: warning,
         },
-        spend_label: "MONTH TO DATE",
-        change_caption: "vs same day last month",
-        card2_label: "MONTH-END FORECAST",
+        spend_label: tr!("overview.card_mtd"),
+        change_caption: tr!("overview.vs_same_day"),
+        card2_label: tr!("overview.card_forecast"),
         card2_value: forecast.forecast,
-        card2_caption: "MTD plus the daily run rate for the rest of the month",
+        card2_caption: tr!("overview.card_forecast_caption"),
         forecast_band,
         chart_benchmark,
         data_quality,
         window_caption: Range::Mtd.header_caption(now),
-        movers_delta_header: "VS LAST MONTH",
-        movers_title: "Biggest movers",
+        movers_delta_header: tr!("overview.vs_last_month"),
+        movers_title: tr!("overview.biggest_movers"),
         movers_amount_header: Range::Mtd.label().to_uppercase(),
-        chart_title: DAILY_CHART_TITLE,
-        chart_caption: DAILY_CHART_CAPTION,
+        chart_title: tr!("overview.daily_chart"),
+        chart_caption: tr!("overview.daily_chart_caption"),
         chart: SpendChart { actual, baseline },
         business_lines,
         movers,
@@ -610,29 +610,29 @@ fn load_overview_window(range: Range, now: DateTime<Utc>) -> Result<OverviewData
         card2,
     ) = match range {
         Range::Days30 => (
-            "LAST 30 DAYS",
-            "vs prior 30 days",
-            "VS PRIOR 30D",
-            DAILY_CHART_TITLE,
-            DAILY_CHART_CAPTION,
+            tr!("overview.card_30d"),
+            tr!("overview.vs_prior_30d"),
+            tr!("overview.col_vs_prior_30d"),
+            tr!("overview.daily_chart"),
+            tr!("overview.daily_chart_caption"),
             daily_chart(since, until)?,
             (
-                "DAILY AVERAGE",
+                tr!("overview.card_daily_avg"),
                 usage / 30.0,
-                "Mean daily usage over the last 30 days",
+                tr!("overview.card_daily_avg_caption"),
             ),
         ),
         Range::Months12 => (
-            "LAST 12 MONTHS",
-            "vs prior 12 months",
-            "VS PRIOR 12M",
-            "Monthly spend, all sources",
-            "One point per month of gross usage.",
+            tr!("overview.card_12m"),
+            tr!("overview.vs_prior_12m"),
+            tr!("overview.col_vs_prior_12m"),
+            tr!("overview.monthly_chart"),
+            tr!("overview.monthly_chart_caption"),
             monthly_chart(now)?,
             (
-                "MONTHLY AVERAGE",
+                tr!("overview.card_monthly_avg"),
                 usage / 12.0,
-                "Mean monthly usage over the last 12 months",
+                tr!("overview.card_monthly_avg_caption"),
             ),
         ),
         Range::Mtd => unreachable!("MTD loads through load_overview_mtd"),
@@ -673,7 +673,7 @@ fn load_overview_window(range: Range, now: DateTime<Utc>) -> Result<OverviewData
         data_quality,
         window_caption: range.header_caption(now),
         movers_delta_header,
-        movers_title: "Biggest movers",
+        movers_title: tr!("overview.biggest_movers"),
         movers_amount_header: range.label().to_uppercase(),
         chart_title,
         chart_caption,
@@ -1092,12 +1092,12 @@ pub enum AccountState {
 }
 
 impl AccountState {
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> SharedString {
         match self {
-            Self::Healthy => "Healthy",
-            Self::Anomaly => "Anomaly",
-            Self::UntaggedSpend => "Unallocated spend",
-            Self::LowBalance => "Low balance",
+            Self::Healthy => tr!("account_state.healthy"),
+            Self::Anomaly => tr!("account_state.anomaly"),
+            Self::UntaggedSpend => tr!("account_state.untagged"),
+            Self::LowBalance => tr!("account_state.low_balance"),
         }
     }
 }
@@ -1110,6 +1110,8 @@ pub struct AccountRowData {
     pub provider: String,
     /// What the source reports, e.g. "Usage + cost" or "Balance only".
     pub source_kind: String,
+    /// A balance-reporting source: its number is the balance, not MTD.
+    pub is_snapshot: bool,
     /// Month-to-date charges, in the reporting currency.
     pub mtd: f64,
     /// Latest balance and its own currency, for balance-reporting sources.
@@ -1212,6 +1214,7 @@ pub fn load_accounts() -> Result<AccountsData> {
             name: account.name.clone(),
             provider: descriptor.display_name.to_string(),
             source_kind: source_kind(descriptor),
+            is_snapshot: descriptor.is_snapshot(),
             mtd,
             balance: balance.map(|b| (b.balance, b.currency)),
             last_sync,
@@ -1276,11 +1279,11 @@ fn source_kind(descriptor: &registry::SourceDescriptor) -> String {
         descriptor.fetches_from_api(),
         descriptor.imports_bill_file(),
     ) {
-        (true, _, _) => "Balance only".to_string(),
-        (false, true, true) => "Cost API + bill import".to_string(),
-        (false, true, false) => "Cost API".to_string(),
-        (false, false, true) => "Bill import".to_string(),
-        (false, false, false) => "None".to_string(),
+        (true, _, _) => tr!("source_kind.balance_only").into(),
+        (false, true, true) => tr!("source_kind.api_and_import").into(),
+        (false, true, false) => tr!("source_kind.api").into(),
+        (false, false, true) => tr!("source_kind.import").into(),
+        (false, false, false) => tr!("source_kind.none").into(),
     }
 }
 
@@ -1426,12 +1429,16 @@ pub fn load_attribution() -> Result<AttributionData> {
     let period = BillingPeriod::containing(Utc::now()).label();
     let currency = reporting_currency();
 
-    let path = ["Source", "Service", "Business line"]
-        .into_iter()
-        .map(|label| PathStep {
-            label: label.to_string(),
-        })
-        .collect();
+    let path = [
+        tr!("attribution.step_source"),
+        tr!("attribution.step_service"),
+        tr!("attribution.step_business_line"),
+    ]
+    .into_iter()
+    .map(|label| PathStep {
+        label: label.to_string(),
+    })
+    .collect();
 
     // (provider, service) → tag rows, assembled link by link so every
     // column sums to the same usage total. One period-wide tag query
@@ -1598,7 +1605,7 @@ pub fn load_attribution() -> Result<AttributionData> {
                 0.0
             },
             largest,
-            action: "Write an allocation rule".to_string(),
+            action: tr!("alerts.action_write_rule").into(),
         },
     })
 }
@@ -1620,9 +1627,6 @@ pub struct AlertsData {
     /// first.
     pub resolved_this_month: Vec<AlertView>,
 }
-
-/// Heading of the resolved-alerts section under the open ones.
-pub const RESOLVED_SECTION_TITLE: &str = "RESOLVED THIS MONTH";
 
 /// Load the Alerts page's data. Blocking; wrap in `smol::unblock`.
 ///
@@ -1821,7 +1825,7 @@ pub struct AccountDetailData {
     /// Net charged: usage plus (negative) credits.
     pub spend: f64,
     pub change_pct: Option<f64>,
-    pub change_caption: &'static str,
+    pub change_caption: SharedString,
     /// No baseline series: a single account's 7-day trailing mean is
     /// noisier than it is informative.
     pub chart: SpendChart,
@@ -1863,7 +1867,7 @@ pub fn load_account_detail(account_id: &str, range: Range) -> Result<AccountDeta
                 .sum();
             (
                 (prior >= fmt::DUST_THRESHOLD).then(|| (usage - prior) / prior * 100.0),
-                "vs same day last month",
+                tr!("overview.vs_same_day"),
             )
         }
         _ => {
@@ -1874,8 +1878,8 @@ pub fn load_account_detail(account_id: &str, range: Range) -> Result<AccountDeta
                 prior_until,
             )?;
             let caption = match range {
-                Range::Days30 => "vs prior 30 days",
-                _ => "vs prior 12 months",
+                Range::Days30 => tr!("overview.vs_prior_30d"),
+                _ => tr!("overview.vs_prior_12m"),
             };
             (
                 (prior >= fmt::DUST_THRESHOLD).then(|| (usage - prior) / prior * 100.0),
@@ -1960,6 +1964,48 @@ fn account_monthly_chart(
 
 /// One starter query of the Query page's template picker. The SQL is what
 /// runs; the category, title, and description only organize the picker.
+/// A built-in template's category, title or description as shown. The
+/// English text is what [`QUERY_TEMPLATES`] holds and what a template is
+/// found by; this translates it for display only.
+pub fn template_text(text: &'static str) -> SharedString {
+    let key = match text {
+        "Spend overview" => "query_tpl.cat_spend",
+        "Forecast & trends" => "query_tpl.cat_forecast",
+        "Composition" => "query_tpl.cat_composition",
+        "Data health" => "query_tpl.cat_health",
+        "Monthly spend" => "query_tpl.t_monthly",
+        "Spend by provider × month" => "query_tpl.t_provider_month",
+        "Daily spend, last 30 days" => "query_tpl.t_daily_30",
+        "Top 20 services this month" => "query_tpl.t_top_services",
+        "Spend by business line" => "query_tpl.t_business_line",
+        "Unallocated spend by service" => "query_tpl.t_unallocated",
+        "Month-end forecast" => "query_tpl.t_forecast",
+        "Month over month by service" => "query_tpl.t_mom",
+        "Spend by region this month" => "query_tpl.t_region",
+        "Spend by service category this month" => "query_tpl.t_category",
+        "Top 20 resources this month" => "query_tpl.t_top_resources",
+        "Discount vs list price" => "query_tpl.t_discount",
+        "Recent ingest batches" => "query_tpl.t_ingest",
+        "Latest balance snapshots" => "query_tpl.t_balances",
+        "Total billed spend per billing month, in reporting currency." => "query_tpl.d_monthly",
+        "How each month's spend splits across providers, in reporting currency." => "query_tpl.d_provider_month",
+        "Day-by-day spend over the last 30 days, in reporting currency." => "query_tpl.d_daily_30",
+        "Which services cost the most this billing month, in reporting currency." => "query_tpl.d_top_services",
+        "How spend splits across business lines, in reporting currency; charges without the business_line tag count as Unallocated." => "query_tpl.d_business_line",
+        "Which services carry no business_line tag, and what they cost, in reporting currency." => "query_tpl.d_unallocated",
+        "This month's spend to date, the daily run rate since the first charge, and the projected month-end total, in reporting currency." => "query_tpl.d_forecast",
+        "This month vs last month per service, in reporting currency, biggest movers first." => "query_tpl.d_mom",
+        "How this billing month's spend splits across regions, in reporting currency; charges with no region count as Other." => "query_tpl.d_region",
+        "How this billing month's spend splits across FOCUS service categories — the same categories on every cloud — in reporting currency; charges no mapping places count as Uncategorized." => "query_tpl.d_category",
+        "The individual resources costing the most this billing month, in reporting currency." => "query_tpl.d_top_resources",
+        "List-price spend vs actually billed spend per service this month, in reporting currency — how much discounts and credits shave off." => "query_tpl.d_discount",
+        "The 20 most recent ingest runs, with their channel, status, and row count." => "query_tpl.d_ingest",
+        "Each account's most recently observed balance, one row per currency at that instant." => "query_tpl.d_balances",
+        other => return SharedString::from(other),
+    };
+    tr!(key)
+}
+
 pub struct QueryTemplate {
     pub category: &'static str,
     pub title: &'static str,

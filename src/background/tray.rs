@@ -56,10 +56,12 @@ pub(super) fn install(status: Entity<Status>, cx: &mut App) -> bool {
     }
     let menu = Menu::new();
     let items = [
-        MenuItem::with_id(MENU_OPEN, "Open CloudBridge", true, None),
-        MenuItem::with_id(MENU_REFRESH, "Refresh", true, None),
+        // Built once, in the language of the moment; a language switch
+        // reaches the menu the next time the app starts.
+        MenuItem::with_id(MENU_OPEN, tr!("panel.open"), true, None),
+        MenuItem::with_id(MENU_REFRESH, tr!("common.refresh"), true, None),
     ];
-    let quit = MenuItem::with_id(MENU_QUIT, "Quit CloudBridge", true, None);
+    let quit = MenuItem::with_id(MENU_QUIT, tr!("tray.quit"), true, None);
     if let Err(e) = menu.append_items(&[
         &items[0],
         &items[1],

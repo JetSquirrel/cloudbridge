@@ -558,13 +558,13 @@ impl CloudBridgeApp {
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child("CloudBridge"),
                             )
-                            .child(theme::caption(cx, "Cost workspace")),
+                            .child(theme::caption(cx, tr!("app.tagline"))),
                     ),
             )
             // The palette's pointer entry; its tooltip teaches the shortcut.
             .child(
                 Button::new("open-palette")
-                    .label("Search workspace")
+                    .label(tr!("app.search"))
                     .icon(IconName::Search)
                     .custom(theme::outline_variant(cx))
                     .border_1()
@@ -573,11 +573,7 @@ impl CloudBridgeApp {
                     .w_full()
                     .justify_start()
                     .text_color(theme::text_muted(cx))
-                    .tooltip_with_action(
-                        "Search pages, accounts and commands",
-                        &OpenCommandPalette,
-                        None,
-                    )
+                    .tooltip_with_action(tr!("app.search_tooltip"), &OpenCommandPalette, None)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.open_palette(window, cx);
                     })),
@@ -590,10 +586,10 @@ impl CloudBridgeApp {
                     .text_xs()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme::text_muted(cx))
-                    .child("WORKSPACE"),
+                    .child(tr!("nav.workspace")),
             )
             .child(self.nav_item(
-                "Overview",
+                tr!("nav.overview"),
                 IconName::LayoutDashboard,
                 CurrentView::Overview,
                 current == CurrentView::Overview,
@@ -601,7 +597,7 @@ impl CloudBridgeApp {
                 cx,
             ))
             .child(self.nav_item(
-                "Alerts",
+                tr!("nav.alerts"),
                 IconName::Bell,
                 CurrentView::Alerts,
                 current == CurrentView::Alerts,
@@ -609,7 +605,7 @@ impl CloudBridgeApp {
                 cx,
             ))
             .child(self.nav_item(
-                "Attribution",
+                tr!("nav.attribution"),
                 IconName::ChartPie,
                 CurrentView::Attribution,
                 current == CurrentView::Attribution,
@@ -619,7 +615,7 @@ impl CloudBridgeApp {
             // Unlike Query, Rules and Settings below, Models rides on the
             // demo ledger too, so the wasm demo shows it.
             .child(self.nav_item(
-                "Models",
+                tr!("nav.models"),
                 IconName::Cpu,
                 CurrentView::Models,
                 current == CurrentView::Models,
@@ -628,7 +624,7 @@ impl CloudBridgeApp {
             ))
             // Insights too: the demo seeds a small inventory beside its bill.
             .child(self.nav_item(
-                "Insights",
+                tr!("nav.insights"),
                 IconName::Eye,
                 CurrentView::Insights,
                 current == CurrentView::Insights,
@@ -643,7 +639,7 @@ impl CloudBridgeApp {
                     .text_xs()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme::text_muted(cx))
-                    .child("MANAGE"),
+                    .child(tr!("nav.manage")),
             )
             // Query, Rules and Settings are the desktop's own: a query
             // console needs an engine underneath it, and neither an
@@ -652,7 +648,7 @@ impl CloudBridgeApp {
             // pages whose figures it can actually stand behind.
             .when(cfg!(not(target_family = "wasm")), |el| {
                 el.child(self.nav_item(
-                    "Query",
+                    tr!("nav.query"),
                     IconName::Search,
                     CurrentView::Query,
                     current == CurrentView::Query,
@@ -661,7 +657,7 @@ impl CloudBridgeApp {
                 ))
             })
             .child(self.nav_item(
-                "Accounts",
+                tr!("nav.accounts"),
                 IconName::Building2,
                 CurrentView::Accounts,
                 // The Account detail page is a drill-down of Accounts;
@@ -672,7 +668,7 @@ impl CloudBridgeApp {
             ))
             .when(cfg!(not(target_family = "wasm")), |el| {
                 el.child(self.nav_item(
-                    "Rules",
+                    tr!("nav.rules"),
                     IconName::SquareTerminal,
                     CurrentView::Rules,
                     current == CurrentView::Rules,
@@ -683,7 +679,7 @@ impl CloudBridgeApp {
             .child(div().flex_1())
             .when(cfg!(not(target_family = "wasm")), |el| {
                 el.child(self.nav_item(
-                    "Settings",
+                    tr!("nav.settings"),
                     IconName::Settings,
                     CurrentView::Settings,
                     current == CurrentView::Settings,
@@ -706,9 +702,22 @@ impl CloudBridgeApp {
                         div()
                             .text_xs()
                             .text_color(theme::text_muted(cx))
-                            .child("Local ledger"),
+                            .child(tr!("app.local_ledger")),
                     )
                     .child(div().flex_1())
+                    // The demo has no Settings page, so its language
+                    // switch lives here: one button naming the next
+                    // language in that language.
+                    .when(cfg!(target_family = "wasm"), |el| {
+                        let next = crate::i18n::next_language();
+                        el.child(
+                            Button::new("switch-language")
+                                .label(next.native_name())
+                                .ghost()
+                                .xsmall()
+                                .on_click(move |_, _, cx| crate::i18n::set_language(next, cx)),
+                        )
+                    })
                     .child(
                         div()
                             .text_xs()
@@ -720,7 +729,7 @@ impl CloudBridgeApp {
 
     fn nav_item(
         &self,
-        label: &'static str,
+        label: SharedString,
         icon: IconName,
         view: CurrentView,
         is_active: bool,
@@ -734,7 +743,7 @@ impl CloudBridgeApp {
         };
 
         let mut item = div()
-            .id(SharedString::from(label))
+            .id(SharedString::from(format!("nav-{}", view as u8)))
             .h_flex()
             .items_center()
             .gap_3()
@@ -787,15 +796,15 @@ impl CloudBridgeApp {
         let (text, dot_color) = match sync {
             Some(_) if failing > 0 => (
                 match failing {
-                    1 => "1 account is failing to refresh. See Accounts.".to_string(),
-                    n => format!("{n} accounts are failing to refresh. See Accounts."),
+                    1 => tr!("status.failing_one"),
+                    n => tr!("status.failing_many", n = n),
                 },
                 theme::danger(cx),
             ),
             Some(sync) => {
                 let synced = match sync.last_synced_at {
-                    Some(at) => format!("Synced {}", fmt::relative_time(at)),
-                    None => "Never synced".to_string(),
+                    Some(at) => tr!("status.synced", when = fmt::relative_time(at)),
+                    None => tr!("status.never_synced"),
                 };
                 // sync_detail carries "N sources, current for …".
                 // The dot follows the same due-now cutoff as that line.
@@ -804,9 +813,12 @@ impl CloudBridgeApp {
                     Some(_) => theme::warning_text(cx),
                     None => theme::grey(cx),
                 };
-                (format!("{synced}. {}", sync_detail(sync)), dot_color)
+                (
+                    tr!("status.line", synced = synced, detail = sync_detail(sync)),
+                    dot_color,
+                )
             }
-            None => ("Syncing…".to_string(), theme::grey(cx)),
+            None => (tr!("status.syncing"), theme::grey(cx)),
         };
 
         div()
@@ -844,7 +856,7 @@ impl CloudBridgeApp {
                 .bg(theme::app_bg(cx))
                 .text_sm()
                 .text_color(theme::text_muted(cx))
-                .child("Opening the ledger…");
+                .child(tr!("app.opening_ledger"));
         }
         match self.current_view {
             CurrentView::Overview => div().size_full().child(self.overview_view.clone()),
@@ -930,35 +942,34 @@ impl Render for CloudBridgeApp {
 /// Refresh would fetch anything. Refresh — the button's, and the background
 /// schedule's every 15 minutes — skips a period fetched within the refresh
 /// interval, so this says how long the data counts as current.
-fn sync_detail(sync: &SyncStatus) -> String {
+fn sync_detail(sync: &SyncStatus) -> SharedString {
     if sync.source_count == 0 {
-        return "No sources configured".to_string();
+        return tr!("status.no_sources");
     }
 
-    let sources = format!(
-        "{} source{}",
-        sync.source_count,
-        if sync.source_count == 1 { "" } else { "s" }
-    );
+    let sources = match sync.source_count {
+        1 => tr!("status.sources_one"),
+        n => tr!("status.sources_many", n = n),
+    };
 
     match sync.next_fetch_at {
-        None => format!("{}, not fetched yet", sources),
+        None => tr!("status.not_fetched", sources = sources),
         Some(at) => {
             let remaining = at - Utc::now();
             if remaining.num_seconds() <= 0 {
-                format!("{}, due for a refresh", sources)
+                tr!("status.due", sources = sources)
             } else if remaining.num_hours() >= 1 {
-                format!(
-                    "{}, current for {}h {}m",
-                    sources,
-                    remaining.num_hours(),
-                    remaining.num_minutes() % 60
+                tr!(
+                    "status.current_hours",
+                    sources = sources,
+                    h = remaining.num_hours(),
+                    m = remaining.num_minutes() % 60
                 )
             } else {
-                format!(
-                    "{}, current for {} min",
-                    sources,
-                    remaining.num_minutes().max(1)
+                tr!(
+                    "status.current_minutes",
+                    sources = sources,
+                    m = remaining.num_minutes().max(1)
                 )
             }
         }
