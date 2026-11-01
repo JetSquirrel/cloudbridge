@@ -8,7 +8,7 @@ use anyhow::Result;
 use chrono::{DateTime, NaiveDate, Utc};
 use duckdb::arrow::datatypes::DataType;
 use duckdb::types::{TimeUnit, Value, ValueRef};
-use duckdb::{params, AccessMode, Config, Connection};
+use duckdb::{params, Connection};
 
 use super::schema::{NORMALIZED_VIEW, TIMESTAMP_FORMAT};
 use super::{with_connection_ref, Channel, PeriodKey};
@@ -2147,15 +2147,25 @@ const MAX_CELLS: usize = 2_000_000;
 
 /// Run a read-only query against the ledger and render the result.
 ///
-/// Unlike every other read in this file, this does not take the shared
+/// Unlike every other read in this file, this does not hold the shared
 /// connection: an ad-hoc query can run for seconds, and holding the global
-/// lock would stall every page behind it. The connection is opened
-/// read-only, so a statement that slips past the guard still cannot write.
+/// lock would stall every page behind it. It runs on a clone of it, in a
+/// read-only transaction, so a statement that slips past the guard still
+/// cannot write.
+///
+/// Opening the file a second time is not an option: Windows refuses it while
+/// the app's own connection has the file open, whatever the access mode.
 pub fn run_adhoc(sql: &str) -> Result<AdhocResult> {
-    let path = crate::config::get_ledger_database_path()?;
-    let conn =
-        Connection::open_with_flags(path, Config::default().access_mode(AccessMode::ReadOnly)?)?;
+    let conn = with_connection_ref(read_only_clone)?;
     run_adhoc_of(&conn, sql)
+}
+
+/// A second connection to the same database, inside a read-only transaction
+/// that ends with it.
+fn read_only_clone(conn: &Connection) -> Result<Connection> {
+    let clone = conn.try_clone()?;
+    clone.execute_batch("BEGIN TRANSACTION READ ONLY")?;
+    Ok(clone)
 }
 
 fn run_adhoc_of(conn: &Connection, sql: &str) -> Result<AdhocResult> {
@@ -3662,6 +3672,35 @@ mod tests {
         let exact = run_adhoc_within(&conn, "SELECT * FROM range(3)", 3, usize::MAX / 2).unwrap();
         assert_eq!(exact.rows.len(), 3);
         assert!(!exact.truncated);
+    }
+
+    /// Against a file, because that is what Windows locked: the clone has to
+    /// read while the connection that opened the file still holds it.
+    #[test]
+    fn an_adhoc_clone_reads_an_open_file_and_cannot_write() {
+        let dir = std::env::temp_dir().join(format!("cloudbridge-adhoc-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ledger.duckdb");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch("CREATE TABLE t (v INTEGER); INSERT INTO t VALUES (1)")
+                .unwrap();
+
+            let clone = read_only_clone(&conn).unwrap();
+            let result = run_adhoc_of(&clone, "SELECT v FROM t").unwrap();
+            assert_eq!(result.rows.len(), 1);
+            // Past the keyword guard, the transaction itself refuses.
+            assert!(clone.execute_batch("INSERT INTO t VALUES (2)").is_err());
+            drop(clone);
+
+            // The writer is unaffected, and nothing was added.
+            conn.execute_batch("INSERT INTO t VALUES (3)").unwrap();
+            let count: i64 = conn
+                .query_row("SELECT count(*) FROM t WHERE v = 2", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(count, 0);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
