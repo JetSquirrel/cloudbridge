@@ -1604,10 +1604,29 @@ pub fn daily_model_tokens(
 /// only path that writes such a row is the desktop's bill-file importer. No
 /// row the browser can be given would raise it.
 pub fn data_quality_issues(billing_period: &str, tag_key: &str) -> Result<Vec<DataQualityIssue>> {
+    data_quality_issues_in(billing_period, tag_key, None)
+}
+
+/// The same findings over one account's charges alone, with shares of that
+/// account's usage.
+pub fn account_data_quality_issues(
+    billing_period: &str,
+    tag_key: &str,
+    account_id: &str,
+) -> Result<Vec<DataQualityIssue>> {
+    data_quality_issues_in(billing_period, tag_key, Some(account_id))
+}
+
+fn data_quality_issues_in(
+    billing_period: &str,
+    tag_key: &str,
+    account_id: Option<&str>,
+) -> Result<Vec<DataQualityIssue>> {
     read(|all| {
         let rows: Vec<&NormalizedRow> = all
             .iter()
             .filter(|row| row.billing_period == billing_period)
+            .filter(|row| account_id.is_none_or(|account| row.account_id == account))
             .collect();
 
         // Charges no rate covers, against the period's row count.

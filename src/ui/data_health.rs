@@ -35,8 +35,6 @@ pub(super) struct HealthCard {
     expanded: bool,
     compact: bool,
     on_toggle: Option<ClickHandler>,
-    /// What the checks cover, where a page could suggest less.
-    scope: Option<SharedString>,
     on_dismiss: Option<ClickHandler>,
 }
 
@@ -49,7 +47,6 @@ impl HealthCard {
             expanded: false,
             compact: false,
             on_toggle: None,
-            scope: None,
             on_dismiss: None,
         }
     }
@@ -71,11 +68,6 @@ impl HealthCard {
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_toggle = Some(Box::new(handler));
-        self
-    }
-
-    pub(super) fn scope(mut self, scope: SharedString) -> Self {
-        self.scope = Some(scope);
         self
     }
 
@@ -106,10 +98,6 @@ impl RenderOnce for HealthCard {
             0 => tr!("health.none", period = period),
             1 => tr!("health.one", period = period),
             n => tr!("health.many", n = n, period = period),
-        };
-        let summary = match &self.scope {
-            Some(scope) => SharedString::from(format!("{summary} {scope}")),
-            None => summary,
         };
 
         let actions = div()

@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names in the accessibility tree.
 
 ### Fixed
+- **Account detail listed other accounts' data-health findings.** It now
+  reads only that account's charges, with shares of its usage, and Dismiss
+  there covers only that account.
 - **Models compared part of a month with all of the last.** Early in a month
   every model read as a large fall. Month to date now compares with the same
   days of last month, as the Overview does.

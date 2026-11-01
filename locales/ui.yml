@@ -1682,9 +1682,6 @@ health:
   many:
     en: "%{n} findings in %{period}"
     zh-CN: "%{period}发现 %{n} 个问题"
-  all_accounts:
-    en: "Covers all accounts, not only this one."
-    zh-CN: "涵盖所有账户，不仅限于此账户。"
   collapse:
     en: "Collapse"
     zh-CN: "收起"
