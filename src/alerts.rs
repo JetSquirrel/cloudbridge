@@ -9,7 +9,9 @@
 //! Evaluation is deliberately re-derivable: every run re-reads the ledger,
 //! decides whether each condition holds right now, and fires only when no
 //! open or still-snoozed event carries the same `dedupe_key`. A condition
-//! that holds for a week produces one event a day, not one per refresh.
+//! that holds for a week produces one event a day, not one per refresh. A low
+//! balance is the exception: it stays one event, kept up to date, until it
+//! recovers or is dismissed.
 
 use anyhow::Result;
 use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
@@ -570,7 +572,6 @@ fn evaluate_balance_floors(
     now: DateTime<Utc>,
 ) -> Result<usize> {
     let default_floor = config_f64(rule, "floor", 200.0);
-    let today = now.date_naive();
 
     let mut created = 0;
     for account in db::get_all_accounts_of(app)? {
@@ -595,8 +596,34 @@ fn evaluate_balance_floors(
             continue;
         }
 
-        let dedupe_key = format!("balance|{}|{}|{}", provider, account.id, today);
-        if !should_fire(app, &dedupe_key, now)? {
+        let dedupe_key = format!("balance|{}|{}", provider, account.id);
+        // Events from before this key had no date in it carry it as a suffix.
+        let same_balance = |event: &AlertEvent| {
+            event.dedupe_key == dedupe_key
+                || event.dedupe_key.starts_with(&format!("{dedupe_key}|"))
+        };
+        let mut live: Vec<AlertEvent> =
+            db::get_alert_events_of(app, &[AlertStatus::Open, AlertStatus::Snoozed])?
+                .into_iter()
+                .filter(|event| same_balance(event))
+                .collect();
+        live.sort_by_key(|event| std::cmp::Reverse(event.created_at));
+        let existing = (!live.is_empty()).then(|| live.remove(0));
+        // Older cards for this balance say nothing the newest does not.
+        for older in live {
+            db::set_alert_event_status_to(app, &older.id, AlertStatus::Resolved, None)?;
+        }
+        // Dismissing quiets it for the day; it comes back if it still holds.
+        if existing.is_none()
+            && db::get_alert_events_of(app, &[AlertStatus::Dismissed])?
+                .iter()
+                .any(|event| {
+                    same_balance(event)
+                        && event
+                            .resolved_at
+                            .is_some_and(|at| at.date_naive() == now.date_naive())
+                })
+        {
             continue;
         }
 
@@ -615,7 +642,7 @@ fn evaluate_balance_floors(
             _ => String::new(),
         };
 
-        let event = AlertEvent {
+        let mut event = AlertEvent {
             id: uuid::Uuid::new_v4().to_string(),
             rule_id: rule.id.clone(),
             severity: Severity::Warning,
@@ -650,8 +677,28 @@ fn evaluate_balance_floors(
             resolved_at: None,
         };
 
-        fire(app, rule, event, now)?;
-        created += 1;
+        match existing {
+            // The same card with today's figures. It counts as new, and so
+            // notifies, only when a snooze has run out.
+            Some(existing) => {
+                let woke = existing.status == AlertStatus::Snoozed
+                    && existing.snoozed_until.is_none_or(|until| until <= now);
+                event.id = existing.id;
+                event.created_at = existing.created_at;
+                if !woke {
+                    event.status = existing.status;
+                    event.snoozed_until = existing.snoozed_until;
+                }
+                db::insert_alert_event_to(app, &event)?;
+                if woke {
+                    created += 1;
+                }
+            }
+            None => {
+                fire(app, rule, event, now)?;
+                created += 1;
+            }
+        }
     }
 
     Ok(created)
@@ -1789,6 +1836,83 @@ mod tests {
         assert!(event.body.contains("¥30.00"), "{}", event.body);
         assert!(event.body.contains("¥200.00 floor"), "{}", event.body);
         assert!(event.body.contains("roughly 3 days"), "{}", event.body);
+    }
+
+    fn balance_events(app: &Connection) -> Vec<AlertEvent> {
+        db::get_alert_events_of(app, &[AlertStatus::Open, AlertStatus::Snoozed]).unwrap()
+    }
+
+    #[test]
+    fn a_low_balance_stays_one_card_with_the_latest_figures() {
+        let (app, mut ledger) = stores();
+        seed_default_rules_on(&app).unwrap();
+        add_deepseek_account(&app);
+        snapshot(&mut ledger, 1, 30.0);
+
+        let now = Utc::now();
+        assert_eq!(evaluate_with(&app, &ledger, now).unwrap(), 1);
+        let first = balance_events(&app);
+        assert_eq!(first.len(), 1);
+
+        // Days later, lower: no new card, and no new notification.
+        snapshot(&mut ledger, 0, 5.0);
+        let later = now + Duration::days(3);
+        assert_eq!(evaluate_with(&app, &ledger, later).unwrap(), 0);
+        let events = balance_events(&app);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].id, first[0].id);
+        assert_eq!(events[0].created_at, first[0].created_at);
+        assert!(events[0].body.contains("5.00"), "{}", events[0].body);
+    }
+
+    #[test]
+    fn dated_cards_from_earlier_versions_merge_into_one() {
+        let (app, mut ledger) = stores();
+        seed_default_rules_on(&app).unwrap();
+        add_deepseek_account(&app);
+        snapshot(&mut ledger, 0, 30.0);
+        let now = Utc::now();
+        evaluate_with(&app, &ledger, now).unwrap();
+        let mut older = balance_events(&app)[0].clone();
+        for days in [1, 2] {
+            older.id = format!("old-{days}");
+            older.created_at = now - Duration::days(days);
+            older.dedupe_key = format!("{}|2026-01-0{days}", older.dedupe_key);
+            db::insert_alert_event_to(&app, &older).unwrap();
+            older.dedupe_key = older.dedupe_key.split("|2026").next().unwrap().to_string();
+        }
+        assert_eq!(balance_events(&app).len(), 3);
+
+        evaluate_with(&app, &ledger, now).unwrap();
+        assert_eq!(balance_events(&app).len(), 1);
+    }
+
+    #[test]
+    fn a_dismissed_balance_waits_a_day_and_a_snoozed_one_wakes_once() {
+        let (app, mut ledger) = stores();
+        seed_default_rules_on(&app).unwrap();
+        add_deepseek_account(&app);
+        snapshot(&mut ledger, 0, 30.0);
+        let now = Utc::now();
+        evaluate_with(&app, &ledger, now).unwrap();
+        let id = balance_events(&app)[0].id.clone();
+
+        // Snoozed: updated quietly until it runs out, then counted once.
+        let until = now + Duration::hours(2);
+        db::set_alert_event_status_to(&app, &id, AlertStatus::Snoozed, Some(until)).unwrap();
+        assert_eq!(evaluate_with(&app, &ledger, now).unwrap(), 0);
+        assert_eq!(balance_events(&app)[0].status, AlertStatus::Snoozed);
+        let after = until + Duration::minutes(1);
+        assert_eq!(evaluate_with(&app, &ledger, after).unwrap(), 1);
+        assert_eq!(balance_events(&app)[0].status, AlertStatus::Open);
+        assert_eq!(evaluate_with(&app, &ledger, after).unwrap(), 0);
+
+        // Dismissed: nothing more today, a new card once the day has passed.
+        db::set_alert_event_status_to(&app, &id, AlertStatus::Dismissed, None).unwrap();
+        assert_eq!(evaluate_with(&app, &ledger, Utc::now()).unwrap(), 0);
+        assert!(balance_events(&app).is_empty());
+        let tomorrow = Utc::now() + Duration::days(1);
+        assert_eq!(evaluate_with(&app, &ledger, tomorrow).unwrap(), 1);
     }
 
     #[test]

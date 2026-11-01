@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names in the accessibility tree.
 
 ### Fixed
+- **A low balance piled up a card a day.** It is now one alert, kept to the
+  latest figures, until it recovers or is dismissed. Older cards for the same
+  balance merge into it on the next check.
 - **Query failed on Windows.** Every query stopped with an IO error because
   the page opened the ledger file a second time.
 - **A chart with one day of data looked empty.** It now shows a marker with
