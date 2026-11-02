@@ -328,6 +328,17 @@ pub fn decompose(
 
 // ==================== Trailing-average overlay ====================
 
+/// Where a month-to-date comparison stops in the month before: after the same
+/// days, as the Overview compares, or at its end if it is the shorter month.
+/// Against the whole month, the first days of a month always read as a fall.
+pub fn same_days_end(
+    previous_start: DateTime<Utc>,
+    previous_end: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> DateTime<Utc> {
+    (previous_start + chrono::Duration::days(i64::from(now.day()))).min(previous_end)
+}
+
 /// The mean daily cost of the seven calendar days before `day`; a day with
 /// no charges counts as zero.
 pub fn trailing_mean(daily: &BTreeMap<NaiveDate, f64>, day: NaiveDate) -> f64 {
@@ -838,6 +849,27 @@ mod tests {
         assert_eq!(months_before(day(2026, 1, 1), 13), day(2024, 12, 1));
         // A negative shift moves forward, as the trailing average walks.
         assert_eq!(months_before(day(2025, 12, 1), -1), day(2026, 1, 1));
+    }
+
+    #[test]
+    fn a_month_to_date_compares_with_the_same_days_before_it() {
+        let at = |m: u32, d: u32, h: u32| {
+            NaiveDate::from_ymd_opt(2026, m, d)
+                .expect("a real date")
+                .and_hms_opt(h, 0, 0)
+                .expect("a real hour")
+                .and_utc()
+        };
+        // Two days in: the first two days of October.
+        assert_eq!(
+            same_days_end(at(10, 1, 0), at(11, 1, 0), at(11, 2, 6)),
+            at(10, 3, 0)
+        );
+        // March 31st against a February that runs out first.
+        assert_eq!(
+            same_days_end(at(2, 1, 0), at(3, 1, 0), at(3, 31, 6)),
+            at(3, 1, 0)
+        );
     }
 
     #[test]
@@ -1483,8 +1515,8 @@ mod tests {
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].title, "Unit price rising");
         assert_eq!(findings[0].severity, FindingSeverity::Warning);
-        assert!(findings[0].detail.contains("$100.00"));
-        assert!(findings[0].detail.contains("$150.00"));
+        assert!(findings[0].detail.contains("100.00"));
+        assert!(findings[0].detail.contains("150.00"));
     }
 
     #[test]

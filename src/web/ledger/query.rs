@@ -655,6 +655,24 @@ pub fn total_between(since: DateTime<Utc>, until: DateTime<Utc>) -> Result<f64> 
     })
 }
 
+/// Charges in a window with an amount but no rate into the reporting currency,
+/// which every converted total leaves out.
+pub fn unconverted_between(since: DateTime<Utc>, until: DateTime<Utc>) -> Result<i64> {
+    read(|all| {
+        selected(
+            all,
+            &Scope {
+                since: Some(since),
+                until: Some(until),
+                ..Default::default()
+            },
+        )
+        .iter()
+        .filter(|row| row.billed_cost.is_some() && row.billed_cost_base.is_none())
+        .count() as i64
+    })
+}
+
 /// Gross usage and credits of one period, in the reporting currency.
 ///
 /// Net totals hide credit-covered spend: an account whose usage is fully
@@ -1586,10 +1604,29 @@ pub fn daily_model_tokens(
 /// only path that writes such a row is the desktop's bill-file importer. No
 /// row the browser can be given would raise it.
 pub fn data_quality_issues(billing_period: &str, tag_key: &str) -> Result<Vec<DataQualityIssue>> {
+    data_quality_issues_in(billing_period, tag_key, None)
+}
+
+/// The same findings over one account's charges alone, with shares of that
+/// account's usage.
+pub fn account_data_quality_issues(
+    billing_period: &str,
+    tag_key: &str,
+    account_id: &str,
+) -> Result<Vec<DataQualityIssue>> {
+    data_quality_issues_in(billing_period, tag_key, Some(account_id))
+}
+
+fn data_quality_issues_in(
+    billing_period: &str,
+    tag_key: &str,
+    account_id: Option<&str>,
+) -> Result<Vec<DataQualityIssue>> {
     read(|all| {
         let rows: Vec<&NormalizedRow> = all
             .iter()
             .filter(|row| row.billing_period == billing_period)
+            .filter(|row| account_id.is_none_or(|account| row.account_id == account))
             .collect();
 
         // Charges no rate covers, against the period's row count.

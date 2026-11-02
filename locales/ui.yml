@@ -12,26 +12,20 @@ app:
   name:
     en: CloudBridge
     zh-CN: CloudBridge
-  tagline:
-    en: Cost workspace
-    zh-CN: 云成本工作台
   search:
-    en: Search workspace
-    zh-CN: 搜索工作台
+    en: Search
+    zh-CN: 搜索
   search_tooltip:
     en: Search pages, accounts and commands
     zh-CN: 搜索页面、账户和命令
-  local_ledger:
-    en: Local ledger
-    zh-CN: 本地账本
   opening_ledger:
-    en: Opening the ledger…
-    zh-CN: 正在打开账本…
+    en: Opening your data…
+    zh-CN: 正在打开数据…
 
 nav:
   workspace:
-    en: WORKSPACE
-    zh-CN: 工作台
+    en: COSTS
+    zh-CN: 成本
   manage:
     en: MANAGE
     zh-CN: 管理
@@ -101,11 +95,11 @@ status:
     en: "%{sources}, due for a refresh"
     zh-CN: "%{sources}，需要刷新"
   current_hours:
-    en: "%{sources}, current for %{h}h %{m}m"
-    zh-CN: "%{sources}，%{h} 小时 %{m} 分钟内有效"
+    en: "%{sources}, next refresh in %{h}h %{m}m"
+    zh-CN: "%{sources}，%{h} 小时 %{m} 分钟后刷新"
   current_minutes:
-    en: "%{sources}, current for %{m} min"
-    zh-CN: "%{sources}，%{m} 分钟内有效"
+    en: "%{sources}, next refresh in %{m} min"
+    zh-CN: "%{sources}，%{m} 分钟后刷新"
 
 settings:
   title:
@@ -210,6 +204,12 @@ settings:
   keep_in_menu_bar:
     en: Keep running in the menu bar
     zh-CN: 在菜单栏中保持运行
+  keep_in_tray:
+    en: Keep running in the notification area
+    zh-CN: 在通知区域中保持运行
+  open_at_login_hint_tray:
+    en: Starts CloudBridge in the notification area when you log in, without its window, so alerts keep arriving after a restart.
+    zh-CN: 登录时在通知区域中启动 CloudBridge，不打开窗口，重启后也能继续收到告警。
   keep_in_tray_hint:
     en: Closing the window leaves CloudBridge in the notification area, showing the month's spend, so refreshes and alerts carry on. Off, closing the window quits.
     zh-CN: 关闭窗口后 CloudBridge 仍留在通知区域并显示本月支出，刷新和告警会继续。关闭此项时，关闭窗口即退出。
@@ -354,9 +354,15 @@ common:
     zh-CN: "重试"
 
 overview:
+  incomplete_total:
+    en: "Totals are incomplete: %{n} charges in this range have no exchange rate and are not counted."
+    zh-CN: "合计不完整：此范围内有 %{n} 条费用没有汇率，未计入。"
+  actual:
+    en: "Actual"
+    zh-CN: "实际"
   card_mtd:
-    en: "MONTH TO DATE"
-    zh-CN: "本月至今"
+    en: "NET, MONTH TO DATE"
+    zh-CN: "本月至今净支出"
   vs_same_day:
     en: "vs same day last month"
     zh-CN: "对比上月同日"
@@ -373,14 +379,14 @@ overview:
     en: "Biggest movers"
     zh-CN: "变动最大"
   daily_chart:
-    en: "Daily spend, all sources"
-    zh-CN: "每日支出（全部数据源）"
+    en: "Daily usage, all sources"
+    zh-CN: "每日用量（全部数据源）"
   daily_chart_caption:
     en: "Actual against the 7-day trailing mean."
     zh-CN: "实际支出与 7 日滚动均值对比。"
   card_30d:
-    en: "LAST 30 DAYS"
-    zh-CN: "最近 30 天"
+    en: "NET, LAST 30 DAYS"
+    zh-CN: "最近 30 天净支出"
   vs_prior_30d:
     en: "vs prior 30 days"
     zh-CN: "对比前 30 天"
@@ -388,14 +394,14 @@ overview:
     en: "VS PRIOR 30D"
     zh-CN: "对比前 30 天"
   card_daily_avg:
-    en: "DAILY AVERAGE"
-    zh-CN: "日均"
+    en: "DAILY USAGE AVERAGE"
+    zh-CN: "日均用量"
   card_daily_avg_caption:
     en: "Mean daily usage over the last 30 days"
     zh-CN: "最近 30 天的日均用量"
   card_12m:
-    en: "LAST 12 MONTHS"
-    zh-CN: "最近 12 个月"
+    en: "NET, LAST 12 MONTHS"
+    zh-CN: "最近 12 个月净支出"
   vs_prior_12m:
     en: "vs prior 12 months"
     zh-CN: "对比前 12 个月"
@@ -403,14 +409,14 @@ overview:
     en: "VS PRIOR 12M"
     zh-CN: "对比前 12 个月"
   monthly_chart:
-    en: "Monthly spend, all sources"
-    zh-CN: "每月支出（全部数据源）"
+    en: "Monthly usage, all sources"
+    zh-CN: "每月用量（全部数据源）"
   monthly_chart_caption:
     en: "One point per month of gross usage."
     zh-CN: "每月一个点，按总用量计。"
   card_monthly_avg:
-    en: "MONTHLY AVERAGE"
-    zh-CN: "月均"
+    en: "MONTHLY USAGE AVERAGE"
+    zh-CN: "月均用量"
   card_monthly_avg_caption:
     en: "Mean monthly usage over the last 12 months"
     zh-CN: "最近 12 个月的月均用量"
@@ -439,8 +445,8 @@ overview:
     en: "Reload demo"
     zh-CN: "重新加载演示"
   reload_demo_tooltip:
-    en: "Reload the sample ledger; no live provider data is fetched"
-    zh-CN: "重新加载示例账本；不会获取任何真实云服务商数据"
+    en: "Reload the sample data; no live provider data is fetched"
+    zh-CN: "重新加载示例数据；不会获取任何真实云服务商数据"
   refresh_tooltip:
     en: "Fetch stale sources and update this overview"
     zh-CN: "获取过期的数据源并更新概览"
@@ -454,8 +460,23 @@ overview:
     en: "Typical day (6-mo avg)"
     zh-CN: "典型日（6 个月均值）"
   spend_breakdown:
-    en: "Spend breakdown"
-    zh-CN: "支出构成"
+    en: "Usage breakdown"
+    zh-CN: "用量构成"
+  before_credits:
+    en: "Before credits"
+    zh-CN: "未扣除抵扣"
+  forecast_rough_one:
+    en: "Rough estimate from 1 day of data"
+    zh-CN: "仅基于 1 天数据的粗略估算"
+  forecast_rough:
+    en: "Rough estimate from %{n} days of data"
+    zh-CN: "仅基于 %{n} 天数据的粗略估算"
+  range_from_days:
+    en: "range %{low}–%{high}, from %{n} days of data"
+    zh-CN: "区间 %{low}–%{high}，基于 %{n} 天数据"
+  chart_summary:
+    en: "%{title}, %{first} to %{last}, highest %{high}"
+    zh-CN: "%{title}，%{first} 至 %{last}，最高 %{high}"
   view_attribution:
     en: "View attribution"
     zh-CN: "查看成本归属"
@@ -610,6 +631,12 @@ source_kind:
     zh-CN: "无"
 
 alerts:
+  action_trace_charges:
+    en: "See the charges"
+    zh-CN: "查看相关费用"
+  fired:
+    en: "Fired %{time}"
+    zh-CN: "触发于 %{time}"
   critical:
     en: "Critical"
     zh-CN: "严重"
@@ -632,8 +659,8 @@ alerts:
     en: "Nothing resolved yet."
     zh-CN: "暂无已解决的告警。"
   subtitle:
-    en: "Evaluated locally against the ledger every ingest"
-    zh-CN: "每次导入数据后在本地根据账本评估"
+    en: "Checked after every refresh or import"
+    zh-CN: "每次刷新或导入后检查"
   edit_rules:
     en: "Edit rules"
     zh-CN: "编辑规则"
@@ -669,6 +696,9 @@ alerts:
     zh-CN: "编写分配规则"
 
 models:
+  col_unit:
+    en: "%{currency}/1M"
+    zh-CN: "%{currency}/1M"
   ai_spend:
     en: "AI SPEND"
     zh-CN: "AI 支出"
@@ -682,7 +712,7 @@ models:
     en: "input + output + cache"
     zh-CN: "输入 + 输出 + 缓存"
   blended:
-    en: "BLENDED $/1M"
+    en: "BLENDED COST PER 1M"
     zh-CN: "综合单价 /1M"
   blended_caption:
     en: "cost ÷ tokens, all models"
@@ -705,6 +735,12 @@ models:
   col_delta:
     en: "Δ VS PREV"
     zh-CN: "较上期"
+  col_delta_mtd:
+    en: "VS SAME DAYS LAST MONTH"
+    zh-CN: "较上月同期"
+  no_daily:
+    en: "No day-by-day token counts for this period."
+    zh-CN: "本期没有按日的 token 数据。"
   col_in:
     en: "IN"
     zh-CN: "输入"
@@ -724,8 +760,8 @@ models:
     en: "No model-provider data yet"
     zh-CN: "还没有模型服务商数据"
   empty_hint:
-    en: "Token counts and per-model costs appear once the ledger has an LLM provider's usage. Import an OpenAI or Anthropic usage export from Accounts."
-    zh-CN: "账本中有大模型服务商的用量后，这里会显示 token 数和各模型成本。可在“账户”页导入 OpenAI 或 Anthropic 的用量导出文件。"
+    en: "Token counts and per-model costs appear once an LLM provider's usage is here. Import an OpenAI or Anthropic usage export from Accounts."
+    zh-CN: "有了大模型服务商的用量后，这里会显示 token 数和各模型成本。可在“账户”页导入 OpenAI 或 Anthropic 的用量导出文件。"
   open_accounts:
     en: "Open Accounts"
     zh-CN: "打开账户页"
@@ -811,6 +847,9 @@ detail:
     zh-CN: "没有服务类别的费用计入“其他”。"
 
 attribution:
+  see_untagged:
+    en: "See untagged spend"
+    zh-CN: "查看未打标签的支出"
   dim_tag:
     en: "Tag"
     zh-CN: "标签"
@@ -911,8 +950,8 @@ attribution:
     en: "SHARE OF NET"
     zh-CN: "占净额"
   top_resources:
-    en: "Top resources"
-    zh-CN: "主要资源"
+    en: "Top resources this period, all services"
+    zh-CN: "本账期资源排行（全部服务）"
   empty:
     en: "Nothing to attribute yet"
     zh-CN: "暂无可归属的成本"
@@ -921,6 +960,12 @@ attribution:
     zh-CN: "本期有费用后，这里会显示 数据源 → 服务 → 业务线 的流向。可在“账户”页获取或导入账单。"
 
 accounts:
+  tag_hint:
+    en: "Tag these resources with '%{tag}' at your provider so their spend lands on a business line."
+    zh-CN: "请在服务商处为这些资源添加“%{tag}”标签，其支出才会归入业务线。"
+  import_tooltip:
+    en: "Read a bill export downloaded from this provider's console. It replaces every month the file covers."
+    zh-CN: "读取从该服务商控制台下载的账单导出文件。文件涵盖的月份会被整体替换。"
   import_only_tooltip:
     en: "Read from a bill file you import"
     zh-CN: "从你导入的账单文件读取"
@@ -1030,8 +1075,8 @@ accounts:
     en: "%{history} and its raw payloads are removed too."
     zh-CN: "%{history}及其原始数据也会被删除。"
   history_stays:
-    en: "%{history} stays in the ledger and keeps counting in every total."
-    zh-CN: "%{history}会保留在账本中，并继续计入所有合计。"
+    en: "%{history} is kept and still counts in every total."
+    zh-CN: "%{history}会保留，并继续计入所有合计。"
   also_delete_history:
     en: "Also delete its billing history"
     zh-CN: "同时删除其账单历史"
@@ -1105,6 +1150,9 @@ accounts:
     en: "Use this machine's credentials"
     zh-CN: "使用本机凭据"
   use_system_hint:
+    en: "Read from %{places} each time they are needed; nothing is saved."
+    zh-CN: "每次需要时从 %{places} 读取，不保存任何内容。"
+  use_system_hint_finder:
     en: "Read from %{places} each time they are needed; nothing is saved. An app opened from Finder cannot see shell variables, so the credentials file is what counts."
     zh-CN: "每次需要时从 %{places} 读取，不保存任何内容。从访达打开的应用看不到 shell 环境变量，因此以凭据文件为准。"
   enter_key_hint:
@@ -1208,6 +1256,18 @@ accounts:
     zh-CN: "已从%{format}向 %{name} 导入 %{charges} 条费用，替换了 %{periods}"
 
 insights:
+  demo_included:
+    en: "Demo accounts are set up, so these resources and the scan time can come from sample data."
+    zh-CN: "已设置演示账户，这些资源和扫描时间可能来自示例数据。"
+  cost_basis:
+    en: "Amounts are this period's usage cost before credits. Categories can overlap, and they are not an estimate of savings."
+    zh-CN: "金额为本期用量费用，未扣除抵扣。各分类可能重叠，也不代表预计可节省的金额。"
+  copy_id:
+    en: "Copy resource ID"
+    zh-CN: "复制资源 ID"
+  in_account:
+    en: "Account %{account}"
+    zh-CN: "账户 %{account}"
   load_failed:
     en: "Could not load insights: %{error}"
     zh-CN: "无法加载洞察：%{error}"
@@ -1266,11 +1326,11 @@ insights:
     en: "the scan was partial, so nothing billed is called missing"
     zh-CN: "扫描不完整，因此不会将已计费资源判为缺失"
   described:
-    en: "configuration read for %{n} of them"
-    zh-CN: "其中 %{n} 个读取了配置"
+    en: "configuration read for %{n} of %{total}"
+    zh-CN: "已读取 %{total} 个中 %{n} 个的配置"
   matched:
-    en: "%{pct}% of resource-level usage matched"
-    zh-CN: "资源级用量匹配率 %{pct}%"
+    en: "%{pct}% of resource-level usage cost matched (%{matched} of %{billed})"
+    zh-CN: "资源级用量费用匹配率 %{pct}%（%{billed} 中的 %{matched}）"
   one_script_rule:
     en: "1 script rule from %{dir}"
     zh-CN: "来自 %{dir} 的 1 条脚本规则"
@@ -1505,8 +1565,8 @@ rules:
     en: "Could not delete the rule: %{error}"
     zh-CN: "无法删除规则：%{error}"
   monthly_budget:
-    en: "Monthly budget"
-    zh-CN: "每月预算"
+    en: "Monthly budget (%{currency})"
+    zh-CN: "每月预算（%{currency}）"
   alert_at:
     en: "Alert at (% of budget)"
     zh-CN: "告警阈值（预算百分比）"
@@ -1550,8 +1610,8 @@ rules:
     en: "Threshold type"
     zh-CN: "阈值类型"
   amount_reporting:
-    en: "Amount (reporting currency)"
-    zh-CN: "金额（报表货币）"
+    en: "Amount (%{currency})"
+    zh-CN: "金额（%{currency}）"
   percent_of_budget:
     en: "Percent of budget (%)"
     zh-CN: "预算百分比（%）"
@@ -1590,6 +1650,9 @@ rules:
     zh-CN: "还没有规则。点击右上角的“新建规则”创建一个。"
 
 query:
+  result_outdated:
+    en: "%{status}. From an earlier run; run again to update."
+    zh-CN: "%{status}。这是之前运行的结果，请重新运行以更新。"
   running:
     en: "Running…"
     zh-CN: "正在运行…"
@@ -1603,22 +1666,22 @@ query:
     en: "Run a query or pick a template"
     zh-CN: "运行查询或选择一个模板"
   subtitle:
-    en: "Read-only SQL against the local ledger"
-    zh-CN: "对本地账本执行只读 SQL"
+    en: "Run read-only SQL on your billing data"
+    zh-CN: "对账单数据执行只读 SQL"
   run:
     en: "Run"
     zh-CN: "运行"
 
 health:
   none:
-    en: "No data-quality issues this billing period"
-    zh-CN: "本账期没有数据质量问题"
+    en: "No data-quality issues in %{period}"
+    zh-CN: "%{period}没有数据质量问题"
   one:
-    en: "1 finding this billing period"
-    zh-CN: "本账期发现 1 个问题"
+    en: "1 finding in %{period}"
+    zh-CN: "%{period}发现 1 个问题"
   many:
-    en: "%{n} findings this billing period"
-    zh-CN: "本账期发现 %{n} 个问题"
+    en: "%{n} findings in %{period}"
+    zh-CN: "%{period}发现 %{n} 个问题"
   collapse:
     en: "Collapse"
     zh-CN: "收起"
@@ -1777,8 +1840,8 @@ panel:
     en: "Open CloudBridge"
     zh-CN: "打开 CloudBridge"
   reading:
-    en: "Reading the ledger…"
-    zh-CN: "正在读取账本…"
+    en: "Reading your data…"
+    zh-CN: "正在读取数据…"
   add_account:
     en: "Add an account"
     zh-CN: "添加账户"
@@ -2123,8 +2186,8 @@ token_finding:
     en: "Unit price rising"
     zh-CN: "单价上涨"
   unit_price_detail:
-    en: "%{name}: blended unit cost rose from $%{from} to $%{to} per 1M tokens while spend went %{prev} to %{now}"
-    zh-CN: "%{name}：每 1M token 的综合单价从 $%{from} 涨到 $%{to}，同期支出从 %{prev} 变为 %{now}"
+    en: "%{name}: blended unit cost rose from %{from} to %{to} per 1M tokens while spend went %{prev} to %{now}"
+    zh-CN: "%{name}：每 1M token 的综合单价从 %{from} 涨到 %{to}，同期支出从 %{prev} 变为 %{now}"
   cost_only:
     en: "Cost only — no token metering"
     zh-CN: "仅有成本——无 token 计量"

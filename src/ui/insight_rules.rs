@@ -265,7 +265,6 @@ impl InsightRulesView {
                     "remove" => tr!("rules.remove"),
                     _ => tr!("insight_rules.delete_ellipsis"),
                 })
-                .small()
                 .disabled(!idle)
         };
         let id = row.id.clone();
@@ -399,7 +398,6 @@ impl Render for InsightRulesView {
                                     } else {
                                         tr!("insight_rules.browse")
                                     })
-                                    .small()
                                     .custom(theme::outline_variant(cx))
                                     .card_outline(cx)
                                     .loading(self.fetching)
@@ -409,7 +407,6 @@ impl Render for InsightRulesView {
                             .child(
                                 Button::new("insight-rules-folder")
                                     .label(tr!("insight_rules.open_folder"))
-                                    .small()
                                     .custom(theme::outline_variant(cx))
                                     .card_outline(cx)
                                     .on_click(cx.listener(|this, _, _, cx| this.open_folder(cx))),

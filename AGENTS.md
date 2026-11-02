@@ -157,6 +157,15 @@ rules from the rolling `insight-rules` release that
   Locally: `npm test` in `insights-rules/`, then
   `CLOUDBRIDGE_RULES_DIST=$PWD/insights-rules/dist cargo test insight_scripts`.
 
+## Buttons
+
+A button with a border or fill is the default size on every page, so pages
+do not drift between heights. `.small()` is for ghost buttons in dense rows,
+the range segments and the menu bar panel. `.primary()` is for the one
+commitment in a decision area, such as saving a form or running a query, and
+never for an ordinary command such as refreshing or adding. An ordinary
+command uses `theme::outline_variant` with `card_outline`.
+
 ## Interface language (i18n)
 
 Strings shown to a person live in `locales/ui.yml` and are looked up with
@@ -184,7 +193,9 @@ This is the mechanism gpui-kit's components use, set up as
   cached elsewhere — the tray menu is built once — keeps the old language
   until it is rebuilt.
 - **Stored text keeps the language it was written in.** Alert titles,
-  bodies and field labels are written when the alert fires.
+  bodies and field labels are written when the alert fires. A low-balance
+  alert is the exception: it is rewritten with the latest figures while it
+  stays open, in the language of the moment.
 - Amounts, dates and relative times go through `ui::fmt`; a date format
   string is itself a key (`time.short_date`, `range.month_format`).
 - The system-info text copied for a bug report stays English on purpose.

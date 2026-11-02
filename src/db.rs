@@ -638,10 +638,15 @@ pub fn account_context(
 fn system_context(account: &CloudAccount, descriptor: &SourceDescriptor) -> Result<SourceContext> {
     let not_found = || {
         anyhow::anyhow!(
-            "No credentials for {} on this machine: looked in {}. An app opened from \
-             Finder cannot see shell variables, so the credentials file is what counts.",
+            "No credentials for {} on this machine: looked in {}.{}",
             account.name,
-            descriptor.credential_places().join(" and ")
+            descriptor.credential_places().join(" and "),
+            if cfg!(target_os = "macos") {
+                " An app opened from Finder cannot see shell variables, so the \
+                 credentials file is what counts."
+            } else {
+                ""
+            }
         )
     };
     let found = descriptor.credentials_from_system().ok_or_else(not_found)?;

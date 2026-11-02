@@ -8,7 +8,8 @@
 use gpui_kit::component::button::{Button, ButtonCustomVariant};
 use gpui_kit::component::{ActiveTheme, StyledExt, Theme, ThemeRegistry};
 use gpui_kit::{
-    div, rems, App, Div, FontWeight, Hsla, IntoElement, ParentElement, SharedString, Styled,
+    div, rems, App, Div, ElementId, FontWeight, Hsla, InteractiveElement, IntoElement,
+    ParentElement, Role, SharedString, Stateful, StatefulInteractiveElement, Styled,
 };
 
 /// Name of the light theme in `themes/cloudbridge.json`.
@@ -290,12 +291,17 @@ pub fn range_pill(cx: &App, active: bool) -> ButtonCustomVariant {
 
 /// KPI card with a reserved value tier and a separate supporting caption.
 pub fn stat_card(
+    id: impl Into<ElementId>,
     cx: &App,
     label: impl Into<SharedString>,
     value: String,
     sub: impl IntoElement,
-) -> Div {
+) -> Stateful<Div> {
+    let label = label.into();
     card(cx)
+        .id(id)
+        .role(Role::Group)
+        .aria_label(SharedString::from(format!("{label}: {value}")))
         .flex_1()
         // min_w_0: four equal cards must shrink below their content
         // width instead of overflowing the row on narrow windows.
@@ -308,7 +314,7 @@ pub fn stat_card(
                 .text_sm()
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(text_muted(cx))
-                .child(label.into()),
+                .child(label),
         )
         .child(
             div()

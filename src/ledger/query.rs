@@ -8,7 +8,7 @@ use anyhow::Result;
 use chrono::{DateTime, NaiveDate, Utc};
 use duckdb::arrow::datatypes::DataType;
 use duckdb::types::{TimeUnit, Value, ValueRef};
-use duckdb::{params, AccessMode, Config, Connection};
+use duckdb::{params, Connection};
 
 use super::schema::{NORMALIZED_VIEW, TIMESTAMP_FORMAT};
 use super::{with_connection_ref, Channel, PeriodKey};
@@ -655,6 +655,34 @@ fn total_between_of(conn: &Connection, since: DateTime<Utc>, until: DateTime<Utc
             ..Default::default()
         },
     )
+}
+
+/// Charges in a window with an amount but no rate into the reporting currency,
+/// which every converted total leaves out. A row with no amount at all, such
+/// as a token count, is not one of them.
+pub fn unconverted_between(since: DateTime<Utc>, until: DateTime<Utc>) -> Result<i64> {
+    with_connection_ref(|conn| unconverted_between_of(conn, since, until))
+}
+
+fn unconverted_between_of(
+    conn: &Connection,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+) -> Result<i64> {
+    Ok(conn.query_row(
+        &format!(
+            "SELECT count(*)
+             FROM {NORMALIZED_VIEW}
+             WHERE billed_cost IS NOT NULL AND billed_cost_base IS NULL
+               AND charge_period_start >= CAST(? AS TIMESTAMP)
+               AND charge_period_start < CAST(? AS TIMESTAMP)"
+        ),
+        params![
+            since.format(TIMESTAMP_FORMAT).to_string(),
+            until.format(TIMESTAMP_FORMAT).to_string()
+        ],
+        |row| row.get(0),
+    )?)
 }
 
 /// Usage totals per billing period since an instant, as `(YYYY-MM,
@@ -1335,17 +1363,47 @@ pub fn data_quality_issues(billing_period: &str, tag_key: &str) -> Result<Vec<Da
     with_connection_ref(|conn| data_quality_issues_of(conn, billing_period, tag_key))
 }
 
+/// The same findings over one account's charges alone, with shares of that
+/// account's usage.
+pub fn account_data_quality_issues(
+    billing_period: &str,
+    tag_key: &str,
+    account_id: &str,
+) -> Result<Vec<DataQualityIssue>> {
+    with_connection_ref(|conn| {
+        data_quality_issues_in(conn, billing_period, tag_key, Some(account_id))
+    })
+}
+
 fn data_quality_issues_of(
     conn: &Connection,
     billing_period: &str,
     tag_key: &str,
 ) -> Result<Vec<DataQualityIssue>> {
+    data_quality_issues_in(conn, billing_period, tag_key, None)
+}
+
+fn data_quality_issues_in(
+    conn: &Connection,
+    billing_period: &str,
+    tag_key: &str,
+    account_id: Option<&str>,
+) -> Result<Vec<DataQualityIssue>> {
+    // Every check below reads this, so each one narrows together.
+    let source = match account_id {
+        Some(account) => format!(
+            "(SELECT * FROM {NORMALIZED_VIEW} WHERE account_id = '{}')",
+            account.replace('\'', "''")
+        ),
+        None => NORMALIZED_VIEW.to_string(),
+    };
+
     // Charges no rate covers, against the period's row count.
     let (rows, unconverted): (i64, i64) = conn.query_row(
         &format!(
             "SELECT count(*),
                     count(*) FILTER (WHERE billed_cost IS NOT NULL AND billed_cost_base IS NULL)
-             FROM {NORMALIZED_VIEW}
+             FROM {source}
              WHERE billing_period = ?"
         ),
         params![billing_period],
@@ -1357,6 +1415,7 @@ fn data_quality_issues_of(
         conn,
         &Scope {
             billing_period: Some(billing_period),
+            account_id,
             ..Default::default()
         },
     )?;
@@ -1365,7 +1424,7 @@ fn data_quality_issues_of(
     let (untagged, untagged_count): (Option<f64>, i64) = conn.query_row(
         &format!(
             "SELECT sum(billed_cost_base), count(*)
-             FROM {NORMALIZED_VIEW}
+             FROM {source}
              WHERE billing_period = ?
                AND charge_category = 'Usage'
                AND coalesce(nullif(json_extract_string(tags, ?), ''), '') = ''"
@@ -1378,7 +1437,7 @@ fn data_quality_issues_of(
     let mut stmt = conn.prepare(&format!(
         "SELECT coalesce(service_name, 'Other') AS service,
                 sum(billed_cost_base) AS amount, count(*) AS charges
-         FROM {NORMALIZED_VIEW}
+         FROM {source}
          WHERE billing_period = ?
            AND charge_category = 'Usage'
            AND region_id IS NULL
@@ -1400,7 +1459,7 @@ fn data_quality_issues_of(
     let mut stmt = conn.prepare(&format!(
         "SELECT provider || ' ' || coalesce(x_service_code, service_name, 'Other') AS product,
                 sum(billed_cost_base) AS amount, count(*) AS charges
-         FROM {NORMALIZED_VIEW}
+         FROM {source}
          WHERE billing_period = ?
            AND charge_category = 'Usage'
            AND service_category IS NULL
@@ -1423,7 +1482,7 @@ fn data_quality_issues_of(
     let unreconciled: (i64, Option<f64>) = conn.query_row(
         &format!(
             "SELECT count(*), sum(billed_cost_base)
-             FROM {NORMALIZED_VIEW}
+             FROM {source}
              WHERE billing_period = ?
                AND charge_category = 'Adjustment'
                AND charge_description = ?"
@@ -2147,15 +2206,25 @@ const MAX_CELLS: usize = 2_000_000;
 
 /// Run a read-only query against the ledger and render the result.
 ///
-/// Unlike every other read in this file, this does not take the shared
+/// Unlike every other read in this file, this does not hold the shared
 /// connection: an ad-hoc query can run for seconds, and holding the global
-/// lock would stall every page behind it. The connection is opened
-/// read-only, so a statement that slips past the guard still cannot write.
+/// lock would stall every page behind it. It runs on a clone of it, in a
+/// read-only transaction, so a statement that slips past the guard still
+/// cannot write.
+///
+/// Opening the file a second time is not an option: Windows refuses it while
+/// the app's own connection has the file open, whatever the access mode.
 pub fn run_adhoc(sql: &str) -> Result<AdhocResult> {
-    let path = crate::config::get_ledger_database_path()?;
-    let conn =
-        Connection::open_with_flags(path, Config::default().access_mode(AccessMode::ReadOnly)?)?;
+    let conn = with_connection_ref(read_only_clone)?;
     run_adhoc_of(&conn, sql)
+}
+
+/// A second connection to the same database, inside a read-only transaction
+/// that ends with it.
+fn read_only_clone(conn: &Connection) -> Result<Connection> {
+    let clone = conn.try_clone()?;
+    clone.execute_batch("BEGIN TRANSACTION READ ONLY")?;
+    Ok(clone)
 }
 
 fn run_adhoc_of(conn: &Connection, sql: &str) -> Result<AdhocResult> {
@@ -3664,6 +3733,35 @@ mod tests {
         assert!(!exact.truncated);
     }
 
+    /// Against a file, because that is what Windows locked: the clone has to
+    /// read while the connection that opened the file still holds it.
+    #[test]
+    fn an_adhoc_clone_reads_an_open_file_and_cannot_write() {
+        let dir = std::env::temp_dir().join(format!("cloudbridge-adhoc-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ledger.duckdb");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch("CREATE TABLE t (v INTEGER); INSERT INTO t VALUES (1)")
+                .unwrap();
+
+            let clone = read_only_clone(&conn).unwrap();
+            let result = run_adhoc_of(&clone, "SELECT v FROM t").unwrap();
+            assert_eq!(result.rows.len(), 1);
+            // Past the keyword guard, the transaction itself refuses.
+            assert!(clone.execute_batch("INSERT INTO t VALUES (2)").is_err());
+            drop(clone);
+
+            // The writer is unaffected, and nothing was added.
+            conn.execute_batch("INSERT INTO t VALUES (3)").unwrap();
+            let count: i64 = conn
+                .query_row("SELECT count(*) FROM t WHERE v = 2", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(count, 0);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn an_adhoc_result_is_typed_and_rendered() {
         let conn = conn("USD");
@@ -4380,6 +4478,42 @@ mod tests {
     }
 
     #[test]
+    fn account_findings_read_only_that_accounts_charges() {
+        let mut conn = conn("USD");
+        let aws_key = aws();
+        let other = PeriodKey {
+            account_id: "other-account".to_string(),
+            ..aws()
+        };
+        write(
+            &mut conn,
+            &aws_key,
+            &[charge("Regionless here", 100.0, "USD", 1)],
+        );
+        write(
+            &mut conn,
+            &other,
+            &[charge("Regionless there", 300.0, "USD", 1)],
+        );
+
+        let region_issues = |account: Option<&str>| -> Vec<DataQualityIssue> {
+            data_quality_issues_in(&conn, "2026-08", "business_line", account)
+                .unwrap()
+                .into_iter()
+                .filter(|issue| issue.kind == DataQualityKind::MissingRegion)
+                .collect()
+        };
+
+        assert_eq!(region_issues(None).len(), 2);
+        let mine = region_issues(Some(&aws_key.account_id));
+        assert_eq!(mine.len(), 1);
+        assert_eq!(mine[0].affected_amount, Some(100.0));
+        assert!(mine[0].message.contains("Regionless here"));
+        // A share of this account's usage, not of everyone's.
+        assert!(mine[0].message.contains("100.0%"), "{}", mine[0].message);
+    }
+
+    #[test]
     fn a_clean_period_raises_no_data_quality_issues() {
         let mut conn = conn("USD");
         let clean = |service: &str, amount: f64, day: u32| Charge {
@@ -4397,6 +4531,79 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    /// The SQL the Alerts and Insights pages send to the Query page has to
+    /// pass the read-only guard, run, and find what it was opened for.
+    #[test]
+    fn the_trace_queries_run_and_find_their_charges() {
+        let mut conn = conn("USD");
+        let provider = aws().provider;
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                Charge {
+                    resource_id: Some("arn:aws:ec2:us-east-1:1:instance/i-1".to_string()),
+                    ..charge("EC2", 40.0, "USD", 5)
+                },
+                Charge {
+                    resource_id: Some("arn:aws:ec2:us-east-1:1:instance/i-2".to_string()),
+                    ..charge("EC2", 7.0, "USD", 5)
+                },
+                charge("S3", 2.0, "USD", 5),
+            ],
+        );
+
+        let by_resource = run_adhoc_of(
+            &conn,
+            &crate::ui::data::resource_trace_query(&provider, "i-1", "i-1"),
+        )
+        .unwrap();
+        assert_eq!(by_resource.rows.len(), 1);
+        assert_eq!(by_resource.rows[0][4].as_deref(), Some("40"));
+
+        let fired = NaiveDate::from_ymd_opt(2026, 8, 6)
+            .expect("a real date")
+            .and_hms_opt(12, 0, 0)
+            .expect("noon exists")
+            .and_utc();
+        let by_service = run_adhoc_of(
+            &conn,
+            &crate::ui::data::alert_trace_query(&provider, "EC2", fired),
+        )
+        .unwrap();
+        assert_eq!(by_service.rows.len(), 1);
+        assert_eq!(by_service.rows[0][4].as_deref(), Some("47"));
+    }
+
+    #[test]
+    fn a_window_counts_only_charges_with_an_amount_and_no_rate() {
+        let mut conn = conn("USD");
+        write(
+            &mut conn,
+            &aws(),
+            &[
+                charge("Converted", 100.0, "USD", 1),
+                charge("No rate, in the window", 100.0, "JPY", 5),
+                charge("No rate, after it", 100.0, "JPY", 20),
+                Charge {
+                    billed_cost: None,
+                    ..charge("A token count", 0.0, "JPY", 5)
+                },
+            ],
+        );
+        let day = |d: u32| {
+            NaiveDate::from_ymd_opt(2026, 8, d)
+                .expect("a real date")
+                .and_hms_opt(0, 0, 0)
+                .expect("midnight exists")
+                .and_utc()
+        };
+
+        assert_eq!(unconverted_between_of(&conn, day(1), day(10)).unwrap(), 1);
+        assert_eq!(unconverted_between_of(&conn, day(1), day(31)).unwrap(), 2);
+        assert_eq!(unconverted_between_of(&conn, day(25), day(31)).unwrap(), 0);
     }
 
     #[test]

@@ -90,10 +90,14 @@ impl RenderOnce for HealthCard {
         } else {
             total.min(preview_rows)
         };
+        // The checks run per billing period, whatever range a page shows.
+        let period = chrono::Utc::now()
+            .format(&rust_i18n::t!("range.month_format"))
+            .to_string();
         let summary = match total {
-            0 => tr!("health.none"),
-            1 => tr!("health.one"),
-            n => tr!("health.many", n = n),
+            0 => tr!("health.none", period = period),
+            1 => tr!("health.one", period = period),
+            n => tr!("health.many", n = n, period = period),
         };
 
         let actions = div()

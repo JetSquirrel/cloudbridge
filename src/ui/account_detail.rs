@@ -11,7 +11,9 @@ use super::data::{AccountDetailData, Range, ServiceRow};
 use super::data_health::{self, HealthCard};
 use super::{chart, data, fmt, theme};
 use crate::cloud::BillingPeriod;
-use crate::ledger::query::{breakdown_by, data_quality_issues, BreakdownDim, DataQualityIssue};
+use crate::ledger::query::{
+    account_data_quality_issues, breakdown_by, BreakdownDim, DataQualityIssue,
+};
 use crate::ui::theme::CardOutline as _;
 use crate::{db, ingest};
 
@@ -215,44 +217,74 @@ impl AccountDetailView {
             .p_5()
             .v_flex()
             .gap_4()
-            .child(theme::section_title(cx, title))
+            .child(theme::section_title(cx, title.clone()))
             .child(
                 div()
-                    .id("account-chart")
-                    .w_full()
-                    .relative()
-                    .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
-                        let x: f32 = event.position.x.into();
-                        let nearest = this.chart_hover.nearest(x);
-                        if nearest.is_some() && nearest != this.chart_hover.index() {
-                            this.chart_hover.set(nearest);
-                            cx.notify();
-                        }
-                    }))
-                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                        if !*hovered && this.chart_hover.index().is_some() {
-                            this.chart_hover.clear();
-                            cx.notify();
-                        }
-                    }))
-                    .child(chart::spend_area_chart(
+                    .h_flex()
+                    .gap_3()
+                    .child(chart::y_axis(
                         cx,
-                        &d.chart.actual,
-                        &d.chart.baseline,
+                        d.chart
+                            .actual
+                            .iter()
+                            .chain(&d.chart.baseline)
+                            .map(|p| p.amount),
                         rems(16.25),
-                        self.chart_hover.points_cell(),
-                        self.chart_hover.bounds_cell(),
+                        &|value| fmt::amount(value, &d.currency),
                     ))
-                    .when_some(
-                        chart::hover_overlay(
-                            cx,
-                            &self.chart_hover,
-                            &d.chart.actual,
-                            &d.currency,
-                            window.rem_size(),
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            div()
+                                .id("account-chart")
+                                .role(Role::Image)
+                                .aria_label(chart::summary(&title, &d.chart.actual, &|value| {
+                                    fmt::amount(value, &d.currency)
+                                }))
+                                .w_full()
+                                .relative()
+                                .on_mouse_move(cx.listener(
+                                    |this, event: &MouseMoveEvent, _, cx| {
+                                        let x: f32 = event.position.x.into();
+                                        let nearest = this.chart_hover.nearest(x);
+                                        if nearest.is_some() && nearest != this.chart_hover.index()
+                                        {
+                                            this.chart_hover.set(nearest);
+                                            cx.notify();
+                                        }
+                                    },
+                                ))
+                                .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                                    if !*hovered && this.chart_hover.index().is_some() {
+                                        this.chart_hover.clear();
+                                        cx.notify();
+                                    }
+                                }))
+                                .child(chart::spend_area_chart(
+                                    cx,
+                                    &d.chart.actual,
+                                    &d.chart.baseline,
+                                    rems(16.25),
+                                    self.chart_hover.points_cell(),
+                                    self.chart_hover.bounds_cell(),
+                                ))
+                                .when_some(
+                                    chart::hover_overlay(
+                                        cx,
+                                        &self.chart_hover,
+                                        &d.chart.actual,
+                                        &d.currency,
+                                        window.rem_size(),
+                                    ),
+                                    |el, overlay| el.children(overlay),
+                                ),
                         ),
-                        |el, overlay| el.children(overlay),
                     ),
+            )
+            .children(
+                chart::axis_row(cx, &d.chart.actual, &|value| {
+                    fmt::amount(value, &d.currency)
+                })
+                .map(|axis| axis.pl(chart::Y_AXIS_INSET)),
             )
     }
 
@@ -284,7 +316,6 @@ impl AccountDetailView {
                         Button::new("go-to-accounts")
                             .label(tr!("models.open_accounts"))
                             .outline()
-                            .small()
                             .on_click(|_, _, cx| {
                                 crate::app::navigate_to(crate::app::CurrentView::Accounts, cx)
                             }),
@@ -507,6 +538,7 @@ fn render_stats(d: &AccountDetailData, cx: &App) -> impl IntoElement {
         .items_stretch()
         .gap_4()
         .child(theme::stat_card(
+            "stat-account-1",
             cx,
             tr!("detail.spend"),
             fmt::amount(d.spend, currency),
@@ -517,6 +549,7 @@ fn render_stats(d: &AccountDetailData, cx: &App) -> impl IntoElement {
             )),
         ))
         .child(theme::stat_card(
+            "stat-account-2",
             cx,
             tr!("overview.col_change"),
             d.change_pct
@@ -718,12 +751,8 @@ fn load_drilldown(account_id: &str) -> Result<AccountDrilldown> {
 /// Load the account's data-quality findings for its current billing period,
 /// worst severity first. Blocking; rides in the page load's `smol::unblock`.
 ///
-/// The ledger's health checks are scoped to a billing period, not to one
-/// account, so with several accounts in the same period the findings cover
-/// them all. For the same reason a dismissal here is period-and-kind
-/// scoped, not account scoped: dismissing a finding also hides it on the
-/// other surfaces that show the same period and kind (the Overview card
-/// and the Accounts page's Data health card).
+/// The health section's findings: this account's own charges this period,
+/// with the ones already dismissed left out.
 fn load_health(account_id: &str) -> Result<AccountHealth> {
     let account = db::get_all_accounts()?
         .into_iter()
@@ -733,12 +762,17 @@ fn load_health(account_id: &str) -> Result<AccountHealth> {
     let dismissed = data::dismissed_quality_keys();
     let mut issues = Vec::new();
     let mut dismiss_keys = Vec::new();
-    for issue in data_quality_issues(&key.billing_period, data::BUSINESS_LINE_TAG)? {
-        let dismissal_key = issue.dismissal_key(&key.billing_period);
-        if dismissed.contains(&dismissal_key) {
+    for issue in
+        account_data_quality_issues(&key.billing_period, data::BUSINESS_LINE_TAG, account_id)?
+    {
+        // Dismissing here covers this account. One dismissed for the whole
+        // period, on the Overview or Accounts page, stays dismissed here too.
+        let period_key = issue.dismissal_key(&key.billing_period);
+        let account_key = format!("{account_id}:{period_key}");
+        if dismissed.contains(&period_key) || dismissed.contains(&account_key) {
             continue;
         }
-        dismiss_keys.push(dismissal_key);
+        dismiss_keys.push(account_key);
         issues.push(issue);
     }
     issues.sort_by_key(|issue| data_health::severity_rank(issue.severity));
