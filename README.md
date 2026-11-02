@@ -142,8 +142,8 @@ CloudBridge itself is free; provider API fees are separate.
 
 ### Keyboard shortcuts
 
-**⌘1…⌘9** (**Ctrl+1…9** on Windows) switch pages in
-sidebar order, **⌘R** reloads the current page, **⌘Enter** runs a query on the
+**⌘1…⌘0** (**Ctrl+1…0** on Windows) switch pages, and the
+search palette shows the key beside each one. **⌘R** reloads the current page, **⌘Enter** runs a query on the
 Query page, and **Esc** closes a dialog. The full list is in the
 [docs](https://cloudbridge.jetsquirrel.cloud/docs.html#shortcuts).
 

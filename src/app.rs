@@ -46,7 +46,8 @@ pub struct AppState {
     pub sync: Option<SyncStatus>,
     /// A view switch a page asked for; the shell observes this entity,
     /// applies the request, and clears it. The optional string is the
-    /// target's payload — the account id for the Account detail page.
+    /// target's payload — the account id for the Account detail page, the
+    /// SQL to run for the Query page.
     navigate_to: Option<(CurrentView, Option<String>)>,
     /// A page changed data the current view shows (demo data load/clear);
     /// the shell reloads the current page and status bar when set.
@@ -81,6 +82,12 @@ impl AppState {
     /// Ask the app shell to open the Account detail page for an account.
     pub fn navigate_to_account(&mut self, account_id: String, cx: &mut Context<Self>) {
         self.navigate_to = Some((CurrentView::AccountDetail, Some(account_id)));
+        cx.notify();
+    }
+
+    /// Ask the app shell to open the Query page and run `sql` there.
+    pub fn open_query(&mut self, sql: String, cx: &mut Context<Self>) {
+        self.navigate_to = Some((CurrentView::Query, Some(sql)));
         cx.notify();
     }
 
@@ -160,6 +167,13 @@ pub fn stores_opened(cx: &mut App) {
 pub fn open_add_account(cx: &mut App) {
     let app_state = cx.global::<GlobalAppState>().0.clone();
     app_state.update(cx, |state, cx| state.open_add_account(cx));
+}
+
+/// Ask the app shell to open the Query page and run `sql` there. The browser
+/// demo has no Query page, so its callers go elsewhere.
+pub fn open_query(sql: String, cx: &mut App) {
+    let app_state = cx.global::<GlobalAppState>().0.clone();
+    app_state.update(cx, |state, cx| state.open_query(sql, cx));
 }
 
 /// Ask the app shell to open the Account detail page for an account.
@@ -309,9 +323,15 @@ impl CloudBridgeApp {
             if let Some((view, payload)) = target {
                 // The detail page's payload names the account before the
                 // switch, so the page never renders another account's data.
-                if let (CurrentView::AccountDetail, Some(account_id)) = (view, payload) {
-                    this.account_detail_view
-                        .update(cx, |v, cx| v.show(account_id, cx));
+                match (view, payload) {
+                    (CurrentView::AccountDetail, Some(account_id)) => {
+                        this.account_detail_view
+                            .update(cx, |v, cx| v.show(account_id, cx));
+                    }
+                    (CurrentView::Query, Some(sql)) => {
+                        this.query_view.update(cx, |v, cx| v.open_sql(sql, cx));
+                    }
+                    _ => {}
                 }
                 if this.current_view != view {
                     this.current_view = view;
@@ -550,15 +570,9 @@ impl CloudBridgeApp {
                     )
                     .child(
                         div()
-                            .v_flex()
-                            .gap_0p5()
-                            .child(
-                                div()
-                                    .text_lg()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child("CloudBridge"),
-                            )
-                            .child(theme::caption(cx, tr!("app.tagline"))),
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("CloudBridge"),
                     ),
             )
             // The palette's pointer entry; its tooltip teaches the shortcut.
@@ -569,7 +583,6 @@ impl CloudBridgeApp {
                     .custom(theme::outline_variant(cx))
                     .border_1()
                     .border_color(theme::card_border(cx))
-                    .small()
                     .w_full()
                     .justify_start()
                     .text_color(theme::text_muted(cx))
@@ -697,13 +710,6 @@ impl CloudBridgeApp {
                     .h_flex()
                     .items_center()
                     .gap_2()
-                    .child(theme::dot(theme::olive(cx)))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme::text_muted(cx))
-                            .child(tr!("app.local_ledger")),
-                    )
                     .child(div().flex_1())
                     // The demo has no Settings page, so its language
                     // switch lives here: one button naming the next
@@ -742,8 +748,14 @@ impl CloudBridgeApp {
             theme::text_muted(cx)
         };
 
+        let focus_ring = theme::accent(cx).opacity(0.22);
         let mut item = div()
             .id(SharedString::from(format!("nav-{}", view as u8)))
+            .role(Role::Tab)
+            .aria_label(label.clone())
+            .aria_selected(is_active)
+            .tab_index(0)
+            .focus_visible(move |style| style.bg(focus_ring))
             .h_flex()
             .items_center()
             .gap_3()
@@ -776,6 +788,11 @@ impl CloudBridgeApp {
         }
 
         item.on_click(move |_, _, cx| crate::app::navigate_to(view, cx))
+            .on_key_down(move |event, _, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    crate::app::navigate_to(view, cx);
+                }
+            })
     }
 
     /// The window's bottom status bar: sync state as one muted line, in

@@ -729,6 +729,18 @@ impl AttributionView {
         // Built before the canvas closures take ownership of the snapshots.
         let left_labels = Self::render_label_column(cx, sankey, &heights, 0, true);
         let right_labels = Self::render_label_column(cx, sankey, &heights, columns - 1, false);
+        // A middle column has no margin to sit in, so its names lie over the
+        // ribbons just right of its bars.
+        let middle_labels: Vec<Div> = (1..columns.saturating_sub(1))
+            .map(|column| {
+                let frac = column as f32 / (columns - 1) as f32;
+                Self::render_label_column(cx, sankey, &heights, column, false)
+                    .absolute()
+                    .top_0()
+                    .left(relative(frac))
+                    .ml(px(NODE_WIDTH * (1.0 - frac)))
+            })
+            .collect();
 
         // The closures are 'static, so the geometry inputs cross over as
         // owned snapshots.
@@ -767,16 +779,22 @@ impl AttributionView {
                 }
             },
         )
-        .flex_1()
-        .min_w_0()
-        .h(px(SANKEY_HEIGHT));
+        .size_full();
 
         theme::card(cx).w_full().p_5().child(
             div()
                 .w_full()
                 .h_flex()
                 .child(left_labels)
-                .child(canvas_el)
+                .child(
+                    div()
+                        .relative()
+                        .flex_1()
+                        .min_w_0()
+                        .h(px(SANKEY_HEIGHT))
+                        .child(canvas_el)
+                        .children(middle_labels),
+                )
                 .child(right_labels),
         )
     }
@@ -847,16 +865,28 @@ impl AttributionView {
                     )),
             )
             .child(body)
-            .child(
-                div().h_flex().child(
-                    Button::new("write-allocation-rule")
-                        .label(card.action.clone())
-                        .custom(theme::outline_variant(cx))
-                        .card_outline(cx)
-                        .on_click(|_, _, cx| {
-                            crate::app::navigate_to(crate::app::CurrentView::Rules, cx)
-                        }),
-                ),
+            // Spend is allocated by a tag at the provider; there is no rule
+            // here that could assign it.
+            .child(theme::caption(
+                cx,
+                tr!("accounts.tag_hint", tag = data::BUSINESS_LINE_TAG),
+            ))
+            // The Query page is desktop only.
+            .when_some(
+                data::unallocated_query().filter(|_| cfg!(not(target_family = "wasm"))),
+                |el, sql| {
+                    el.child(
+                        div().h_flex().child(
+                            Button::new("see-untagged-spend")
+                                .label(card.action.clone())
+                                .custom(theme::outline_variant(cx))
+                                .card_outline(cx)
+                                .on_click(move |_, _, cx| {
+                                    crate::app::open_query(sql.to_string(), cx)
+                                }),
+                        ),
+                    )
+                },
             )
     }
 
@@ -1285,7 +1315,6 @@ impl AttributionView {
                 div().pt_1().flex().child(
                     Button::new("attribution-open-accounts")
                         .label(tr!("models.open_accounts"))
-                        .small()
                         .custom(theme::outline_variant(cx))
                         .card_outline(cx)
                         .on_click(|_, _, cx| {

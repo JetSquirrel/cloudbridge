@@ -80,11 +80,10 @@ pub fn spend_area_chart(
             let (min, max) = padded_y_range(actual.iter().chain(baseline.iter()).copied());
 
             let to_points = |data: &[f64]| -> Vec<(f32, f32)> {
-                let denom = (data.len().saturating_sub(1)).max(1) as f32;
                 data.iter()
                     .enumerate()
                     .map(|(i, v)| {
-                        let x = origin_x + w * (i as f32 / denom);
+                        let x = origin_x + w * series_x_frac(i, data.len());
                         let frac = ((v - min) / (max - min)) as f32;
                         let y = origin_y + h * (1.0 - frac.clamp(0.0, 1.0));
                         (x, y)
@@ -131,6 +130,23 @@ pub fn spend_area_chart(
                 }
             }
 
+            // One day of data has no line to draw, so it gets a marker:
+            // without one the page reads as having no spend at all.
+            if let [(x, y)] = actual[..] {
+                let radius = rems(0.3125).to_pixels(rem);
+                let center = point(px(x), px(y));
+                window.paint_quad(
+                    fill(
+                        Bounds::new(
+                            center - point(radius, radius),
+                            size(radius * 2.0, radius * 2.0),
+                        ),
+                        line_color,
+                    )
+                    .corner_radii(radius),
+                );
+            }
+
             // 7-day baseline: dashed olive line.
             if baseline.len() >= 2 {
                 let mut dashed = PathBuilder::stroke(rems(0.09375).to_pixels(rem))
@@ -155,6 +171,110 @@ pub fn spend_area_chart(
     )
     .w_full()
     .h(height)
+}
+
+/// Where point `index` of `len` sits across the chart, from 0 to 1. A lone
+/// point sits in the middle, where its marker and date line up.
+fn series_x_frac(index: usize, len: usize) -> f32 {
+    if len <= 1 {
+        0.5
+    } else {
+        index as f32 / (len - 1) as f32
+    }
+}
+
+/// The dates to print under a chart of `points`: the first, the last and
+/// evenly spaced ones between, at most `max` in all.
+pub fn axis_labels(points: &[ChartPoint], max: usize) -> Vec<String> {
+    let count = points.len().min(max.max(2));
+    match count {
+        0 => Vec::new(),
+        1 => vec![points[0].label.clone()],
+        _ => (0..count)
+            .map(|i| {
+                let at = (i * (points.len() - 1) + (count - 1) / 2) / (count - 1);
+                points[at].label.clone()
+            })
+            .collect(),
+    }
+}
+
+/// The width a [`y_axis`] and its gap take, which the row of dates under the
+/// chart is inset by so its ends sit under the canvas's.
+pub const Y_AXIS_INSET: Rems = Rems(6.25);
+
+/// The value scale beside a chart of `height`, on the range the canvas draws
+/// with `values`. With nothing but zeros there is no scale to read, so it
+/// marks only the zero line.
+pub fn y_axis(
+    cx: &App,
+    values: impl IntoIterator<Item = f64>,
+    height: Rems,
+    format: &dyn Fn(f64) -> String,
+) -> Div {
+    let values: Vec<f64> = values.into_iter().collect();
+    let (min, max) = padded_y_range(values.iter().copied());
+    let flat = values.iter().all(|value| *value == 0.0);
+    div()
+        .w(rems(5.5))
+        .flex_shrink_0()
+        .h(height)
+        .relative()
+        .text_right()
+        .children((0..=3).filter(move |i| !flat || *i == 3).map(|i| {
+            div()
+                .absolute()
+                .right_0()
+                .top(relative(i as f32 / 3.0))
+                .mt(rems(-0.5))
+                .line_height(rems(1.0))
+                .text_xs()
+                .text_color(theme::text_muted(cx))
+                .child(format(max - (max - min) * f64::from(i) / 3.0))
+        }))
+}
+
+/// What a screen reader announces for a chart, which it cannot read.
+pub fn summary(
+    title: &SharedString,
+    points: &[ChartPoint],
+    format: &dyn Fn(f64) -> String,
+) -> SharedString {
+    match (points.first(), points.last()) {
+        (Some(first), Some(last)) => {
+            let high = points.iter().map(|p| p.amount).fold(f64::MIN, f64::max);
+            tr!(
+                "overview.chart_summary",
+                title = title,
+                first = first.label,
+                last = last.label,
+                high = format(high)
+            )
+        }
+        _ => title.clone(),
+    }
+}
+
+/// Dates printed under a chart, the two ends included.
+const AXIS_LABELS: usize = 5;
+
+/// The row under a chart: its dates, or for a single point its date and
+/// value, placed under the marker. Nothing without points.
+pub fn axis_row(cx: &App, points: &[ChartPoint], format: &dyn Fn(f64) -> String) -> Option<Div> {
+    match points {
+        [] => None,
+        [point] => Some(div().h_flex().justify_center().child(theme::caption(
+            cx,
+            format!("{}  {}", point.label, format(point.amount)),
+        ))),
+        _ => Some(
+            div().h_flex().justify_between().children(
+                axis_labels(points, AXIS_LABELS)
+                    .into_iter()
+                    .map(|label| theme::caption(cx, label)),
+            ),
+        ),
+    }
 }
 
 /// Append a Catmull-Rom-smoothed curve through `points` to the path, which
@@ -366,29 +486,31 @@ pub fn hover_overlay_with(
             .border_2()
             .border_color(theme::card_bg(cx))
             .into_any_element(),
-        theme::card(cx)
-            .absolute()
-            .left(px(tip_left))
-            .top(px(tip_top))
-            .w(px(tip_w))
-            .px_2()
-            .py_1()
-            .shadow_md()
-            .v_flex()
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme::text_muted(cx))
-                    .child(point.label.clone()),
-            )
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme::text_primary(cx))
-                    .child(format(point.amount)),
-            )
-            .into_any_element(),
+        deferred(
+            theme::card(cx)
+                .absolute()
+                .left(px(tip_left))
+                .top(px(tip_top))
+                .w(px(tip_w))
+                .px_2()
+                .py_1()
+                .shadow_md()
+                .v_flex()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_muted(cx))
+                        .child(point.label.clone()),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme::text_primary(cx))
+                        .child(format(point.amount)),
+                ),
+        )
+        .into_any_element(),
     ])
 }
 
@@ -884,35 +1006,88 @@ pub fn treemap_hover_overlay(
             .border_2()
             .border_color(theme::text_primary(cx))
             .into_any_element(),
-        theme::card(cx)
-            .absolute()
-            .left(px(tip_left))
-            .top(px(tip_top))
-            .w(px(tip_w))
-            .px_2()
-            .py_1()
-            .shadow_md()
-            .v_flex()
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme::text_muted(cx))
-                    .child(item.label.clone()),
-            )
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme::text_primary(cx))
-                    .child(fmt::amount(item.amount, currency)),
-            )
-            .child(mom)
-            .into_any_element(),
+        deferred(
+            theme::card(cx)
+                .absolute()
+                .left(px(tip_left))
+                .top(px(tip_top))
+                .w(px(tip_w))
+                .px_2()
+                .py_1()
+                .shadow_md()
+                .v_flex()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_muted(cx))
+                        .child(item.label.clone()),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme::text_primary(cx))
+                        .child(fmt::amount(item.amount, currency)),
+                )
+                .child(mom),
+        )
+        .into_any_element(),
     ])
 }
 
 #[cfg(test)]
 mod tests {
+    use super::{axis_labels, series_x_frac};
+    use crate::ui::data::ChartPoint;
+
+    fn points(labels: &[&str]) -> Vec<ChartPoint> {
+        labels
+            .iter()
+            .map(|label| ChartPoint {
+                label: label.to_string(),
+                amount: 1.0,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn axis_labels_run_from_the_first_point_to_the_last() {
+        // Across a month and a year boundary.
+        let days = points(&[
+            "2026-12-30",
+            "2026-12-31",
+            "2027-01-01",
+            "2027-01-02",
+            "2027-01-03",
+            "2027-01-04",
+            "2027-01-05",
+            "2027-01-06",
+            "2027-01-07",
+        ]);
+        let labels = axis_labels(&days, 5);
+        assert_eq!(labels.len(), 5);
+        assert_eq!(labels[0], "2026-12-30");
+        assert_eq!(labels[4], "2027-01-07");
+        assert_eq!(labels[2], "2027-01-03");
+        let mut distinct = labels.clone();
+        distinct.dedup();
+        assert_eq!(distinct, labels);
+    }
+
+    #[test]
+    fn axis_labels_never_repeat_a_date_on_a_short_series() {
+        assert!(axis_labels(&[], 5).is_empty());
+        assert_eq!(axis_labels(&points(&["a"]), 5), ["a"]);
+        assert_eq!(axis_labels(&points(&["a", "b"]), 5), ["a", "b"]);
+        assert_eq!(axis_labels(&points(&["a", "b", "c"]), 5), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn a_lone_point_sits_in_the_middle_of_the_chart() {
+        assert_eq!(series_x_frac(0, 1), 0.5);
+        assert_eq!(series_x_frac(0, 3), 0.0);
+        assert_eq!(series_x_frac(2, 3), 1.0);
+    }
     // Explicit imports only: a `use super::*` glob re-pulls `gpui_kit::*`
     // into the test expansion and tips the crate over the default macro
     // recursion limit.

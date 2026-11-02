@@ -96,7 +96,7 @@ fn open_main_window(cx: &mut App) -> anyhow::Result<WindowHandle<Root>> {
                 },
             })),
             titlebar: Some(TitlebarOptions {
-                title: Some("CloudBridge — local bill analysis".into()),
+                title: Some("CloudBridge".into()),
                 ..Default::default()
             }),
             ..Default::default()

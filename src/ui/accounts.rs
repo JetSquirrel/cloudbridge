@@ -163,9 +163,14 @@ fn keyring_note() -> SharedString {
 
 /// The places credentials are looked for, as one phrase.
 fn places_or(source: &SourceDescriptor) -> String {
-    source
+    let places = source
         .credential_places()
-        .join(&rust_i18n::t!("accounts.join_or"))
+        .join(&rust_i18n::t!("accounts.join_or"));
+    if cfg!(target_os = "windows") {
+        places.replace("~/", "%USERPROFILE%\\").replace('/', "\\")
+    } else {
+        places
+    }
 }
 
 /// Whether this machine has a usable key for `source` right now: a key,
@@ -500,7 +505,11 @@ impl AccountsView {
             .child(theme::caption(
                 cx,
                 if self.use_system_credentials {
-                    tr!("accounts.use_system_hint", places = places)
+                    if cfg!(target_os = "macos") {
+                        tr!("accounts.use_system_hint_finder", places = places)
+                    } else {
+                        tr!("accounts.use_system_hint", places = places)
+                    }
                 } else {
                     tr!("accounts.enter_key_hint", places = places)
                 },
@@ -1125,7 +1134,6 @@ impl AccountsView {
 
                 Button::new(SharedString::from(format!("source-{}", source.id)))
                     .label(source.short_name)
-                    .small()
                     .when(!source.fetches_from_api(), |button| {
                         button.tooltip(tr!("accounts.import_only_tooltip"))
                     })
@@ -1190,7 +1198,8 @@ impl AccountsView {
             .child(
                 Button::new("add")
                     .label(tr!("palette.add_account"))
-                    .primary()
+                    .custom(theme::outline_variant(cx))
+                    .card_outline(cx)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.show_add_dialog(window, cx);
                     })),
@@ -1427,35 +1436,47 @@ impl AccountsView {
                     .gap_1()
                     .flex_shrink_0()
                     .whitespace_nowrap()
-                    .when_some(account_for_validate, |el, account| {
-                        el.child(
-                            Button::new(SharedString::from(format!("validate-{}", validate_id)))
-                                .label(tr!("accounts.validate"))
-                                .ghost()
-                                .small()
-                                .disabled(self.validating_ids.contains(&row.id))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.validate_account(&account, cx);
-                                })),
-                        )
-                    })
-                    .when_some(account_for_import, |el, account| {
-                        el.child(
-                            Button::new(SharedString::from(format!("import-{}", import_id)))
-                                .label(tr!("accounts.import"))
-                                .ghost()
-                                .small()
-                                .disabled(self.importing_ids.contains(&row.id))
-                                .tooltip(
-                                    "Read a bill export downloaded from this \
-                                     provider's console. It replaces every month \
-                                     the file covers.",
+                    // Fixed slots, so Import and Delete hold their column in a
+                    // row that has no Validate.
+                    .child(
+                        div()
+                            .w(rems(4.75))
+                            .when_some(account_for_validate, |el, account| {
+                                el.child(
+                                    Button::new(SharedString::from(format!(
+                                        "validate-{}",
+                                        validate_id
+                                    )))
+                                    .label(tr!("accounts.validate"))
+                                    .ghost()
+                                    .small()
+                                    .disabled(self.validating_ids.contains(&row.id))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.validate_account(&account, cx);
+                                    })),
                                 )
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.import_bill_file(&account, cx);
-                                })),
-                        )
-                    })
+                            }),
+                    )
+                    .child(
+                        div()
+                            .w(rems(4.0))
+                            .when_some(account_for_import, |el, account| {
+                                el.child(
+                                    Button::new(SharedString::from(format!(
+                                        "import-{}",
+                                        import_id
+                                    )))
+                                    .label(tr!("accounts.import"))
+                                    .ghost()
+                                    .small()
+                                    .disabled(self.importing_ids.contains(&row.id))
+                                    .tooltip(tr!("accounts.import_tooltip"))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.import_bill_file(&account, cx);
+                                    })),
+                                )
+                            }),
+                    )
                     .child(
                         Button::new(SharedString::from(format!("delete-{}", delete_id)))
                             .label(tr!("common.delete"))
@@ -2333,11 +2354,7 @@ fn render_untagged_finding(untagged: &UntaggedSummary, currency: &str, cx: &App)
                 )))
                 .child(theme::caption(
                     cx,
-                    format!(
-                        "Tag these resources with '{}' at your provider so their spend \
-                         lands on a business line.",
-                        data::BUSINESS_LINE_TAG
-                    ),
+                    tr!("accounts.tag_hint", tag = data::BUSINESS_LINE_TAG),
                 ))
                 // The template lives on the Query page, which the browser
                 // demo does not offer: there is no SQL engine under it.
@@ -2347,10 +2364,12 @@ fn render_untagged_finding(untagged: &UntaggedSummary, currency: &str, cx: &App)
                             Button::new("open-untagged-query")
                                 .label(tr!("accounts.open_query_template"))
                                 .outline()
-                                .small()
                                 .tooltip(tr!("accounts.query_template_tooltip"))
-                                .on_click(|_, _, cx| {
-                                    crate::app::navigate_to(crate::app::CurrentView::Query, cx)
+                                .on_click(|_, _, cx| match data::unallocated_query() {
+                                    Some(sql) => crate::app::open_query(sql.to_string(), cx),
+                                    None => {
+                                        crate::app::navigate_to(crate::app::CurrentView::Query, cx)
+                                    }
                                 }),
                         ),
                     )

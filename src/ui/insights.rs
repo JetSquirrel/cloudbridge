@@ -18,6 +18,7 @@ use chrono::Utc;
 use gpui_kit::component::{
     button::*,
     checkbox::Checkbox,
+    clipboard::Clipboard,
     dialog::{Cancel, Confirm, Dialog, DialogFooter},
     skeleton::Skeleton,
     Disableable as _, Icon, IconName, Sizable as _, StyledExt,
@@ -63,6 +64,9 @@ fn kinds(scripts: &ScriptRun) -> Vec<InsightKind> {
 
 /// One load of the page: the period's report and what it was judged from.
 pub struct InsightsData {
+    /// Demo accounts are configured, so the inventory and findings may be
+    /// the demo's rather than a scan of a real account.
+    pub has_demo_accounts: bool,
     pub currency: String,
     pub period_label: String,
     pub report: InsightsReport,
@@ -118,6 +122,7 @@ pub fn load_insights() -> Result<InsightsData> {
         .map(|kind| (*kind, findings_by_type(&report.findings, *kind)))
         .collect();
     Ok(InsightsData {
+        has_demo_accounts: data::AccountCounts::load()?.demo > 0,
         currency,
         period_label: period,
         report,
@@ -420,7 +425,6 @@ impl InsightsView {
     fn scan_button(&self, id: &'static str, label: SharedString, cx: &Context<Self>) -> Button {
         Button::new(id)
             .label(label)
-            .small()
             .custom(theme::outline_variant(cx))
             .card_outline(cx)
             .disabled(self.scan != ScanState::Idle)
@@ -534,14 +538,23 @@ impl InsightsView {
             }
             if report.described < report.resources {
                 // Stopped instances can only be told from configuration.
-                parts.push(tr!("insights.described", n = report.described).to_string());
+                parts.push(
+                    tr!(
+                        "insights.described",
+                        n = report.described,
+                        total = report.resources
+                    )
+                    .to_string(),
+                );
             }
         }
         if report.priced && report.billed_cost > 0.0 {
             parts.push(
                 tr!(
                     "insights.matched",
-                    pct = format!("{:.1}", 100.0 * report.matched_cost / report.billed_cost)
+                    pct = format!("{:.1}", 100.0 * report.matched_cost / report.billed_cost),
+                    matched = fmt::amount(report.matched_cost, &d.currency),
+                    billed = fmt::amount(report.billed_cost, &d.currency)
                 )
                 .to_string(),
             );
@@ -560,48 +573,76 @@ impl InsightsView {
         theme::caption(cx, parts.join(&rust_i18n::t!("insights.parts_separator")))
     }
 
+    /// Says the findings may not be from a real scan, as the Overview does
+    /// for its totals.
+    fn render_demo_notice(&self, cx: &Context<Self>) -> impl IntoElement {
+        div()
+            .w_full()
+            .h_flex()
+            .items_center()
+            .gap_3()
+            .child(theme::pill_outline(cx, tr!("overview.demo")))
+            .child(theme::caption(cx, tr!("insights.demo_included")))
+    }
+
     fn render_stats(&self, d: &InsightsData, cx: &Context<Self>) -> impl IntoElement {
-        div().w_full().h_flex().items_stretch().gap_4().children(
-            d.kinds
-                .iter()
-                .filter(|kind| {
-                    // A script rule's card shows only when it found something;
-                    // the built-in cards are always there.
-                    !matches!(kind, InsightKind::Script(_))
-                        || d.report.findings.iter().any(|f| f.kind == **kind)
-                })
-                .map(|kind| {
-                    let of_kind = d.report.findings.iter().filter(|f| f.kind == *kind);
-                    let (count, cost) = of_kind.fold((0, 0.0), |(n, c), f| (n + 1, c + f.cost));
-                    // Without a resource-level bill there is no price to lead
-                    // with; the count is the figure.
-                    let (value, sub) = if d.report.priced {
-                        (
-                            fmt::amount(cost, &d.currency),
-                            if count == 1 {
-                                tr!("insights.one_resource")
-                            } else {
-                                tr!("insights.n_resources", n = count)
-                            },
+        let cards = div()
+            .w_full()
+            .h_flex()
+            .flex_wrap()
+            .items_stretch()
+            .gap_4()
+            .children(
+                d.kinds
+                    .iter()
+                    .filter(|kind| {
+                        // A script rule's card shows only when it found something;
+                        // the built-in cards are always there.
+                        !matches!(kind, InsightKind::Script(_))
+                            || d.report.findings.iter().any(|f| f.kind == **kind)
+                    })
+                    .map(|kind| {
+                        let of_kind = d.report.findings.iter().filter(|f| f.kind == *kind);
+                        let (count, cost) = of_kind.fold((0, 0.0), |(n, c), f| (n + 1, c + f.cost));
+                        // Without a resource-level bill there is no price to lead
+                        // with; the count is the figure.
+                        let (value, sub) = if d.report.priced {
+                            (
+                                fmt::amount(cost, &d.currency),
+                                if count == 1 {
+                                    tr!("insights.one_resource")
+                                } else {
+                                    tr!("insights.n_resources", n = count)
+                                },
+                            )
+                        } else {
+                            (
+                                count.to_string(),
+                                if count == 1 {
+                                    tr!("insights.not_priced_one")
+                                } else {
+                                    tr!("insights.not_priced")
+                                },
+                            )
+                        };
+                        theme::stat_card(
+                            SharedString::from(format!("stat-insights-{kind:?}")),
+                            cx,
+                            stat_label(d, *kind),
+                            value,
+                            div().text_color(theme::text_muted(cx)).child(sub),
                         )
-                    } else {
-                        (
-                            count.to_string(),
-                            if count == 1 {
-                                tr!("insights.not_priced_one")
-                            } else {
-                                tr!("insights.not_priced")
-                            },
-                        )
-                    };
-                    theme::stat_card(
-                        cx,
-                        stat_label(d, *kind),
-                        value,
-                        div().text_color(theme::text_muted(cx)).child(sub),
-                    )
-                }),
-        )
+                        // Script rules can add cards without limit; they wrap
+                        // rather than shrink past what their amount needs.
+                        .min_w(rems(13.0))
+                    }),
+            );
+        div()
+            .w_full()
+            .v_flex()
+            .gap_2()
+            .child(cards)
+            .child(theme::caption(cx, tr!("insights.cost_basis")))
     }
 
     fn render_kind(&self, d: &InsightsData, kind: InsightKind, cx: &Context<Self>) -> AnyElement {
@@ -711,8 +752,16 @@ impl InsightsView {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let toggle_key = key.to_string();
+        let keyboard_key = key.to_string();
+        let focus_ring = theme::sidebar_bg(cx);
+        let accessible_name = SharedString::from(format!("{label}: {count}"));
         div()
             .id(SharedString::from(format!("group-{key}")))
+            .role(Role::Button)
+            .aria_label(accessible_name)
+            .aria_expanded(open)
+            .tab_index(0)
+            .focus_visible(move |style| style.bg(focus_ring))
             .h_flex()
             .items_center()
             .gap_4()
@@ -748,11 +797,20 @@ impl InsightsView {
             .child(div().w_24().text_right().child(count.to_string()))
             .child(trailing)
             .on_click(cx.listener(move |this, _, _, cx| {
-                if this.expanded.remove(&toggle_key).is_none() {
-                    this.expanded.insert(toggle_key.clone(), PAGE_ROWS);
-                }
-                cx.notify();
+                this.toggle_group(&toggle_key, cx);
             }))
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    this.toggle_group(&keyboard_key, cx);
+                }
+            }))
+    }
+
+    fn toggle_group(&mut self, key: &str, cx: &mut Context<Self>) {
+        if self.expanded.remove(key).is_none() {
+            self.expanded.insert(key.to_string(), PAGE_ROWS);
+        }
+        cx.notify();
     }
 
     /// Under an open group: how many of its rows show, and a button for
@@ -966,7 +1024,6 @@ impl InsightsView {
             .child(
                 Button::new("insights-open-accounts-pricing")
                     .label(tr!("models.open_accounts"))
-                    .small()
                     .custom(theme::outline_variant(cx))
                     .card_outline(cx)
                     .on_click(|_, _, cx| {
@@ -1021,7 +1078,6 @@ impl InsightsView {
                     .child(
                         Button::new("insights-open-accounts")
                             .label(tr!("models.open_accounts"))
-                            .small()
                             .custom(theme::outline_variant(cx))
                             .card_outline(cx)
                             .on_click(|_, _, cx| {
@@ -1253,10 +1309,17 @@ fn render_row(finding: &InsightFinding, priced: bool, currency: &str, cx: &App) 
         .name
         .clone()
         .unwrap_or_else(|| resource_key(&finding.resource_id).to_string());
+    // One resource shows once under a kind, so kind and id name the row.
+    let row_id = format!("{:?}-{}", finding.kind, finding.resource_id);
+    let trace = data::resource_trace_query(
+        &finding.provider,
+        &finding.resource_id,
+        resource_key(&finding.resource_id),
+    );
     div()
         .w_full()
         .h_flex()
-        .items_center()
+        .items_start()
         .gap_4()
         .py_2()
         .border_t_1()
@@ -1271,18 +1334,52 @@ fn render_row(finding: &InsightFinding, priced: bool, currency: &str, cx: &App) 
                     div()
                         .text_sm()
                         .text_color(theme::text_primary(cx))
-                        .whitespace_nowrap()
-                        .text_ellipsis()
                         .child(label),
+                )
+                .child(
+                    div()
+                        .h_flex()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            div()
+                                .min_w_0()
+                                .text_xs()
+                                .text_color(theme::text_muted(cx))
+                                .child(finding.resource_id.clone()),
+                        )
+                        .child(
+                            Clipboard::new(SharedString::from(format!("copy-{row_id}")))
+                                .value(finding.resource_id.clone())
+                                .accessibility_label(tr!("insights.copy_id")),
+                        ),
                 )
                 .child(
                     div()
                         .text_xs()
                         .text_color(theme::text_muted(cx))
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .child(format!("{} — {}", finding.resource_id, finding.evidence)),
-                ),
+                        .child(finding.evidence.clone()),
+                )
+                .when_some(finding.cloud_account_id.clone(), |el, account| {
+                    el.child(theme::caption(
+                        cx,
+                        tr!("insights.in_account", account = account),
+                    ))
+                })
+                // The Query page is desktop only.
+                .when(cfg!(not(target_family = "wasm")), |el| {
+                    el.child(
+                        div().flex().child(
+                            Button::new(SharedString::from(format!("trace-{row_id}")))
+                                .label(tr!("alerts.action_trace_charges"))
+                                .ghost()
+                                .small()
+                                .on_click(move |_, _, cx| {
+                                    crate::app::open_query(trace.clone(), cx)
+                                }),
+                        ),
+                    )
+                }),
         )
         // No type column: the row sits under its type's group.
         .child(
@@ -1521,6 +1618,9 @@ impl Render for InsightsView {
                     } else {
                         el.when(!d.report.priced && d.scope.is_some(), |el| {
                             el.child(self.render_unpriced(cx))
+                        })
+                        .when(d.has_demo_accounts, |el| {
+                            el.child(self.render_demo_notice(cx))
                         })
                         .child(self.render_stats(d, cx))
                         .children(d.kinds.iter().map(|kind| self.render_kind(d, *kind, cx)))

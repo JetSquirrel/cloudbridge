@@ -223,6 +223,15 @@ pub struct QueryView {
     /// Bumped on every run so an overlapping older run discards its result
     /// instead of clobbering fresher state.
     run_generation: u64,
+    /// The SQL behind the result pane, to tell when the editor has moved on.
+    ran_sql: String,
+    /// The reporting currency when the result ran, and now, as of the last
+    /// visit to this page: Settings is the only place that changes it.
+    ran_currency: String,
+    current_currency: String,
+    /// SQL another page sent over, applied on the next render, which has the
+    /// window that filling the editor needs.
+    pending_sql: Option<String>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -259,6 +268,10 @@ impl QueryView {
         // editor is focused; the PressEnter event is the only signal left.
         // The newline is already inserted by then, so undo it before running.
         let subscription = cx.subscribe_in(&editor, window, |this, editor, event, window, cx| {
+            // The status row says whether the result still matches the text.
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
             if matches!(
                 event,
                 InputEvent::PressEnter {
@@ -277,14 +290,27 @@ impl QueryView {
             status: QueryStatus::Empty,
             running: false,
             run_generation: 0,
+            ran_sql: String::new(),
+            ran_currency: String::new(),
+            current_currency: data::reporting_currency(),
+            pending_sql: None,
             _subscriptions: vec![subscription],
         }
     }
 
-    /// Called by the app shell when this page is navigated to. The query
-    /// page has nothing to refresh: the editor's text and the last result
-    /// stay as the user left them.
-    pub fn reload(&mut self, _cx: &mut Context<Self>) {}
+    /// Called by the app shell when this page is navigated to. The editor's
+    /// text and the last result stay as the user left them; only whether that
+    /// result is still current can have changed.
+    pub fn reload(&mut self, cx: &mut Context<Self>) {
+        self.current_currency = data::reporting_currency();
+        cx.notify();
+    }
+
+    /// Show `sql` in the editor and run it.
+    pub fn open_sql(&mut self, sql: String, cx: &mut Context<Self>) {
+        self.pending_sql = Some(sql);
+        cx.notify();
+    }
 
     /// The editor inserts `"\n" + indent` before emitting `PressEnter`; the
     /// cursor then sits right after the insertion. Delete exactly that
@@ -334,6 +360,10 @@ impl QueryView {
         self.editor.update(cx, |editor, cx| {
             editor.set_value(template.sql, window, cx);
         });
+        if matches!(self.status, QueryStatus::Failed(_)) {
+            self.status = QueryStatus::Empty;
+        }
+        cx.notify();
         self.focus_editor(window, cx);
     }
 
@@ -350,6 +380,9 @@ impl QueryView {
             return;
         }
 
+        self.ran_sql = sql.clone();
+        self.current_currency = data::reporting_currency();
+        self.ran_currency = self.current_currency.clone();
         self.running = true;
         self.status = QueryStatus::Running;
         self.run_generation += 1;
@@ -469,6 +502,20 @@ impl QueryView {
             )),
             _ => None,
         };
+        // A kept result no longer describes SQL that has changed since.
+        let edited = matches!(self.status, QueryStatus::Rows(_))
+            && (self.editor.read(cx).value().trim() != self.ran_sql.trim()
+                || self.current_currency != self.ran_currency);
+        let line = line.map(|(text, color)| {
+            if edited {
+                (
+                    tr!("query.result_outdated", status = text).to_string(),
+                    theme::warning_text(cx),
+                )
+            } else {
+                (text, color)
+            }
+        });
 
         // The row keeps its slot whether or not it has text, so the result
         // pane does not jump when a run starts.
@@ -534,7 +581,16 @@ impl QueryView {
 }
 
 impl Render for QueryView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(sql) = self.pending_sql.take() {
+            cx.defer_in(window, move |this, window, cx| {
+                this.editor.update(cx, |editor, cx| {
+                    editor.set_value(sql, window, cx);
+                });
+                this.run(cx);
+            });
+        }
+
         let header = div()
             .flex_shrink_0()
             .h_flex()

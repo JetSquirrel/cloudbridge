@@ -25,11 +25,12 @@ crate-type = ["rlib"]
 [dependencies]
 # GPUI Kit: the single dependency for GPUI, gpui-base, the styled
 # components and the default assets. Default features are `component` and
-# `assets`; the tree-sitter grammars stay off, so no syntax-highlighting
-# stack is compiled into a cost dashboard. It carries its own
+# `assets`. `syntect` colours the Query page's SQL: the regex highlighter is
+# pure Rust, so it also builds for the web demo, which the tree-sitter grammars
+# do not, and it costs a few megabytes rather than tens. It carries its own
 # `cfg(target_family = "wasm")` dependency on `gpui-pre-web`, which is what
 # lets the whole UI compile for the browser.
-gpui-kit = "0.8.1"
+gpui-kit = { version = "0.8.1", features = ["syntect"] }
 
 # Run blocking operations in GPUI async context. A local forwarding crate,
 # so that the pages calling `smol::unblock` need no target-specific code —
