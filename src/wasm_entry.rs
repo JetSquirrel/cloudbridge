@@ -102,6 +102,8 @@ pub fn run(page_url: String) -> Result<(), JsValue> {
         )));
 
     let launch = move |cx: &mut App| {
+        // The browser's language: the demo has no saved setting.
+        crate::i18n::init();
         gpui_kit::init(cx);
         add_fonts(cx);
         apply_theme(cx);

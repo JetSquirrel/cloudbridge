@@ -458,7 +458,7 @@ pub fn top_tiles(mut items: Vec<TreemapItem>, cap: usize) -> Vec<TreemapItem> {
         (a + item.amount, p + item.previous)
     });
     items.push(TreemapItem::new(
-        format!("{} more", tail.len()),
+        tr!("chart.n_more", n = tail.len()).to_string(),
         amount,
         previous,
     ));
@@ -863,12 +863,12 @@ pub fn treemap_hover_overlay(
             div()
                 .text_xs()
                 .text_color(color)
-                .child(format!("{} vs last month", fmt::change_pct(m * 100.0)))
+                .child(tr!("panel.vs_last_month", pct = fmt::change_pct(m * 100.0)))
         }
         None => div()
             .text_xs()
             .text_color(theme::warning_text(cx))
-            .child("New this period".to_string()),
+            .child(tr!("chart.new_this_period")),
     };
 
     Some(vec![

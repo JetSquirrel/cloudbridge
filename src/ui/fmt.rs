@@ -97,15 +97,15 @@ pub fn unit_cost(cost: Option<f64>, currency: &str) -> String {
 pub fn relative_time(at: DateTime<Utc>) -> String {
     let elapsed = (Utc::now() - at).num_minutes().max(0);
     if elapsed < 1 {
-        "just now".to_string()
+        tr!("time.just_now").into()
     } else if elapsed < 60 {
-        format!("{elapsed} min ago")
+        tr!("time.minutes_ago", n = elapsed).into()
     } else if elapsed < 48 * 60 {
-        format!("{} h ago", elapsed / 60)
+        tr!("time.hours_ago", n = elapsed / 60).into()
     } else if elapsed < 7 * 24 * 60 {
-        format!("{} d ago", elapsed / (24 * 60))
+        tr!("time.days_ago", n = elapsed / (24 * 60)).into()
     } else {
-        at.format("%b %d").to_string()
+        at.format(&rust_i18n::t!("time.short_date")).to_string()
     }
 }
 

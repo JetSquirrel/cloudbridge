@@ -52,6 +52,13 @@ tracing = "0.1"
 # UUID generation
 uuid = { version = "1", features = ["v4"] }
 
+# Interface translations, the same mechanism gpui-kit's components use, so
+# one `set_locale` switches both. The strings are in `locales/ui.yml`,
+# compiled in by `i18n!` in `lib.rs`; see `src/i18n.rs`.
+rust-i18n = "4.2"
+# The OS (or browser) language, for a first launch that has not picked one.
+sys-locale = "0.3"
+
 # Desktop only: signing, storage, the billing APIs and the OS integrations
 # a browser has no equivalent for.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
@@ -153,6 +160,11 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 # `uuid`'s v4 needs a randomness source the browser exposes only through
 # `crypto.getRandomValues`, which `getrandom`'s `js` feature wires up.
 getrandom = { version = "0.2", features = ["js"] }
+
+# The demo's language follows the browser's, which `sys-locale` reads from
+# `navigator.languages` only with its `js` feature; without it every
+# visitor gets English.
+sys-locale = { version = "0.3", features = ["js"] }
 
 # Gzips the CSV export fixtures, the way AWS Data Exports delivers them.
 # Already in the tree through `zip`.

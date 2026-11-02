@@ -157,6 +157,38 @@ rules from the rolling `insight-rules` release that
   Locally: `npm test` in `insights-rules/`, then
   `CLOUDBRIDGE_RULES_DIST=$PWD/insights-rules/dist cargo test insight_scripts`.
 
+## Interface language (i18n)
+
+Strings shown to a person live in `locales/ui.yml` and are looked up with
+`tr!("section.key", name = value)` — `rust_i18n::t!` as a `SharedString`,
+declared in `src/lib.rs` — or `rust_i18n::t!` where a `String` is wanted.
+This is the mechanism gpui-kit's components use, set up as
+<https://gpui-kit.com/docs/i18n/> describes: `i18n!` in `lib.rs`,
+`rust_i18n::extend!(gpui_component)` before `gpui_kit::init` (see
+`src/i18n.rs`), and component overrides under a `gpui_component` key.
+
+- **A new string gets a key in every language.** `i18n::tests` fails on a
+  key missing from one, so a gap is a test failure, not a raw key on
+  screen. A value placed in a message stays inside it as `%{name}`; never
+  build a sentence from translated fragments.
+- **Translate what is shown, not what is matched on.** Several strings are
+  identities too: alert actions ("Dismiss"), filter chips, the "Other",
+  "Unallocated" and "Uncategorized" buckets, Query template titles, the
+  seeded rule names and scopes, rule config values. They stay English in
+  the data and are translated at display (`i18n::bucket_label`,
+  `ui::alerts::kind_name`, `ui::data::template_text`, `alerts::shown_name`).
+  An element id must not be built from a translated label.
+- **The locale is outside GPUI's change tracking.** `i18n::set_language`
+  refreshes the windows and reloads the page on screen; labels a page
+  built while loading its data are rebuilt on its next load. Anything
+  cached elsewhere — the tray menu is built once — keeps the old language
+  until it is rebuilt.
+- **Stored text keeps the language it was written in.** Alert titles,
+  bodies and field labels are written when the alert fires.
+- Amounts, dates and relative times go through `ui::fmt`; a date format
+  string is itself a key (`time.short_date`, `range.month_format`).
+- The system-info text copied for a bug report stays English on purpose.
+
 ## The web demo (wasm32)
 
 The same crate builds a browser version:

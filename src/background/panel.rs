@@ -143,7 +143,11 @@ impl MenuBarPanel {
             .gap_1()
             .child(theme::caption(
                 cx,
-                format!("{} to date, in {}", now.format("%B"), summary.currency),
+                tr!(
+                    "panel.to_date",
+                    month = now.format(&rust_i18n::t!("panel.month_format")),
+                    currency = summary.currency
+                ),
             ))
             .child(
                 div()
@@ -157,15 +161,15 @@ impl MenuBarPanel {
                     .h_flex()
                     .gap_2()
                     .text_sm()
-                    .child(div().text_color(theme::text_muted(cx)).child(format!(
-                        "Forecast {} by month end",
-                        fmt::amount(summary.forecast, &summary.currency)
+                    .child(div().text_color(theme::text_muted(cx)).child(tr!(
+                        "panel.forecast",
+                        amount = fmt::amount(summary.forecast, &summary.currency)
                     )))
                     .when_some(summary.change_pct, |el, pct| {
                         el.child(
                             div()
                                 .text_color(theme::accent(cx))
-                                .child(format!("{} vs last month", fmt::change_pct(pct))),
+                                .child(tr!("panel.vs_last_month", pct = fmt::change_pct(pct))),
                         )
                     }),
             )
@@ -180,7 +184,7 @@ impl MenuBarPanel {
                 .items_center()
                 .text_color(theme::text_muted(cx))
                 .child(Icon::new(IconName::CircleCheck).small())
-                .child("No open alerts")
+                .child(tr!("panel.no_alerts"))
         } else {
             let color = if summary.has_critical() {
                 theme::danger(cx)
@@ -195,9 +199,9 @@ impl MenuBarPanel {
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(Icon::new(IconName::TriangleAlert).small())
                 .child(if count == 1 {
-                    "1 open alert".to_string()
+                    tr!("panel.one_alert")
                 } else {
-                    format!("{count} open alerts")
+                    tr!("panel.n_alerts", n = count)
                 })
         };
 
@@ -251,7 +255,7 @@ impl MenuBarPanel {
                         .px_2()
                         .text_xs()
                         .text_color(theme::text_muted(cx))
-                        .child(format!("and {} more", count - LISTED_ALERTS)),
+                        .child(tr!("panel.and_more", n = count - LISTED_ALERTS)),
                 )
             })
     }
@@ -264,15 +268,15 @@ impl MenuBarPanel {
             .gap_2()
             .border_t_1()
             .border_color(theme::card_border(cx))
-            .child(theme::section_title(cx, "Biggest movers this month"))
+            .child(theme::section_title(cx, tr!("panel.movers")))
             .when(summary.movers.is_empty(), |el| {
-                el.child(theme::caption(cx, "Nothing billed yet this month."))
+                el.child(theme::caption(cx, tr!("panel.nothing_billed")))
             })
             .children(summary.movers.iter().map(|mover| {
                 let (delta, delta_color) = match mover.change_pct {
                     Some(pct) if pct < 0.0 => (fmt::change_pct(pct), theme::text_muted(cx)),
                     Some(pct) => (fmt::change_pct(pct), theme::accent(cx)),
-                    None => ("new".to_string(), theme::text_muted(cx)),
+                    None => (tr!("panel.new").into(), theme::text_muted(cx)),
                 };
                 div()
                     .h_flex()
@@ -313,16 +317,16 @@ impl MenuBarPanel {
 
     fn render_footer(&self, status: &Status, cx: &App) -> impl IntoElement {
         let line = if status.refreshing {
-            "Refreshing…".to_string()
+            tr!("common.refreshing")
         } else if !status.failures.is_empty() {
             match status.failures.len() {
-                1 => "1 account failed to refresh".to_string(),
-                n => format!("{n} accounts failed to refresh"),
+                1 => tr!("panel.one_failed"),
+                n => tr!("panel.n_failed", n = n),
             }
         } else {
             match status.summary.as_ref().and_then(|s| s.last_synced_at) {
-                Some(at) => format!("Synced {}", fmt::relative_time(at)),
-                None => "Not synced yet".to_string(),
+                Some(at) => tr!("status.synced", when = fmt::relative_time(at)),
+                None => tr!("panel.not_synced"),
             }
         };
         let line_color = if !status.refreshing && !status.failures.is_empty() {
@@ -341,7 +345,7 @@ impl MenuBarPanel {
             .border_color(theme::card_border(cx))
             .child(
                 Button::new("panel-quit")
-                    .label("Quit")
+                    .label(tr!("panel.quit"))
                     .ghost()
                     .xsmall()
                     .on_click(|_, _, cx| cx.quit()),
@@ -363,12 +367,12 @@ impl MenuBarPanel {
                     .small()
                     .loading(status.refreshing)
                     .disabled(status.refreshing)
-                    .tooltip("Fetch accounts that are due")
+                    .tooltip(tr!("panel.refresh_tooltip"))
                     .on_click(|_, _, cx| super::refresh_now(cx)),
             )
             .child(
                 Button::new("panel-open")
-                    .label("Open CloudBridge")
+                    .label(tr!("panel.open"))
                     .primary()
                     .small()
                     .on_click(|_, window, cx| Self::open_window_on(None, window, cx)),
@@ -395,7 +399,7 @@ impl Render for MenuBarPanel {
                 .gap_2()
                 .text_color(theme::text_muted(cx))
                 .child(Icon::new(IconName::LoaderCircle))
-                .child("Reading the ledger…")
+                .child(tr!("panel.reading"))
                 .into_any_element(),
             Some(summary) if summary.real_accounts == 0 => div()
                 .flex_1()
@@ -404,20 +408,17 @@ impl Render for MenuBarPanel {
                 .items_center()
                 .justify_center()
                 .gap_3()
-                .child(theme::section_title(cx, "No accounts yet"))
+                .child(theme::section_title(cx, tr!("overview.no_accounts")))
                 .child(
                     div()
                         .text_center()
                         .text_sm()
                         .text_color(theme::text_muted(cx))
-                        .child(
-                            "Add a cloud account and CloudBridge watches its spend \
-                             from here, window open or not.",
-                        ),
+                        .child(tr!("panel.no_accounts_hint")),
                 )
                 .child(
                     Button::new("panel-add-account")
-                        .label("Add an account")
+                        .label(tr!("panel.add_account"))
                         .primary()
                         .small()
                         .on_click(|_, window, cx| {

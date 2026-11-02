@@ -69,7 +69,10 @@ impl InsightRulesView {
                         this.local = local;
                         this.record = record;
                     }
-                    Err(e) => this.error = Some(format!("Couldn't read the rules folder: {e:#}")),
+                    Err(e) => {
+                        this.error =
+                            Some(tr!("insight_rules.read_failed", error = format!("{e:#}")).into())
+                    }
                 }
                 cx.notify();
             })
@@ -92,7 +95,8 @@ impl InsightRulesView {
                 match fetched {
                     Ok(index) => this.index = Some(index),
                     Err(e) => {
-                        this.error = Some(format!("{e:#}. Check your connection and try again."))
+                        this.error =
+                            Some(tr!("insight_rules.fetch_failed", error = format!("{e:#}")).into())
                     }
                 }
                 cx.notify();
@@ -123,7 +127,21 @@ impl InsightRulesView {
                 this.busy = None;
                 if let Err(e) = outcome {
                     tracing::error!("Couldn't {what} insight rule {id}: {e:#}");
-                    this.error = Some(format!("Couldn't {what} {id}: {e:#}"));
+                    this.error = Some(
+                        match what {
+                            "install" => tr!(
+                                "insight_rules.install_failed",
+                                id = id,
+                                error = format!("{e:#}")
+                            ),
+                            _ => tr!(
+                                "insight_rules.remove_failed",
+                                id = id,
+                                error = format!("{e:#}")
+                            ),
+                        }
+                        .into(),
+                    );
                 }
                 this.reload_local(cx);
             })
@@ -146,7 +164,8 @@ impl InsightRulesView {
         match insight_catalog::ensure_rules_dir() {
             Ok(dir) => cx.open_with_system(&dir),
             Err(e) => {
-                self.error = Some(format!("Couldn't open the rules folder: {e:#}"));
+                self.error =
+                    Some(tr!("insight_rules.open_failed", error = format!("{e:#}")).into());
                 cx.notify();
             }
         }
@@ -163,19 +182,16 @@ impl InsightRulesView {
         let view = cx.entity().downgrade();
         let (title, description, ok) = match &self.pending {
             Some(Pending::Delete(id)) => (
-                format!("Delete \u{201c}{id}.js\u{201d}?"),
-                "It is not from the catalog, so it can't be installed again from here.".to_string(),
-                "Delete",
+                tr!("insight_rules.delete_title", id = id).to_string(),
+                tr!("insight_rules.delete_body").to_string(),
+                tr!("common.delete"),
             ),
             Some(Pending::Replace(entry)) => (
-                format!("Replace your edited \u{201c}{}.js\u{201d}?", entry.id),
-                format!(
-                    "Version {} from the catalog overwrites your changes.",
-                    entry.version
-                ),
-                "Replace",
+                tr!("insight_rules.replace_title", id = entry.id).to_string(),
+                tr!("insight_rules.replace_body", version = entry.version).to_string(),
+                tr!("insight_rules.replace"),
             ),
-            None => (String::new(), String::new(), "OK"),
+            None => (String::new(), String::new(), SharedString::from("OK")),
         };
         alert
             .title(title)
@@ -212,26 +228,43 @@ impl InsightRulesView {
             let providers = if e.providers.is_empty() {
                 String::new()
             } else {
-                format!(", for {}", e.providers.join(", "))
+                tr!(
+                    "insight_rules.for_providers",
+                    providers = e.providers.join(", ")
+                )
+                .to_string()
             };
-            format!("Version {} by {}{providers}", e.version, e.author)
+            tr!(
+                "insight_rules.version_by",
+                version = e.version,
+                author = e.author,
+                providers = providers
+            )
+            .to_string()
         });
         let status: Option<String> = match &row.status {
             RuleStatus::Available => None,
-            RuleStatus::UpToDate => Some("Installed".to_string()),
+            RuleStatus::UpToDate => Some(tr!("insight_rules.installed").into()),
             RuleStatus::UpdateAvailable { installed } => {
-                Some(format!("Update available, {installed} installed"))
+                Some(tr!("insight_rules.update_available", installed = installed).into())
             }
-            RuleStatus::EditedLocally => Some("Edited locally".to_string()),
-            RuleStatus::Local if entry.is_some() => Some("Your own file has this name".to_string()),
-            RuleStatus::Local => Some("Your rule".to_string()),
-            RuleStatus::Withdrawn => Some("No longer in the catalog".to_string()),
-            RuleStatus::NeedsNewerApp => Some("Needs a newer CloudBridge".to_string()),
+            RuleStatus::EditedLocally => Some(tr!("insight_rules.edited").into()),
+            RuleStatus::Local if entry.is_some() => Some(tr!("insight_rules.name_clash").into()),
+            RuleStatus::Local => Some(tr!("insight_rules.yours").into()),
+            RuleStatus::Withdrawn => Some(tr!("insight_rules.withdrawn").into()),
+            RuleStatus::NeedsNewerApp => Some(tr!("insight_rules.needs_newer").into()),
         };
 
-        let button = |id: &str, label: &'static str| {
-            Button::new(SharedString::from(format!("insight-rule-{id}-{label}")))
-                .label(label)
+        // `action` names the button's id; the label is its translation.
+        let button = |id: &str, action: &'static str| {
+            Button::new(SharedString::from(format!("insight-rule-{id}-{action}")))
+                .label(match action {
+                    "install" => tr!("insight_rules.install"),
+                    "update" => tr!("insight_rules.update"),
+                    "replace" => tr!("insight_rules.replace_ellipsis"),
+                    "remove" => tr!("rules.remove"),
+                    _ => tr!("insight_rules.delete_ellipsis"),
+                })
                 .small()
                 .disabled(!idle)
         };
@@ -241,9 +274,9 @@ impl InsightRulesView {
             (RuleStatus::Available, Some(e)) | (RuleStatus::UpdateAvailable { .. }, Some(e)) => {
                 let e = e.clone();
                 let label = if row.status == RuleStatus::Available {
-                    "Install"
+                    "install"
                 } else {
-                    "Update"
+                    "update"
                 };
                 actions.push(
                     button(&id, label)
@@ -257,7 +290,7 @@ impl InsightRulesView {
             (RuleStatus::EditedLocally, Some(e)) => {
                 let e = e.clone();
                 actions.push(
-                    button(&id, "Replace…")
+                    button(&id, "replace")
                         .custom(theme::outline_variant(cx))
                         .card_outline(cx)
                         .loading(busy)
@@ -278,13 +311,13 @@ impl InsightRulesView {
             );
             let id = id.clone();
             actions.push(if restorable {
-                button(&row.id, "Remove")
+                button(&row.id, "remove")
                     .ghost()
                     .loading(busy)
                     .on_click(cx.listener(move |this, _, _, cx| this.remove(id.clone(), cx)))
                     .into_any_element()
             } else {
-                button(&row.id, "Delete…")
+                button(&row.id, "delete")
                     .ghost()
                     .loading(busy && !matches!(row.status, RuleStatus::EditedLocally))
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -348,14 +381,12 @@ impl Render for InsightRulesView {
                     .justify_between()
                     .items_center()
                     .gap_4()
-                    .child(
-                        div().min_w_0().v_flex().child(theme::caption(
-                            cx,
-                            "Each rule adds a section to Insights. Rules run on this computer, \
+                    .child(div().min_w_0().v_flex().child(theme::caption(
+                        cx,
+                        "Each rule adds a section to Insights. Rules run on this computer, \
                              reading only this period's bill and scan, with no network or file \
                              access. Add your own by putting a .js file in the folder.",
-                        )),
-                    )
+                    )))
                     .child(
                         div()
                             .flex_none()
@@ -364,9 +395,9 @@ impl Render for InsightRulesView {
                             .child(
                                 Button::new("insight-rules-browse")
                                     .label(if browsed {
-                                        "Check for updates"
+                                        tr!("insight_rules.check_updates")
                                     } else {
-                                        "Browse catalog"
+                                        tr!("insight_rules.browse")
                                     })
                                     .small()
                                     .custom(theme::outline_variant(cx))
@@ -377,7 +408,7 @@ impl Render for InsightRulesView {
                             )
                             .child(
                                 Button::new("insight-rules-folder")
-                                    .label("Open folder")
+                                    .label(tr!("insight_rules.open_folder"))
                                     .small()
                                     .custom(theme::outline_variant(cx))
                                     .card_outline(cx)
@@ -402,9 +433,9 @@ impl Render for InsightRulesView {
                     el.child(theme::caption(
                         cx,
                         if browsed {
-                            "The catalog has no rules yet, and the folder is empty."
+                            tr!("insight_rules.empty_browsed")
                         } else {
-                            "No rules installed. Browse the catalog, or put a .js rule in the folder."
+                            tr!("insight_rules.empty")
                         },
                     ))
                 } else {
@@ -418,7 +449,7 @@ impl Render for InsightRulesView {
             .child(
                 div().child(
                     Button::new("insight-rules-contribute")
-                        .label("Write and share a rule")
+                        .label(tr!("insight_rules.contribute"))
                         .link()
                         .small()
                         .on_click(|_, _, cx| cx.open_url(insight_catalog::CATALOG_HOME)),
