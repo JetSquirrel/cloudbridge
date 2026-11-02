@@ -34,7 +34,11 @@ enum Target {
 
 /// One page of the sidebar, in its order, with the action that opens it.
 struct Page {
+    /// The page's English name. Searchable in every language, so a page
+    /// can be found by the name the documentation uses.
     label: &'static str,
+    /// The `locales/ui.yml` key of the name the row shows.
+    key: &'static str,
     icon: IconName,
     action: fn() -> Box<dyn Action>,
     /// Extra words the search matches, for a page whose name is not the
@@ -48,30 +52,35 @@ fn pages() -> Vec<Page> {
     let mut pages = vec![
         Page {
             label: "Overview",
+            key: "nav.overview",
             icon: IconName::LayoutDashboard,
             action: || Box::new(app::SwitchToOverview),
             keywords: &["dashboard", "home", "spend"],
         },
         Page {
             label: "Alerts",
+            key: "nav.alerts",
             icon: IconName::Bell,
             action: || Box::new(app::SwitchToAlerts),
             keywords: &["anomaly", "notification"],
         },
         Page {
             label: "Attribution",
+            key: "nav.attribution",
             icon: IconName::ChartPie,
             action: || Box::new(app::SwitchToAttribution),
             keywords: &["sankey", "treemap", "business line", "tag"],
         },
         Page {
             label: "Models",
+            key: "nav.models",
             icon: IconName::Cpu,
             action: || Box::new(app::SwitchToModels),
             keywords: &["tokens", "llm", "ai"],
         },
         Page {
             label: "Insights",
+            key: "nav.insights",
             icon: IconName::Eye,
             action: || Box::new(app::SwitchToInsights),
             keywords: &["idle", "savings", "resources"],
@@ -80,12 +89,14 @@ fn pages() -> Vec<Page> {
     #[cfg(not(target_family = "wasm"))]
     pages.push(Page {
         label: "Query",
+        key: "nav.query",
         icon: IconName::Search,
         action: || Box::new(app::SwitchToQuery),
         keywords: &["sql"],
     });
     pages.push(Page {
         label: "Accounts",
+        key: "nav.accounts",
         icon: IconName::Building2,
         action: || Box::new(app::SwitchToAccounts),
         keywords: &["sources", "providers"],
@@ -94,12 +105,14 @@ fn pages() -> Vec<Page> {
     pages.extend([
         Page {
             label: "Rules",
+            key: "nav.rules",
             icon: IconName::SquareTerminal,
             action: || Box::new(app::SwitchToRules),
             keywords: &["alert rules", "allocation"],
         },
         Page {
             label: "Settings",
+            key: "nav.settings",
             icon: IconName::Settings,
             action: || Box::new(app::SwitchToSettings),
             keywords: &["preferences", "theme", "currency"],
@@ -113,12 +126,12 @@ fn pages() -> Vec<Page> {
 fn entries(accounts: &[CloudAccount]) -> (Vec<CommandGroup>, Vec<Vec<Target>>) {
     let pages = pages();
     let page_group = CommandGroup::new()
-        .label("Pages")
+        .label(tr!("palette.pages"))
         .items(pages.iter().map(|page| {
             CommandItem::new()
-                .label(page.label)
+                .label(tr!(page.key))
                 .icon(page.icon.clone())
-                .keywords(page.keywords.iter().copied())
+                .keywords(std::iter::once(page.label).chain(page.keywords.iter().copied()))
                 .action((page.action)())
         }));
     let page_targets = vec![Target::Action; pages.len()];
@@ -126,7 +139,7 @@ fn entries(accounts: &[CloudAccount]) -> (Vec<CommandGroup>, Vec<Vec<Target>>) {
     // Add account is the desktop's alone, so the browser never pushes.
     #[cfg_attr(target_family = "wasm", allow(unused_mut))]
     let mut commands = vec![CommandItem::new()
-        .label("Reload page")
+        .label(tr!("palette.reload"))
         .icon(gpui_kit::assets::IconName::RefreshCw)
         .keywords(["refresh"])
         .action(Box::new(app::ReloadCurrentView))];
@@ -136,13 +149,15 @@ fn entries(accounts: &[CloudAccount]) -> (Vec<CommandGroup>, Vec<Vec<Target>>) {
     {
         commands.push(
             CommandItem::new()
-                .label("Add account…")
+                .label(tr!("palette.add_account"))
                 .icon(IconName::Plus)
                 .keywords(["connect", "source", "import"]),
         );
         command_targets.push(Target::AddAccount);
     }
-    let command_group = CommandGroup::new().label("Commands").items(commands);
+    let command_group = CommandGroup::new()
+        .label(tr!("palette.commands"))
+        .items(commands);
 
     let mut groups = vec![page_group, command_group];
     let mut targets = vec![page_targets, command_targets];
@@ -150,7 +165,7 @@ fn entries(accounts: &[CloudAccount]) -> (Vec<CommandGroup>, Vec<Vec<Target>>) {
     if !accounts.is_empty() {
         groups.push(
             CommandGroup::new()
-                .label("Accounts")
+                .label(tr!("nav.accounts"))
                 .items(accounts.iter().map(|account| {
                     let provider = account
                         .descriptor()
@@ -204,7 +219,7 @@ pub fn open(
                 content.child(
                     Command::new(&palette)
                         .bordered(false)
-                        .placeholder("Search pages, accounts and commands")
+                        .placeholder(tr!("app.search_tooltip"))
                         .max_h(rems(24.))
                         .map(|command| {
                             groups
@@ -216,7 +231,7 @@ pub fn open(
                                 .p_4()
                                 .text_sm()
                                 .text_color(theme::text_muted(cx))
-                                .child("Nothing matches")
+                                .child(tr!("palette.empty"))
                         })
                         .on_confirm(move |index: IndexPath, window, cx| {
                             let target = targets
@@ -240,9 +255,9 @@ pub fn open(
                                 .border_color(theme::card_border(cx))
                                 .text_xs()
                                 .text_color(theme::text_muted(cx))
-                                .child("↑↓ to move")
-                                .child("Enter to open")
-                                .child("Esc to close")
+                                .child(tr!("palette.hint_move"))
+                                .child(tr!("palette.hint_open"))
+                                .child(tr!("palette.hint_close"))
                         }),
                 )
             })

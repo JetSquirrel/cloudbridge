@@ -114,16 +114,13 @@ impl Summary {
 
     /// The icon's tooltip, which is all Windows shows of it.
     pub fn tooltip(&self) -> String {
-        let mut text = format!(
-            "CloudBridge — {} this month",
-            crate::ui::fmt::amount(self.month_to_date, &self.currency)
-        );
+        let amount = crate::ui::fmt::amount(self.month_to_date, &self.currency);
         match self.alerts.len() {
-            0 => {}
-            1 => text.push_str(", 1 open alert"),
-            n => text.push_str(&format!(", {n} open alerts")),
+            0 => rust_i18n::t!("tray.tooltip", amount = amount),
+            1 => rust_i18n::t!("tray.tooltip_one_alert", amount = amount),
+            n => rust_i18n::t!("tray.tooltip_alerts", amount = amount, n = n),
         }
-        text
+        .into_owned()
     }
 }
 

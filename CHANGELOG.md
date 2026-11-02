@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Simplified Chinese.** Every page, dialog, the menu bar panel, its tray
+  menu and the system notifications are translated into 简体中文, and
+  gpui-kit's own components follow along. The language follows the
+  system's until one is picked in Settings → Appearance → Language; the
+  switch applies at once. The web demo follows the browser's language and
+  has a switch in its sidebar footer. Amounts and currencies are formatted
+  as before. An alert keeps the language it fired in, and the tray menu
+  picks up a new language at the next launch.
+
 ### Fixed
 - **Installing the scanner failed on a dropped connection.** The Insights
   scanner is a 46 MB download, and a connection cut partway through

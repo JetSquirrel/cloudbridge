@@ -91,9 +91,9 @@ impl RenderOnce for HealthCard {
             total.min(preview_rows)
         };
         let summary = match total {
-            0 => "No data-quality issues this billing period".to_string(),
-            1 => "1 finding this billing period".to_string(),
-            n => format!("{n} findings this billing period"),
+            0 => tr!("health.none"),
+            1 => tr!("health.one"),
+            n => tr!("health.many", n = n),
         };
 
         let actions = div()
@@ -104,11 +104,11 @@ impl RenderOnce for HealthCard {
                 el.child(
                     Button::new(SharedString::from(format!("{}-toggle", self.id)))
                         .label(if self.expanded {
-                            "Collapse".to_string()
+                            tr!("health.collapse")
                         } else if self.compact {
-                            format!("Review {total} findings")
+                            tr!("health.review", n = total)
                         } else {
-                            format!("Show all {total}")
+                            tr!("health.show_all", n = total)
                         })
                         .ghost()
                         .small()
@@ -118,7 +118,11 @@ impl RenderOnce for HealthCard {
             .when_some(self.on_dismiss.filter(|_| total > 0), |el, on_dismiss| {
                 el.child(
                     Button::new(SharedString::from(format!("{}-dismiss", self.id)))
-                        .label(if hidden > 0 { "Dismiss all" } else { "Dismiss" })
+                        .label(if hidden > 0 {
+                            tr!("health.dismiss_all")
+                        } else {
+                            tr!("alerts.action_dismiss")
+                        })
                         .ghost()
                         .small()
                         .on_click(on_dismiss),
@@ -143,7 +147,7 @@ impl RenderOnce for HealthCard {
                             .flex()
                             .when(self.compact, |el| el.items_center().flex_wrap().gap_3())
                             .when(!self.compact, |el| el.flex_col().gap_1())
-                            .child(theme::section_title(cx, "Data health"))
+                            .child(theme::section_title(cx, tr!("health.title")))
                             .child(theme::caption(cx, summary)),
                     )
                     .child(actions),

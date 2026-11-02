@@ -239,18 +239,17 @@ pub fn insights(
                 .filter_map(|v| cost_by_key.get(&(resource.provider.as_str(), v.as_str())))
                 .sum();
             let mut evidence = if volumes.is_empty() {
-                "Stopped when scanned; storage and addresses it holds still bill".to_string()
+                rust_i18n::t!("evidence.stopped").into_owned()
             } else {
-                format!(
-                    "Stopped when scanned; its {} attached volume{} still bill",
-                    volumes.len(),
-                    if volumes.len() == 1 { "" } else { "s" }
-                )
+                match volumes.len() {
+                    1 => rust_i18n::t!("evidence.stopped_one_volume").into_owned(),
+                    n => rust_i18n::t!("evidence.stopped_volumes", n = n).into_owned(),
+                }
             };
             if let Some(age) = scope.zip(resource.created_at).and_then(|(scope, created)| {
                 age_in_words(scope.scanned_at.signed_duration_since(created))
             }) {
-                evidence.push_str(&format!(". Created {age} ago"));
+                evidence.push_str(&rust_i18n::t!("evidence.created_ago", age = age));
             }
             findings.push(finding(
                 InsightKind::StoppedInstance,
@@ -268,7 +267,7 @@ pub fn insights(
                     InsightKind::Unclaimed,
                     resource,
                     cost_of[i],
-                    "No owner tag, and no stack or app that manages it".to_string(),
+                    rust_i18n::t!("evidence.unclaimed").into_owned(),
                 ));
             } else {
                 unclaimed_free += 1;
@@ -289,8 +288,7 @@ pub fn insights(
                 resource_kind: cost.service.clone(),
                 region: cost.region.clone(),
                 cost: cost.usage_cost,
-                evidence: "Billed as an idle public IPv4 address: allocated, attached to nothing"
-                    .to_string(),
+                evidence: rust_i18n::t!("evidence.idle_ip").into_owned(),
             });
         } else if is_idle_nat_gateway(cost) {
             findings.push(InsightFinding {
@@ -304,11 +302,12 @@ pub fn insights(
                 resource_kind: cost.service.clone(),
                 region: cost.region.clone(),
                 cost: cost.usage_cost,
-                evidence: format!(
-                    "Billed for {:.0} NAT Gateway hours while it processed {}",
-                    cost.nat_gateway_hours,
-                    processed(cost.nat_gateway_gb)
-                ),
+                evidence: rust_i18n::t!(
+                    "evidence.idle_nat",
+                    hours = format!("{:.0}", cost.nat_gateway_hours),
+                    processed = processed(cost.nat_gateway_gb)
+                )
+                .into_owned(),
             });
         } else if hit.is_none() && cost.usage_cost > 0.0 {
             if let Some(scope) = scope.filter(|s| covers(s, cost.region.as_deref())) {
@@ -321,10 +320,11 @@ pub fn insights(
                     resource_kind: cost.service.clone(),
                     region: cost.region.clone(),
                     cost: cost.usage_cost,
-                    evidence: format!(
-                        "Billed this period, but not in the scan of {}",
-                        scope.scanned_at.format("%Y-%m-%d")
-                    ),
+                    evidence: rust_i18n::t!(
+                        "evidence.not_in_scan",
+                        date = scope.scanned_at.format("%Y-%m-%d")
+                    )
+                    .into_owned(),
                 });
             }
         }
@@ -460,9 +460,9 @@ pub fn is_idle_nat_gateway(cost: &ResourceCost) -> bool {
 
 fn processed(gb: f64) -> String {
     if gb <= 0.0 {
-        "no data".to_string()
+        rust_i18n::t!("evidence.no_data").into_owned()
     } else if gb < 0.01 {
-        "under 0.01 GB".to_string()
+        rust_i18n::t!("evidence.under_001_gb").into_owned()
     } else {
         format!("{gb:.2} GB")
     }
@@ -473,13 +473,17 @@ fn processed(gb: f64) -> String {
 /// time in the future (a clock that disagrees) or under a day.
 pub fn age_in_words(age: chrono::Duration) -> Option<String> {
     let days = age.num_days();
-    let plural = |n: i64, unit: &str| format!("{n} {unit}{}", if n == 1 { "" } else { "s" });
-    match days {
-        ..=0 => None,
-        1..=59 => Some(plural(days, "day")),
-        60..=729 => Some(plural(days / 30, "month")),
-        _ => Some(plural(days / 365, "year")),
-    }
+    let (n, one, many) = match days {
+        ..=0 => return None,
+        1..=59 => (days, "evidence.one_day", "evidence.n_days"),
+        60..=729 => (days / 30, "evidence.one_month", "evidence.n_months"),
+        _ => (days / 365, "evidence.one_year", "evidence.n_years"),
+    };
+    Some(if n == 1 {
+        rust_i18n::t!(one).into_owned()
+    } else {
+        rust_i18n::t!(many, n = n).into_owned()
+    })
 }
 
 fn is_ec2_instance(resource_type: &str) -> bool {

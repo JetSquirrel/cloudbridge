@@ -42,12 +42,12 @@ impl Announcer {
 /// refreshing.
 pub fn post(alert: &AlertLine) {
     let summary = match alert.severity {
-        Severity::Critical => "CloudBridge — critical alert",
-        Severity::Warning => "CloudBridge alert",
+        Severity::Critical => tr!("notify.critical"),
+        Severity::Warning => tr!("notify.warning"),
     };
     let result = notify_rust::Notification::new()
         .appname("CloudBridge")
-        .summary(summary)
+        .summary(&summary)
         .body(&alert.title)
         .show();
     if let Err(e) = result {
@@ -61,7 +61,7 @@ pub fn post(alert: &AlertLine) {
 pub fn post_refresh_failure(account: &str, error: &str) {
     let result = notify_rust::Notification::new()
         .appname("CloudBridge")
-        .summary(&format!("CloudBridge could not refresh {account}"))
+        .summary(&tr!("notify.refresh_failed", account = account))
         .body(error)
         .show();
     if let Err(e) = result {

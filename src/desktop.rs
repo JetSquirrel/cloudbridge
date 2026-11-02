@@ -145,6 +145,8 @@ pub fn run() {
     app.on_reopen(|cx| show_main_window(None, cx));
 
     app.run(move |cx| {
+        // The language first: the components read it from their first frame.
+        crate::i18n::init();
         // Initialize GPUI Component
         gpui_kit::init(cx);
 

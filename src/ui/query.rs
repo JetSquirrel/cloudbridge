@@ -419,7 +419,7 @@ impl QueryView {
                 div()
                     .v_flex()
                     .gap_2()
-                    .child(theme::section_title(cx, category))
+                    .child(theme::section_title(cx, data::template_text(category)))
                     .children(templates.into_iter().map(|template| {
                         theme::card(cx)
                             .id(SharedString::from(format!("template-{}", template.title)))
@@ -433,9 +433,12 @@ impl QueryView {
                                     .text_sm()
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme::text_primary(cx))
-                                    .child(template.title),
+                                    .child(data::template_text(template.title)),
                             )
-                            .child(theme::caption(cx, template.description))
+                            .child(theme::caption(
+                                cx,
+                                data::template_text(template.description),
+                            ))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.fill_from_template(template, window, cx);
                             }))
@@ -445,17 +448,23 @@ impl QueryView {
 
     fn render_status_row(&self, cx: &Context<Self>) -> impl IntoElement {
         let line: Option<(String, Hsla)> = match &self.status {
-            QueryStatus::Running => Some(("Running…".to_string(), theme::text_muted(cx))),
+            QueryStatus::Running => Some((tr!("query.running").into(), theme::text_muted(cx))),
             QueryStatus::Rows(result) if result.truncated => Some((
-                format!(
-                    "Showing first {} rows — result truncated, {} ms",
-                    result.rows.len(),
-                    result.elapsed_ms
-                ),
+                tr!(
+                    "query.truncated",
+                    rows = result.rows.len(),
+                    ms = result.elapsed_ms
+                )
+                .into(),
                 theme::warning_text(cx),
             )),
             QueryStatus::Rows(result) => Some((
-                format!("{} rows in {} ms", result.rows.len(), result.elapsed_ms),
+                tr!(
+                    "query.rows",
+                    rows = result.rows.len(),
+                    ms = result.elapsed_ms
+                )
+                .into(),
                 theme::text_muted(cx),
             )),
             _ => None,
@@ -481,7 +490,7 @@ impl QueryView {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(theme::caption(cx, "Run a query or pick a template"))
+                .child(theme::caption(cx, tr!("query.empty")))
                 .into_any_element(),
             QueryStatus::Running => theme::card(cx)
                 .w_full()
@@ -490,7 +499,7 @@ impl QueryView {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(theme::caption(cx, "Running…"))
+                .child(theme::caption(cx, tr!("query.running")))
                 .into_any_element(),
             QueryStatus::Rows(_) => theme::card(cx)
                 .w_full()
@@ -535,8 +544,8 @@ impl Render for QueryView {
                 div()
                     .v_flex()
                     .gap_1()
-                    .child(theme::page_title(cx, "Query"))
-                    .child(theme::caption(cx, "Read-only SQL against the local ledger")),
+                    .child(theme::page_title(cx, tr!("nav.query")))
+                    .child(theme::caption(cx, tr!("query.subtitle"))),
             )
             .child(
                 div()
@@ -551,7 +560,7 @@ impl Render for QueryView {
                     )
                     .child(
                         Button::new("run-query")
-                            .label("Run")
+                            .label(tr!("query.run"))
                             .primary()
                             .loading(self.running)
                             .disabled(self.running)

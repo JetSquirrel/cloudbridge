@@ -507,34 +507,42 @@ fn evaluate_cost_anomalies(
             id: uuid::Uuid::new_v4().to_string(),
             rule_id: rule.id.clone(),
             severity: Severity::Critical,
-            title: format!("Cost growing far above baseline: {provider} {service}"),
-            body: format!(
-                "{provider} {service} ran {} on {} against a 7-day baseline of {} ({:.1}×). \
-                 The streak has held for {} consecutive days, first breach {}. \
-                 At this rate the month ends near {}.",
-                fmt_amount(breach.last_amount, &currency),
-                breach.last_day,
-                fmt_amount(breach.baseline, &currency),
-                ratio,
-                breach.streak_days(),
-                breach.first_day,
-                fmt_amount(month_end, &currency),
-            ),
+            // Written in the interface language of the moment; a stored
+            // event keeps the language it fired in.
+            title: rust_i18n::t!(
+                "alert_msg.anomaly_title",
+                provider = provider,
+                service = service
+            )
+            .into_owned(),
+            body: rust_i18n::t!(
+                "alert_msg.anomaly_body",
+                provider = provider,
+                service = service,
+                amount = fmt_amount(breach.last_amount, &currency),
+                day = breach.last_day,
+                baseline = fmt_amount(breach.baseline, &currency),
+                ratio = format!("{ratio:.1}"),
+                streak = breach.streak_days(),
+                first = breach.first_day,
+                month_end = fmt_amount(month_end, &currency)
+            )
+            .into_owned(),
             fields_json: json!({
                 "fields": [
-                    { "label": "Provider", "value": provider.clone() },
-                    { "label": "Service", "value": service.clone() },
-                    { "label": "24h cost", "value": fmt_amount(breach.last_amount, &currency) },
-                    { "label": "7-day baseline", "value": fmt_amount(breach.baseline, &currency) },
-                    { "label": "First breach", "value": breach.first_day.to_string() },
-                    { "label": "Month-end if held", "value": fmt_amount(month_end, &currency) },
+                    { "label": rust_i18n::t!("alert_msg.f_provider"), "value": provider.clone() },
+                    { "label": rust_i18n::t!("alert_msg.f_service"), "value": service.clone() },
+                    { "label": rust_i18n::t!("alert_msg.f_24h_cost"), "value": fmt_amount(breach.last_amount, &currency) },
+                    { "label": rust_i18n::t!("alert_msg.f_baseline"), "value": fmt_amount(breach.baseline, &currency) },
+                    { "label": rust_i18n::t!("alert_msg.f_first_breach"), "value": breach.first_day.to_string() },
+                    { "label": rust_i18n::t!("alert_msg.f_month_end_held"), "value": fmt_amount(month_end, &currency) },
                 ],
                 "context": context,
             })
             .to_string(),
             stat_json: Some(
                 json!({
-                    "label": format!("Billed on {}", breach.last_day),
+                    "label": rust_i18n::t!("alert_msg.billed_on", day = breach.last_day),
                     "value": fmt_amount(breach.last_amount, &currency),
                 })
                 .to_string(),
@@ -597,12 +605,13 @@ fn evaluate_balance_floors(
             .filter(|burn| *burn > 0.0)
             .map(|burn| balance.balance / burn);
         let projection = match (burn, days_left) {
-            (Some(burn), Some(days_left)) if burn > 0.0 => format!(
-                " At the last {} days of burn ({}/day) the account runs dry in roughly {}.",
-                BURN_WINDOW_DAYS,
-                fmt_amount(burn, &balance.currency),
-                fmt_days(days_left),
-            ),
+            (Some(burn), Some(days_left)) if burn > 0.0 => rust_i18n::t!(
+                "alert_msg.balance_projection",
+                days = BURN_WINDOW_DAYS,
+                burn = fmt_amount(burn, &balance.currency),
+                left = fmt_days(days_left)
+            )
+            .into_owned(),
             _ => String::new(),
         };
 
@@ -610,18 +619,20 @@ fn evaluate_balance_floors(
             id: uuid::Uuid::new_v4().to_string(),
             rule_id: rule.id.clone(),
             severity: Severity::Warning,
-            title: format!("{} balance below floor", descriptor.display_name),
-            body: format!(
-                "Balance is {} against a {} floor.{}",
-                fmt_amount(balance.balance, &balance.currency),
-                fmt_amount(floor, &balance.currency),
-                projection,
-            ),
+            title: rust_i18n::t!("alert_msg.balance_title", source = descriptor.display_name)
+                .into_owned(),
+            body: rust_i18n::t!(
+                "alert_msg.balance_body",
+                balance = fmt_amount(balance.balance, &balance.currency),
+                floor = fmt_amount(floor, &balance.currency),
+                projection = projection
+            )
+            .into_owned(),
             fields_json: json!({
                 "fields": [
-                    { "label": "Account", "value": account.name },
-                    { "label": "Balance", "value": fmt_amount(balance.balance, &balance.currency) },
-                    { "label": "Floor", "value": fmt_amount(floor, &balance.currency) },
+                    { "label": rust_i18n::t!("alert_msg.f_account"), "value": account.name },
+                    { "label": rust_i18n::t!("alert_msg.f_balance"), "value": fmt_amount(balance.balance, &balance.currency) },
+                    { "label": rust_i18n::t!("alert_msg.f_floor"), "value": fmt_amount(floor, &balance.currency) },
                 ],
                 "context": {
                     "provider": provider,
@@ -631,7 +642,7 @@ fn evaluate_balance_floors(
             })
             .to_string(),
             stat_json: days_left
-                .map(|days| json!({ "label": "Runs dry in", "value": fmt_days(days) }).to_string()),
+                .map(|days| json!({ "label": rust_i18n::t!("alert_msg.runs_dry_in"), "value": fmt_days(days) }).to_string()),
             created_at: now,
             status: AlertStatus::Open,
             snoozed_until: None,
@@ -702,21 +713,21 @@ fn evaluate_untagged_ratio(
         id: uuid::Uuid::new_v4().to_string(),
         rule_id: rule.id.clone(),
         severity: Severity::Warning,
-        title: "Untagged spend share is growing".to_string(),
-        body: format!(
-            "{:.0}% of {} spend reaches no business line ({}) — up from {:.0}% last month. \
-             New workloads are landing outside every allocation rule.",
-            current_share * 100.0,
-            current.label(),
-            fmt_amount(current_share * total, &currency),
-            previous_share * 100.0,
-        ),
+        title: rust_i18n::t!("alert_msg.untagged_title").into_owned(),
+        body: rust_i18n::t!(
+            "alert_msg.untagged_body",
+            share = format!("{:.0}", current_share * 100.0),
+            period = current.label(),
+            amount = fmt_amount(current_share * total, &currency),
+            previous = format!("{:.0}", previous_share * 100.0)
+        )
+        .into_owned(),
         fields_json: json!({
             "fields": [
-                { "label": "Unallocated", "value": fmt_amount(current_share * total, &currency) },
-                { "label": "Share this month", "value": format!("{:.0}%", current_share * 100.0) },
-                { "label": "Share last month", "value": format!("{:.0}%", previous_share * 100.0) },
-                { "label": "Tag", "value": BUSINESS_LINE_TAG },
+                { "label": rust_i18n::t!("alert_msg.f_unallocated"), "value": fmt_amount(current_share * total, &currency) },
+                { "label": rust_i18n::t!("alert_msg.f_share_this"), "value": format!("{:.0}%", current_share * 100.0) },
+                { "label": rust_i18n::t!("alert_msg.f_share_last"), "value": format!("{:.0}%", previous_share * 100.0) },
+                { "label": rust_i18n::t!("alert_msg.f_tag"), "value": BUSINESS_LINE_TAG },
             ],
             "context": {
                 "threshold": threshold,
@@ -880,9 +891,9 @@ fn evaluate_budgets(
         0.0
     };
     let based_label = if breach.based == BASED_FORECAST {
-        "month-end projection"
+        rust_i18n::t!("alert_msg.based_forecast")
     } else {
-        "month-to-date cost"
+        rust_i18n::t!("alert_msg.based_cost")
     };
     let severity = if breach.value >= budget {
         Severity::Critical
@@ -894,24 +905,26 @@ fn evaluate_budgets(
         id: uuid::Uuid::new_v4().to_string(),
         rule_id: rule.id.clone(),
         severity,
-        title: format!("{} over budget threshold", breach.account_name),
-        body: format!(
-            "The {based_label} of {} crossed the {} threshold ({:.0}% of the {} monthly budget). \
-             Month to date stands at {} and the run-rate projection lands near {}.",
-            fmt_amount(breach.value, &currency),
-            fmt_amount(breach.threshold, &currency),
-            percent_of_budget,
-            fmt_amount(budget, &currency),
-            fmt_amount(breach.mtd, &currency),
-            fmt_amount(breach.forecast, &currency),
-        ),
+        title: rust_i18n::t!("alert_msg.budget_title", account = breach.account_name)
+            .into_owned(),
+        body: rust_i18n::t!(
+            "alert_msg.budget_body",
+            based = based_label,
+            value = fmt_amount(breach.value, &currency),
+            threshold = fmt_amount(breach.threshold, &currency),
+            pct = format!("{percent_of_budget:.0}"),
+            budget = fmt_amount(budget, &currency),
+            mtd = fmt_amount(breach.mtd, &currency),
+            forecast = fmt_amount(breach.forecast, &currency)
+        )
+        .into_owned(),
         fields_json: json!({
             "fields": [
-                { "label": "Account", "value": breach.account_name.clone() },
-                { "label": "Month-to-date", "value": fmt_amount(breach.mtd, &currency) },
-                { "label": "Month-end forecast", "value": fmt_amount(breach.forecast, &currency) },
-                { "label": "Monthly budget", "value": fmt_amount(budget, &currency) },
-                { "label": "Threshold", "value": fmt_amount(breach.threshold, &currency) },
+                { "label": rust_i18n::t!("alert_msg.f_account"), "value": breach.account_name.clone() },
+                { "label": rust_i18n::t!("alert_msg.f_mtd"), "value": fmt_amount(breach.mtd, &currency) },
+                { "label": rust_i18n::t!("alert_msg.f_forecast"), "value": fmt_amount(breach.forecast, &currency) },
+                { "label": rust_i18n::t!("alert_msg.f_budget"), "value": fmt_amount(budget, &currency) },
+                { "label": rust_i18n::t!("alert_msg.f_threshold"), "value": fmt_amount(breach.threshold, &currency) },
             ],
             "context": {
                 "account_id": account_id,
@@ -922,7 +935,7 @@ fn evaluate_budgets(
         .to_string(),
         stat_json: Some(
             json!({
-                "label": "Of monthly budget",
+                "label": rust_i18n::t!("alert_msg.of_budget"),
                 "value": format!("{:.0}%", percent_of_budget),
             })
             .to_string(),
@@ -1347,33 +1360,30 @@ struct AlertFieldSerde {
 fn rule_view_of(rule: &AlertRule) -> RuleView {
     let (description, condition_chips, delivery_chips) = match rule.kind.as_str() {
         RULE_COST_ANOMALY => (
-            "Fires when a service's daily cost exceeds its trailing 7-day baseline by more \
-             than the threshold, for consecutive days."
-                .to_string(),
+            rust_i18n::t!("rule_view.anomaly_desc").into_owned(),
             vec![
                 format!(
                     "daily_cost > baseline_7d × {}",
                     trim_float(config_f64(rule, "multiplier", 2.5))
                 ),
-                format!(
-                    "{} consecutive days",
-                    config_u64(rule, "consecutive_days", 2)
-                ),
+                rust_i18n::t!(
+                    "rule_view.consecutive_days",
+                    n = config_u64(rule, "consecutive_days", 2)
+                )
+                .into_owned(),
             ],
-            vec!["Desktop + alert centre".to_string()],
+            vec![rust_i18n::t!("rule_view.desktop_and_centre").into_owned()],
         ),
         RULE_BALANCE_FLOOR => (
-            "Watches balance-reporting sources against a per-account floor (the account's \
-             budget, or the default) and projects days remaining from the last 7 days of burn."
-                .to_string(),
+            rust_i18n::t!("rule_view.balance_desc").into_owned(),
             vec![
                 format!(
                     "balance < floor ({})",
                     trim_float(config_f64(rule, "floor", 200.0))
                 ),
-                "Every refresh".to_string(),
+                rust_i18n::t!("rule_view.every_refresh").into_owned(),
             ],
-            vec!["Desktop".to_string()],
+            vec![rust_i18n::t!("rule_view.desktop").into_owned()],
         ),
         RULE_BUDGET => {
             let based = config_str(rule, "based").unwrap_or_else(|| BASED_COST.to_string());
@@ -1387,43 +1397,67 @@ fn rule_view_of(rule: &AlertRule) -> RuleView {
                     "{based_label} ≥ {}",
                     fmt_amount(config_f64(rule, "threshold", 0.0), &reporting_currency())
                 ),
-                _ => format!(
-                    "{based_label} ≥ {}% of budget",
-                    trim_float(config_f64(rule, "threshold", 80.0))
-                ),
+                _ => rust_i18n::t!(
+                    "rule_view.pct_of_budget",
+                    based = based_label,
+                    pct = trim_float(config_f64(rule, "threshold", 80.0))
+                )
+                .into_owned(),
             };
             (
-                "Fires when an account's month-to-date cost — or its run-rate month-end \
-                 projection — crosses a threshold of the account's monthly budget."
-                    .to_string(),
-                vec![threshold_chip, "Daily".to_string()],
-                vec!["Alert centre only".to_string()],
+                rust_i18n::t!("rule_view.budget_desc").into_owned(),
+                vec![
+                    threshold_chip,
+                    rust_i18n::t!("rule_view.daily").into_owned(),
+                ],
+                vec![rust_i18n::t!("rule_view.centre_only").into_owned()],
             )
         }
         _ => (
-            "Raises a warning when the share of spend that reaches no business line grows \
-             month over month, so attribution rules keep pace with new workloads."
-                .to_string(),
+            rust_i18n::t!("rule_view.untagged_desc").into_owned(),
             vec![
                 format!(
                     "unallocated_share > {:.0}%",
                     config_f64(rule, "threshold", DEFAULT_UNTAGGED_THRESHOLD) * 100.0
                 ),
-                "Daily".to_string(),
+                rust_i18n::t!("rule_view.daily").into_owned(),
             ],
-            vec!["Alert centre only".to_string()],
+            vec![rust_i18n::t!("rule_view.centre_only").into_owned()],
         ),
     };
 
     RuleView {
         id: rule.id.clone(),
-        name: rule.name.clone(),
-        scope: rule.scope.clone(),
+        name: shown_name(rule),
+        scope: shown_scope(&rule.scope),
         description,
         condition_chips,
         delivery_chips,
         enabled: rule.enabled,
         last_fired_at: rule.last_fired_at,
+    }
+}
+
+/// A rule's name as shown. The seeded rules are stored under their English
+/// names; while a seeded rule still carries it, the name is translated.
+/// A name the user typed is theirs and shown as typed.
+fn shown_name(rule: &AlertRule) -> String {
+    let key = match (rule.id.as_str(), rule.name.as_str()) {
+        (RULE_COST_ANOMALY, "Model cost growth anomaly") => "rules.kind_cost_anomaly",
+        (RULE_BALANCE_FLOOR, "Balance floor") => "rules.kind_balance_floor",
+        (RULE_UNTAGGED_RATIO, "Untagged spend ratio") => "rules.kind_untagged_ratio",
+        _ => return rule.name.clone(),
+    };
+    rust_i18n::t!(key).into_owned()
+}
+
+/// A stored scope chip as shown; the scopes are the two fixed phrases of
+/// [`default_scope`], kept English in the database.
+fn shown_scope(scope: &str) -> String {
+    match scope {
+        "All sources" => rust_i18n::t!("rule_view.all_sources").into_owned(),
+        "Prepaid accounts" => rust_i18n::t!("rule_view.prepaid").into_owned(),
+        other => other.to_string(),
     }
 }
 
@@ -1449,11 +1483,11 @@ fn fmt_amount(amount: f64, currency: &str) -> String {
 /// "2 days" / "1 day" / "less than a day".
 fn fmt_days(days: f64) -> String {
     if days < 1.0 {
-        "less than a day".to_string()
+        rust_i18n::t!("alert_msg.less_than_a_day").into_owned()
     } else if days < 1.5 {
-        "1 day".to_string()
+        rust_i18n::t!("alert_msg.one_day").into_owned()
     } else {
-        format!("{} days", days.floor() as i64)
+        rust_i18n::t!("alert_msg.n_days", n = days.floor() as i64).into_owned()
     }
 }
 

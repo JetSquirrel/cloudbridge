@@ -8,6 +8,21 @@
 //! below: whichever backend a target gets, it answers to the same module name
 //! and the same function signatures, so nothing above it has to know.
 
+// Interface translations from `locales/`. Generates the backend `t!` reads
+// and the one `crate::i18n::init` extends gpui-kit's components with.
+rust_i18n::i18n!("locales", fallback = "en");
+
+/// `rust_i18n::t!` as a `SharedString`, which is what labels, children and
+/// tooltips take. Declared before the modules so every one below can use it.
+macro_rules! tr {
+    ($($args:tt)*) => {
+        ::gpui_kit::SharedString::from(::rust_i18n::t!($($args)*).into_owned())
+    };
+}
+
+/// Which language the interface is in, and switching it.
+pub mod i18n;
+
 /// The domain types both backends are written against, and the handle a
 /// backend hands to a closure.
 pub mod model;

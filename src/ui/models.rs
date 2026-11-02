@@ -108,14 +108,14 @@ impl ModelsView {
                 div()
                     .v_flex()
                     .gap_1()
-                    .child(theme::page_title(cx, "Models"))
+                    .child(theme::page_title(cx, tr!("nav.models")))
                     .when_some(self.data.as_ref(), |el, d| {
                         el.child(theme::caption(
                             cx,
-                            format!(
-                                "{}, reported in {}",
-                                self.range.header_caption(Utc::now()),
-                                d.currency
+                            tr!(
+                                "overview.reported_in",
+                                window = self.range.header_caption(Utc::now()),
+                                currency = d.currency
                             ),
                         ))
                     }),
@@ -156,7 +156,7 @@ impl ModelsView {
     /// price, and how much of the input the cache served.
     fn render_stats(&self, cx: &Context<Self>, d: &data::ModelsData) -> impl IntoElement {
         let currency = d.currency.as_str();
-        let muted = |text: String| div().text_color(theme::text_muted(cx)).child(text);
+        let muted = |text: SharedString| div().text_color(theme::text_muted(cx)).child(text);
         div()
             .w_full()
             .h_flex()
@@ -164,29 +164,29 @@ impl ModelsView {
             .gap_4()
             .child(theme::stat_card(
                 cx,
-                "AI SPEND",
+                tr!("models.ai_spend"),
                 fmt::amount(d.total_cost, currency),
-                muted(format!("{} models this range", d.models.len())),
+                muted(tr!("models.models_this_range", n = d.models.len())),
             ))
             .child(theme::stat_card(
                 cx,
-                "TOKENS",
+                tr!("models.tokens"),
                 fmt::quantity(d.total_tokens),
-                muted("input + output + cache".to_string()),
+                muted(tr!("models.tokens_caption")),
             ))
             .child(theme::stat_card(
                 cx,
-                "BLENDED $/1M",
+                tr!("models.blended"),
                 fmt::unit_cost(d.blended, currency),
-                muted("cost ÷ tokens, all models".to_string()),
+                muted(tr!("models.blended_caption")),
             ))
             .child(theme::stat_card(
                 cx,
-                "CACHE SHARE",
+                tr!("models.cache_share"),
                 d.cache_share
                     .map(|share| format!("{share:.1}%"))
                     .unwrap_or_else(|| "—".to_string()),
-                muted("of input tokens read from cache".to_string()),
+                muted(tr!("models.cache_share_caption")),
             ))
     }
 
@@ -200,20 +200,48 @@ impl ModelsView {
             .p_5()
             .v_flex()
             .gap_4()
-            .child(theme::section_title(cx, "Per model"))
+            .child(theme::section_title(cx, tr!("models.per_model")))
             .child(
                 div()
                     .h_flex()
                     .items_center()
                     .pb_2()
-                    .child(theme::header_cell(cx, "MODEL").flex_1().min_w_0())
-                    .child(theme::header_cell(cx, "COST").w_24().text_right())
-                    .child(theme::header_cell(cx, "Δ VS PREV").w_20().text_right())
-                    .child(theme::header_cell(cx, "IN").w_20().text_right())
-                    .child(theme::header_cell(cx, "OUT").w_20().text_right())
-                    .child(theme::header_cell(cx, "CACHE").w_20().text_right())
+                    .child(
+                        theme::header_cell(cx, tr!("models.col_model"))
+                            .flex_1()
+                            .min_w_0(),
+                    )
+                    .child(
+                        theme::header_cell(cx, tr!("models.col_cost"))
+                            .w_24()
+                            .text_right(),
+                    )
+                    .child(
+                        theme::header_cell(cx, tr!("models.col_delta"))
+                            .w_20()
+                            .text_right(),
+                    )
+                    .child(
+                        theme::header_cell(cx, tr!("models.col_in"))
+                            .w_20()
+                            .text_right(),
+                    )
+                    .child(
+                        theme::header_cell(cx, tr!("models.col_out"))
+                            .w_20()
+                            .text_right(),
+                    )
+                    .child(
+                        theme::header_cell(cx, tr!("models.col_cache"))
+                            .w_20()
+                            .text_right(),
+                    )
                     .child(theme::header_cell(cx, "$/1M").w_20().text_right())
-                    .child(theme::header_cell(cx, "SHARE").w_32().px_2()),
+                    .child(
+                        theme::header_cell(cx, tr!("models.col_share"))
+                            .w_32()
+                            .px_2(),
+                    ),
             )
             .child(
                 div()
@@ -240,7 +268,7 @@ impl ModelsView {
             .p_5()
             .v_flex()
             .gap_4()
-            .child(theme::section_title(cx, "Tokens per day"))
+            .child(theme::section_title(cx, tr!("models.tokens_per_day")))
             .child(
                 div()
                     .id("tokens-chart")
@@ -300,17 +328,18 @@ impl ModelsView {
                 div()
                     .font_weight(FontWeight::BOLD)
                     .text_color(theme::text_primary(cx))
-                    .child("No model-provider data yet"),
+                    .child(tr!("models.empty")),
             )
-            .child(div().text_sm().text_color(theme::text_muted(cx)).child(
-                "Token counts and per-model costs appear once the ledger has \
-                 an LLM provider's usage. Import an OpenAI or Anthropic usage \
-                 export from Accounts.",
-            ))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme::text_muted(cx))
+                    .child(tr!("models.empty_hint")),
+            )
             .child(
                 div().pt_1().flex().child(
                     Button::new("models-open-accounts")
-                        .label("Open Accounts")
+                        .label(tr!("models.open_accounts"))
                         .small()
                         .custom(theme::outline_variant(cx))
                         .card_outline(cx)
@@ -388,7 +417,7 @@ impl ModelsView {
             .child(
                 div().h_flex().child(
                     Button::new("retry-load")
-                        .label("Retry")
+                        .label(tr!("common.retry"))
                         .custom(theme::outline_variant(cx))
                         .card_outline(cx)
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -585,16 +614,16 @@ fn input_cell(m: &ModelTokenSummary, cx: &App) -> AnyElement {
 
     let mut parts = Vec::new();
     if m.tokens_cache_write > 0.0 {
-        parts.push(format!(
-            "{} written to the cache",
-            fmt::quantity(m.tokens_cache_write)
-        ));
+        parts.push(
+            tr!(
+                "models.cache_written",
+                n = fmt::quantity(m.tokens_cache_write)
+            )
+            .to_string(),
+        );
     }
     if m.tokens_unsplit > 0.0 {
-        parts.push(format!(
-            "{} the bill counts as input and output together",
-            fmt::quantity(m.tokens_unsplit)
-        ));
+        parts.push(tr!("models.unsplit", n = fmt::quantity(m.tokens_unsplit)).to_string());
     }
     let value = div()
         .text_color(theme::text_primary(cx))
@@ -605,7 +634,10 @@ fn input_cell(m: &ModelTokenSummary, cx: &App) -> AnyElement {
         return cell.child(value).into_any_element();
     }
 
-    let note = format!("Includes {}", parts.join(", and "));
+    let note = tr!(
+        "models.includes",
+        parts = parts.join(&rust_i18n::t!("models.and_separator"))
+    );
     cell.child(
         div()
             .id(SharedString::from(format!(

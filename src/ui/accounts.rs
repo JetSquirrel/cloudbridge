@@ -151,14 +151,22 @@ pub struct AccountsView {
 }
 
 /// Where a typed key goes, said where it is typed.
-const KEYRING_NOTE: &str = if cfg!(target_os = "macos") {
-    "Saved in the macOS Keychain, never in CloudBridge's own files. The first time CloudBridge \
-     reads it, macOS asks for permission: choose Always Allow."
-} else if cfg!(target_os = "windows") {
-    "Saved in Windows Credential Manager, never in CloudBridge's own files."
-} else {
-    "Saved in the system keyring, never in CloudBridge's own files."
-};
+fn keyring_note() -> SharedString {
+    if cfg!(target_os = "macos") {
+        tr!("accounts.keyring_macos")
+    } else if cfg!(target_os = "windows") {
+        tr!("accounts.keyring_windows")
+    } else {
+        tr!("accounts.keyring_other")
+    }
+}
+
+/// The places credentials are looked for, as one phrase.
+fn places_or(source: &SourceDescriptor) -> String {
+    source
+        .credential_places()
+        .join(&rust_i18n::t!("accounts.join_or"))
+}
 
 /// Whether this machine has a usable key for `source` right now: a key,
 /// and its secret where the source needs one.
@@ -178,17 +186,17 @@ enum FillStatus {
 
 impl AccountsView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Account name"));
+        let name_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr!("accounts.ph_name")));
         let ak_input = cx.new(|cx| InputState::new(window, cx).placeholder("Access Key ID"));
         let sk_input = cx.new(|cx| InputState::new(window, cx).placeholder("Secret Access Key"));
         let region_input = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Region (optional, default us-east-1)")
+                .placeholder(tr!("accounts.ph_region"))
                 .default_value("us-east-1")
         });
-        let export_uri_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("s3://bucket/prefix/export-name (optional)")
-        });
+        let export_uri_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr!("accounts.ph_export_uri")));
 
         let default_source = registry::default_source();
 
@@ -281,7 +289,7 @@ impl AccountsView {
                             this.error = None;
                         }
                         Err(e) => {
-                            this.error = Some(format!("Failed to load accounts: {}", e));
+                            this.error = Some(tr!("accounts.load_failed", error = e).into());
                         }
                     }
                     cx.notify();
@@ -330,7 +338,7 @@ impl AccountsView {
                             this.accounts_data = Some(loaded);
                         }
                         Err(e) => {
-                            this.error = Some(format!("Failed to load account data: {}", e));
+                            this.error = Some(tr!("accounts.load_data_failed", error = e).into());
                         }
                     }
                     cx.notify();
@@ -346,7 +354,7 @@ impl AccountsView {
     fn replay_normalization(&mut self, cx: &mut Context<Self>) {
         self.error = None;
         self.success = None;
-        self.info = Some("Replaying normalization from the raw store…".to_string());
+        self.info = Some(tr!("accounts.replaying").into());
         self.cancel_banner_fade();
         cx.notify();
 
@@ -354,10 +362,12 @@ impl AccountsView {
             let outcome = smol::unblock(data::replay_normalization)
                 .await
                 .map(|outcome| {
-                    format!(
-                        "Re-normalized {} period(s), {} charge(s) written",
-                        outcome.periods, outcome.charges
+                    tr!(
+                        "accounts.replayed",
+                        periods = outcome.periods,
+                        charges = outcome.charges
                     )
+                    .to_string()
                 })
                 .map_err(|e| e.to_string());
 
@@ -447,9 +457,7 @@ impl AccountsView {
     /// silence, since the places looked in are the answer to why.
     fn fill_from_system(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(found) = self.selected_source.credentials_from_system() else {
-            self.fill_status = Some(FillStatus::NotFound(
-                self.selected_source.credential_places().join(" or "),
-            ));
+            self.fill_status = Some(FillStatus::NotFound(places_or(self.selected_source)));
             cx.notify();
             return;
         };
@@ -475,13 +483,13 @@ impl AccountsView {
     /// The add dialog's choice between this machine's credentials and a
     /// key kept in the keyring, and what the first one means.
     fn render_credential_choice(&self, cx: &Context<Self>) -> impl IntoElement {
-        let places = self.selected_source.credential_places().join(" or ");
+        let places = places_or(self.selected_source);
         div()
             .v_flex()
             .gap_1()
             .child(
                 Checkbox::new("use-system-credentials")
-                    .label("Use this machine's credentials")
+                    .label(tr!("accounts.use_system"))
                     .checked(self.use_system_credentials)
                     .on_click(cx.listener(|this, checked: &bool, _, cx| {
                         this.use_system_credentials = *checked;
@@ -492,13 +500,9 @@ impl AccountsView {
             .child(theme::caption(
                 cx,
                 if self.use_system_credentials {
-                    format!(
-                        "Read from {places} each time they are needed; nothing is saved. An app \
-                         opened from Finder cannot see shell variables, so the credentials file \
-                         is what counts."
-                    )
+                    tr!("accounts.use_system_hint", places = places)
                 } else {
-                    format!("Or enter a key below. Found nothing in {places}? Untick to type one.")
+                    tr!("accounts.enter_key_hint", places = places)
                 },
             ))
     }
@@ -510,10 +514,10 @@ impl AccountsView {
             .when_some(self.fill_status.as_ref(), |el, status| match status {
                 FillStatus::Filled(origin) => el
                     .text_color(theme::text_muted(cx))
-                    .child(format!("Filled from {}", origin)),
+                    .child(tr!("accounts.filled_from", origin = origin)),
                 FillStatus::NotFound(places) => el
                     .text_color(theme::danger(cx))
-                    .child(format!("No credentials found in {}", places)),
+                    .child(tr!("accounts.not_found_in", places = places)),
             })
     }
 
@@ -567,7 +571,7 @@ impl AccountsView {
 
         // Validation
         if name.is_empty() {
-            self.dialog_error = Some("Enter a name for the account.".to_string());
+            self.dialog_error = Some(tr!("accounts.need_name").into());
             cx.notify();
             return;
         }
@@ -576,11 +580,16 @@ impl AccountsView {
         // the normal case for one that has no billing API in this build.
         let system = self.use_system_credentials;
         if system && !has_system_credentials(self.selected_source) {
-            self.dialog_error = Some(format!(
-                "No credentials found on this machine (looked in {}). Untick \
-                 \"Use this machine's credentials\" to enter a key instead.",
-                self.selected_source.credential_places().join(" and ")
-            ));
+            self.dialog_error = Some(
+                tr!(
+                    "accounts.no_system_credentials",
+                    places = self
+                        .selected_source
+                        .credential_places()
+                        .join(&rust_i18n::t!("accounts.join_and"))
+                )
+                .into(),
+            );
             cx.notify();
             return;
         }
@@ -591,20 +600,28 @@ impl AccountsView {
             (ak, sk)
         };
         if ak.is_empty() && !system && !self.selected_source.credentials_optional() {
-            self.dialog_error = Some(format!(
-                "Enter the {}.",
-                self.selected_source.access_key_label
-            ));
+            self.dialog_error = Some(
+                tr!(
+                    "accounts.enter_field",
+                    field = self.selected_source.access_key_label
+                )
+                .into(),
+            );
             cx.notify();
             return;
         }
         if sk.is_empty() && !ak.is_empty() && self.selected_source.needs_secret_key() {
-            self.dialog_error = Some(format!(
-                "Enter the {}.",
-                self.selected_source
-                    .secret_key_label
-                    .unwrap_or("secret key")
-            ));
+            self.dialog_error = Some(
+                tr!(
+                    "accounts.enter_field",
+                    field = self
+                        .selected_source
+                        .secret_key_label
+                        .map(SharedString::from)
+                        .unwrap_or_else(|| tr!("accounts.secret_key"))
+                )
+                .into(),
+            );
             cx.notify();
             return;
         }
@@ -617,7 +634,7 @@ impl AccountsView {
                     .credentials_from_system()
                     .is_some_and(|found| found.region.is_some());
             if region.trim().is_empty() && !from_system {
-                self.dialog_error = Some(format!("Enter the {label}."));
+                self.dialog_error = Some(tr!("accounts.enter_field", field = label).into());
                 cx.notify();
                 return;
             }
@@ -643,10 +660,7 @@ impl AccountsView {
                 if uri.is_empty() {
                     None
                 } else if !uri.starts_with("s3://") {
-                    self.dialog_error = Some(
-                        "The export URI starts with s3://, e.g. s3://bucket/prefix/export-name."
-                            .to_string(),
-                    );
+                    self.dialog_error = Some(tr!("accounts.bad_export_uri").into());
                     cx.notify();
                     return;
                 } else {
@@ -695,11 +709,11 @@ impl AccountsView {
                         } else {
                             this.info = None;
                             this.success = Some(match import_hint {
-                                Some(format) => format!(
-                                    "Added {}. Use Import on its row to read the {}.",
-                                    saved.name, format
-                                ),
-                                None => format!("Added {}.", saved.name),
+                                Some(format) => {
+                                    tr!("accounts.added_import", name = saved.name, format = format)
+                                        .into()
+                                }
+                                None => tr!("accounts.added", name = saved.name).into(),
                             });
                             this.schedule_banner_fade(cx);
                         }
@@ -707,7 +721,7 @@ impl AccountsView {
                         this.load_data(cx);
                     }
                     Err(e) => {
-                        this.dialog_error = Some(format!("Couldn't save the account: {}", e));
+                        this.dialog_error = Some(tr!("accounts.save_failed", error = e).into());
                     }
                 }
                 cx.notify();
@@ -723,7 +737,7 @@ impl AccountsView {
     /// the account stays saved and can be fixed or refreshed later.
     fn fetch_first_bill(&mut self, account: CloudAccount, cx: &mut Context<Self>) {
         self.success = None;
-        self.info = Some(format!("Added {}. Fetching its bill…", account.name));
+        self.info = Some(tr!("accounts.added_fetching", name = account.name).into());
         self.cancel_banner_fade();
         cx.notify();
 
@@ -746,18 +760,17 @@ impl AccountsView {
                                 outcome.ingested.iter().map(|(_, o)| o.charges).sum();
                             this.error = None;
                             this.success = Some(if outcome.ingested.is_empty() {
-                                format!("Added {}. No bill to fetch yet.", name)
+                                tr!("accounts.added_no_bill", name = name).into()
                             } else {
-                                format!("Added {} and fetched {} charge(s).", name, charges)
+                                tr!("accounts.added_fetched", name = name, charges = charges).into()
                             });
                             this.schedule_banner_fade(cx);
                         }
                         Err(e) => {
                             this.success = None;
-                            this.error = Some(format!(
-                                "Added {}, but its bill couldn't be fetched: {}",
-                                name, e
-                            ));
+                            this.error = Some(
+                                tr!("accounts.added_fetch_failed", name = name, error = e).into(),
+                            );
                         }
                     }
                     // The ledger moved: the row now shows a fetch time and
@@ -805,15 +818,15 @@ impl AccountsView {
                     match outcome {
                         Ok(_) => {
                             this.success = Some(if with_history {
-                                "Account and its billing history deleted".to_string()
+                                tr!("accounts.deleted_with_history").into()
                             } else {
-                                "Account deleted".to_string()
+                                tr!("accounts.deleted").into()
                             });
                             this.info = None;
                             this.schedule_banner_fade(cx);
                         }
                         Err(e) => {
-                            this.error = Some(format!("Delete failed: {}", e));
+                            this.error = Some(tr!("accounts.delete_failed", error = e).into());
                             this.info = None;
                         }
                     }
@@ -847,12 +860,13 @@ impl AccountsView {
                     match outcome {
                         Ok(charges) => {
                             this.success =
-                                Some(format!("Deleted {} charge(s) of billing history", charges));
+                                Some(tr!("accounts.history_deleted", charges = charges).into());
                             this.info = None;
                             this.schedule_banner_fade(cx);
                         }
                         Err(e) => {
-                            this.error = Some(format!("Couldn't delete the history: {}", e));
+                            this.error =
+                                Some(tr!("accounts.history_delete_failed", error = e).into());
                             this.info = None;
                         }
                     }
@@ -885,10 +899,7 @@ impl AccountsView {
 
     fn validate_account(&mut self, account: &CloudAccount, cx: &mut Context<Self>) {
         let Some(descriptor) = account.descriptor() else {
-            self.error = Some(format!(
-                "Account {} uses an unknown billing source",
-                account.name
-            ));
+            self.error = Some(tr!("accounts.unknown_source", name = account.name).into());
             self.success = None;
             self.info = None;
             cx.notify();
@@ -901,7 +912,8 @@ impl AccountsView {
         let context = match db::account_context(account, descriptor) {
             Ok(context) => context,
             Err(e) => {
-                self.error = Some(format!("Cannot validate {}: {}", account_name, e));
+                self.error =
+                    Some(tr!("accounts.cannot_validate", name = account_name, error = e).into());
                 self.success = None;
                 self.info = None;
                 cx.notify();
@@ -917,7 +929,7 @@ impl AccountsView {
         }
 
         // Show validating status
-        self.info = Some(format!("Validating account {}…", account_name));
+        self.info = Some(tr!("accounts.validating", name = account_name).into());
         self.error = None;
         self.success = None;
         self.cancel_banner_fade();
@@ -948,7 +960,7 @@ impl AccountsView {
             // Wait for result in background thread
             let validation_result = smol::unblock(move || {
                 rx.recv_timeout(std::time::Duration::from_secs(30))
-                    .unwrap_or(Err("Validation timeout".to_string()))
+                    .unwrap_or(Err(tr!("accounts.validation_timeout").into()))
             })
             .await;
 
@@ -961,20 +973,19 @@ impl AccountsView {
                         this.info = None;
                         match validation_result {
                             Ok(true) => {
-                                this.success = Some(format!(
-                                    "Account {} validated successfully!",
-                                    account_name
-                                ));
+                                this.success =
+                                    Some(tr!("accounts.validated", name = account_name).into());
                                 this.error = None;
                                 this.schedule_banner_fade(cx);
                             }
                             Ok(false) => {
                                 this.error =
-                                    Some(format!("Account {} credentials invalid", account_name));
+                                    Some(tr!("accounts.invalid", name = account_name).into());
                                 this.success = None;
                             }
                             Err(e) => {
-                                this.error = Some(format!("Validation failed: {}", e));
+                                this.error =
+                                    Some(tr!("accounts.validation_failed", error = e).into());
                                 this.success = None;
                             }
                         }
@@ -996,20 +1007,15 @@ impl AccountsView {
     /// validation does.
     fn import_bill_file(&mut self, account: &CloudAccount, cx: &mut Context<Self>) {
         let Some(descriptor) = account.descriptor() else {
-            self.error = Some(format!(
-                "Account {} uses an unknown billing source",
-                account.name
-            ));
+            self.error = Some(tr!("accounts.unknown_source", name = account.name).into());
             self.success = None;
             self.info = None;
             cx.notify();
             return;
         };
         let Some(format) = descriptor.bill_file else {
-            self.error = Some(format!(
-                "{} publishes no bill export CloudBridge can read",
-                descriptor.display_name
-            ));
+            self.error =
+                Some(tr!("accounts.no_bill_export", source = descriptor.display_name).into());
             self.success = None;
             self.info = None;
             cx.notify();
@@ -1027,16 +1033,19 @@ impl AccountsView {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("Import".into()),
+            prompt: Some(tr!("accounts.import")),
         });
 
         self.error = None;
         self.success = None;
-        self.info = Some(format!(
-            "Choose the {} to import ({})",
-            format.display_name,
-            format.extension_hint()
-        ));
+        self.info = Some(
+            tr!(
+                "accounts.choose_file",
+                format = format.display_name,
+                extensions = format.extension_hint()
+            )
+            .into(),
+        );
         self.cancel_banner_fade();
         cx.notify();
 
@@ -1048,7 +1057,7 @@ impl AccountsView {
                     // Cancelled: leave the account list exactly as it was.
                     Ok(Ok(None)) | Err(_) => return Ok(String::new()),
                     Ok(Err(e)) => {
-                        return Err(format!("Could not open the file picker: {}", e));
+                        return Err(tr!("accounts.picker_failed", error = e).into());
                     }
                 };
                 let Some(path) = path else {
@@ -1065,20 +1074,21 @@ impl AccountsView {
 
                 smol::unblock(move || {
                     rx.recv_timeout(std::time::Duration::from_secs(300))
-                        .unwrap_or_else(|_| Err("The import timed out".to_string()))
+                        .unwrap_or_else(|_| Err(tr!("accounts.import_timeout").into()))
                 })
                 .await
                 .map(|outcome| {
                     // Say which months were replaced, not merely that
                     // something was imported: the export supersedes those
                     // months rather than adding to them.
-                    format!(
-                        "Imported {} charge(s) into {} from its {}, replacing {}",
-                        outcome.charges(),
-                        name,
-                        outcome.format,
-                        outcome.period_labels()
+                    tr!(
+                        "accounts.imported",
+                        charges = outcome.charges(),
+                        name = name,
+                        format = outcome.format,
+                        periods = outcome.period_labels()
                     )
+                    .to_string()
                 })
             }
             .await;
@@ -1117,7 +1127,7 @@ impl AccountsView {
                     .label(source.short_name)
                     .small()
                     .when(!source.fetches_from_api(), |button| {
-                        button.tooltip("Read from a bill file you import")
+                        button.tooltip(tr!("accounts.import_only_tooltip"))
                     })
                     .when(is_selected, |button| button.primary())
                     .when(!is_selected, |button| {
@@ -1149,7 +1159,7 @@ impl AccountsView {
                 )
                 .child(
                     Button::new("setup-guide")
-                        .label("Setup guide")
+                        .label(tr!("accounts.setup_guide"))
                         .link()
                         .small()
                         .on_click(move |_, _, cx| {
@@ -1171,18 +1181,15 @@ impl AccountsView {
                 div()
                     .v_flex()
                     .gap_1()
-                    .child(theme::page_title(cx, "Accounts"))
+                    .child(theme::page_title(cx, tr!("nav.accounts")))
                     .child(theme::caption(
                         cx,
-                        format!(
-                            "{} accounts. Credentials stay in the OS keyring, never in the database",
-                            account_count
-                        ),
+                        tr!("accounts.subtitle", n = account_count),
                     )),
             )
             .child(
                 Button::new("add")
-                    .label("Add account…")
+                    .label(tr!("palette.add_account"))
                     .primary()
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.show_add_dialog(window, cx);
@@ -1201,16 +1208,18 @@ impl AccountsView {
                 .items_center()
                 .gap_4()
                 .pb_2()
-                .child(theme::header_cell(cx, "ACCOUNT").w(rems(COLUMN_REMS[0])))
-                .child(theme::header_cell(cx, "SOURCE").w(rems(COLUMN_REMS[1])))
-                .child(theme::header_cell(cx, "REPORTS").w(rems(COLUMN_REMS[2])))
+                .child(theme::header_cell(cx, tr!("accounts.col_account")).w(rems(COLUMN_REMS[0])))
+                .child(theme::header_cell(cx, tr!("overview.col_source")).w(rems(COLUMN_REMS[1])))
+                .child(theme::header_cell(cx, tr!("accounts.col_reports")).w(rems(COLUMN_REMS[2])))
                 .child(
-                    theme::header_cell(cx, "MTD / BAL")
+                    theme::header_cell(cx, tr!("accounts.col_mtd_bal"))
                         .w(rems(COLUMN_REMS[3]))
                         .text_right(),
                 )
-                .child(theme::header_cell(cx, "LAST FETCH").w(rems(COLUMN_REMS[4])))
-                .child(theme::header_cell(cx, "STATE").w(rems(COLUMN_REMS[5])))
+                .child(
+                    theme::header_cell(cx, tr!("accounts.col_last_fetch")).w(rems(COLUMN_REMS[4])),
+                )
+                .child(theme::header_cell(cx, tr!("accounts.col_state")).w(rems(COLUMN_REMS[5])))
                 // The row's buttons name themselves; the lane stays reserved.
                 .child(div().w(rems(COLUMN_REMS[6]))),
         );
@@ -1222,7 +1231,7 @@ impl AccountsView {
                     .py_6()
                     .flex()
                     .justify_center()
-                    .child(theme::caption(cx, "Loading accounts…")),
+                    .child(theme::caption(cx, tr!("accounts.loading"))),
             ),
             Some(loaded) if loaded.accounts.is_empty() => card.child(
                 div()
@@ -1230,10 +1239,7 @@ impl AccountsView {
                     .py_6()
                     .flex()
                     .justify_center()
-                    .child(theme::caption(
-                        cx,
-                        "No accounts yet. Add one to connect a billing source.",
-                    )),
+                    .child(theme::caption(cx, tr!("accounts.empty"))),
             ),
             Some(loaded) => card.children(
                 loaded
@@ -1269,7 +1275,7 @@ impl AccountsView {
 
         // Balance-reporting sources have no MTD to show; their number is
         // the balance itself.
-        let mtd = if row.source_kind == "Balance only" {
+        let mtd = if row.is_snapshot {
             match &row.balance {
                 Some((amount, currency)) => format_balance(*amount, currency),
                 None => "—".to_string(),
@@ -1281,7 +1287,7 @@ impl AccountsView {
         let last_sync = row
             .last_sync
             .map(fmt::relative_time)
-            .unwrap_or_else(|| "never".to_string());
+            .unwrap_or_else(|| tr!("accounts.never").into());
         // `last_sync` is the last success; a failure since then shows
         // under it, with the provider's reason on hover.
         let failure = self.refresh_failure(&row.id, cx);
@@ -1322,7 +1328,12 @@ impl AccountsView {
                     // Demo rows sit in the same table and totals as real
                     // ones; the pill keeps them from being mistaken.
                     .when(row.id.starts_with(crate::demo_data::DEMO_PREFIX), |el| {
-                        el.child(div().pt_0p5().flex().child(theme::pill_outline(cx, "Demo")))
+                        el.child(
+                            div()
+                                .pt_0p5()
+                                .flex()
+                                .child(theme::pill_outline(cx, tr!("overview.demo"))),
+                        )
                     })
                     // Absent for an account stored before the hint was
                     // recorded; it appears the next time the account's
@@ -1330,7 +1341,7 @@ impl AccountsView {
                     .when_some(
                         account.as_ref().and_then(|a| {
                             if a.system_credentials {
-                                Some("This machine's credentials".to_string())
+                                Some(tr!("accounts.system_credentials").to_string())
                             } else {
                                 a.masked_access_key()
                                     .map(|masked| format!("AK: {}", masked))
@@ -1392,10 +1403,10 @@ impl AccountsView {
                                         .text_xs()
                                         .font_weight(FontWeight::MEDIUM)
                                         .text_color(theme::danger(cx))
-                                        .child("Failing"),
+                                        .child(tr!("accounts.failing")),
                                 )
                                 .tooltip(move |window, cx| {
-                                    Tooltip::new(format!("Background refresh failing: {reason}"))
+                                    Tooltip::new(tr!("accounts.failing_tooltip", reason = reason))
                                         .build(window, cx)
                                 }),
                         )
@@ -1419,7 +1430,7 @@ impl AccountsView {
                     .when_some(account_for_validate, |el, account| {
                         el.child(
                             Button::new(SharedString::from(format!("validate-{}", validate_id)))
-                                .label("Validate")
+                                .label(tr!("accounts.validate"))
                                 .ghost()
                                 .small()
                                 .disabled(self.validating_ids.contains(&row.id))
@@ -1431,7 +1442,7 @@ impl AccountsView {
                     .when_some(account_for_import, |el, account| {
                         el.child(
                             Button::new(SharedString::from(format!("import-{}", import_id)))
-                                .label("Import")
+                                .label(tr!("accounts.import"))
                                 .ghost()
                                 .small()
                                 .disabled(self.importing_ids.contains(&row.id))
@@ -1447,7 +1458,7 @@ impl AccountsView {
                     })
                     .child(
                         Button::new(SharedString::from(format!("delete-{}", delete_id)))
-                            .label("Delete")
+                            .label(tr!("common.delete"))
                             .danger()
                             .ghost()
                             .small()
@@ -1484,13 +1495,12 @@ impl AccountsView {
         );
 
         let raw_body = match &self.accounts_data {
-            Some(loaded) => format!(
-                "{} of Parquet under {}. A mapping fix replays these instead of \
-                 paying for another fetch.",
-                format_bytes(loaded.raw.bytes),
-                loaded.raw.path.display()
+            Some(loaded) => tr!(
+                "accounts.raw_body",
+                size = format_bytes(loaded.raw.bytes),
+                path = loaded.raw.path.display()
             ),
-            None => "Reading the raw store…".to_string(),
+            None => tr!("accounts.reading_raw"),
         };
 
         div()
@@ -1514,7 +1524,7 @@ impl AccountsView {
                         div()
                             .font_weight(FontWeight::BOLD)
                             .text_color(theme::text_primary(cx))
-                            .child("Paid API budget"),
+                            .child(tr!("accounts.api_budget")),
                     )
                     .child(theme::caption(cx, budget_body))
                     .child(
@@ -1533,9 +1543,10 @@ impl AccountsView {
                     )
                     .child(theme::caption(
                         cx,
-                        format!(
-                            "{} of a {}-call monthly ceiling",
-                            budget_used, budget_ceiling
+                        tr!(
+                            "accounts.api_budget_caption",
+                            used = budget_used,
+                            ceiling = budget_ceiling
                         ),
                     )),
             )
@@ -1553,7 +1564,7 @@ impl AccountsView {
                         div()
                             .font_weight(FontWeight::BOLD)
                             .text_color(theme::text_primary(cx))
-                            .child("Raw payloads on disk"),
+                            .child(tr!("accounts.raw_payloads")),
                     )
                     // Middle ellipsis keeps the tail of the path visible no
                     // matter how deep the data directory is.
@@ -1561,7 +1572,7 @@ impl AccountsView {
                     .child(
                         div().child(
                             Button::new("replay-normalization")
-                                .label("Replay normalization")
+                                .label(tr!("accounts.replay"))
                                 .outline()
                                 .custom(
                                     ButtonCustomVariant::new(cx)
@@ -1599,15 +1610,8 @@ impl AccountsView {
                 div()
                     .v_flex()
                     .gap_1()
-                    .child(theme::section_title(
-                        cx,
-                        "Billing history from deleted accounts",
-                    ))
-                    .child(theme::caption(
-                        cx,
-                        "No account owns these charges any more, but they still count in \
-                         every total.",
-                    )),
+                    .child(theme::section_title(cx, tr!("accounts.orphans_title")))
+                    .child(theme::caption(cx, tr!("accounts.orphans_caption"))),
             )
             .children(loaded.orphans.iter().map(|history| {
                 let id = history.account_id.clone();
@@ -1634,7 +1638,7 @@ impl AccountsView {
                     )
                     .child(
                         Button::new(SharedString::from(format!("delete-history-{}", id)))
-                            .label("Delete history")
+                            .label(tr!("accounts.delete_history"))
                             .ghost()
                             .danger()
                             .small()
@@ -1707,7 +1711,7 @@ impl AccountsView {
     ) -> Dialog {
         let view = cx.entity().downgrade();
         dialog
-            .title("Add account")
+            .title(tr!("accounts.add_title"))
             .w(rems(32.).to_pixels(window.rem_size()))
             .max_h(rems(37.5))
             .on_close(cx.listener(|this, _, _, cx| this.add_dialog_closed(cx)))
@@ -1724,7 +1728,7 @@ impl AccountsView {
                         div()
                             .v_flex()
                             .gap_1()
-                            .child(div().text_sm().child("Provider"))
+                            .child(div().text_sm().child(tr!("accounts.provider")))
                             .child(self.render_source_selector(cx))
                             .child(self.render_setup_hint(cx)),
                     )
@@ -1732,7 +1736,7 @@ impl AccountsView {
                         div()
                             .v_flex()
                             .gap_1()
-                            .child(div().text_sm().child("Name"))
+                            .child(div().text_sm().child(tr!("accounts.name")))
                             .child(Input::new(&self.name_input)),
                     )
                     // A source with no billing API in this build has
@@ -1764,7 +1768,7 @@ impl AccountsView {
                                         .child(Input::new(&self.sk_input)),
                                 )
                             })
-                            .child(theme::caption(cx, KEYRING_NOTE))
+                            .child(theme::caption(cx, keyring_note()))
                         })
                         .when_some(self.selected_source.region_field(), |el, label| {
                             el.child(
@@ -1784,7 +1788,7 @@ impl AccountsView {
                                 div()
                                     .v_flex()
                                     .gap_1()
-                                    .child(div().text_sm().child("Data export S3 URI"))
+                                    .child(div().text_sm().child(tr!("accounts.export_uri")))
                                     .child(Input::new(&self.export_uri_input))
                                     .child(
                                         div().text_xs().text_color(theme::text_muted(cx)).child(
@@ -1832,7 +1836,7 @@ impl AccountsView {
                                     .child(self.render_fill_status(cx))
                                     .child(
                                         Button::new("fill-from-system")
-                                            .label("Fill from system")
+                                            .label(tr!("accounts.fill_from_system"))
                                             .ghost()
                                             .tooltip(
                                                 "Read the credentials this machine \
@@ -1866,13 +1870,13 @@ impl AccountsView {
                     })
                     .child(
                         Button::new("cancel")
-                            .label("Cancel")
+                            .label(tr!("common.cancel"))
                             .ghost()
                             .on_click(|_, window, cx| window.dispatch_action(Box::new(Cancel), cx)),
                     )
                     .child(
                         Button::new("save")
-                            .label("Save")
+                            .label(tr!("common.save"))
                             .primary()
                             .disabled(self.saving)
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -1907,21 +1911,21 @@ impl AccountsView {
                     .iter()
                     .find(|account| &account.id == id)
                     .map(|account| account.name.clone())
-                    .unwrap_or_else(|| "this account".to_string());
+                    .unwrap_or_else(|| tr!("accounts.this_account").into());
                 (
-                    format!("Delete \u{201c}{name}\u{201d}?"),
-                    "Its credentials in the OS keyring are removed. This cannot be undone."
-                        .to_string(),
+                    tr!("accounts.delete_title", name = name).to_string(),
+                    tr!("accounts.delete_body").to_string(),
                 )
             }
             PendingDelete::History(_) => (
-                "Delete billing history?".to_string(),
-                format!(
-                    "{} and the raw payloads behind it are removed. This cannot be undone.",
-                    history
+                tr!("accounts.delete_history_title").to_string(),
+                tr!(
+                    "accounts.delete_history_body",
+                    history = history
                         .map(|h| history_summary(h, currency))
-                        .unwrap_or_else(|| "This history".to_string())
-                ),
+                        .unwrap_or_else(|| tr!("accounts.this_history").into())
+                )
+                .to_string(),
             ),
         };
         // Only an account with something in the ledger has a choice to make.
@@ -1937,7 +1941,7 @@ impl AccountsView {
             .description(body)
             .button_props(
                 DialogButtonProps::default()
-                    .ok_text("Delete")
+                    .ok_text(tr!("common.delete"))
                     .ok_variant(ButtonVariant::Danger)
                     .show_cancel(true),
             )
@@ -1951,14 +1955,14 @@ impl AccountsView {
             }))
             .when_some(history_choice, |el, history| {
                 let consequence = if self.delete_history {
-                    format!(
-                        "{} and its raw payloads are removed too.",
-                        history_summary(history, currency)
+                    tr!(
+                        "accounts.history_removed_too",
+                        history = history_summary(history, currency)
                     )
                 } else {
-                    format!(
-                        "{} stays in the ledger and keeps counting in every total.",
-                        history_summary(history, currency)
+                    tr!(
+                        "accounts.history_stays",
+                        history = history_summary(history, currency)
                     )
                 };
                 el.child(
@@ -1970,7 +1974,7 @@ impl AccountsView {
                         .pt_3()
                         .child(
                             Checkbox::new("delete-account-history")
-                                .label("Also delete its billing history")
+                                .label(tr!("accounts.also_delete_history"))
                                 .checked(self.delete_history)
                                 .on_click(cx.listener(|this, checked: &bool, _, cx| {
                                     this.delete_history = *checked;
@@ -2056,7 +2060,11 @@ fn report(view: &WeakEntity<AccountsView>, cx: &mut AsyncApp, outcome: Result<St
 
 /// A prepaid balance in its own currency, e.g. `¥8.14 left`.
 fn format_balance(amount: f64, currency: &str) -> String {
-    format!("{} left", fmt::amount(amount, currency))
+    tr!(
+        "accounts.balance_left",
+        amount = fmt::amount(amount, currency)
+    )
+    .into()
 }
 
 /// A byte size as GB, MB, KB, or B, whichever reads whole-ish.
@@ -2065,20 +2073,28 @@ fn format_balance(amount: f64, currency: &str) -> String {
 /// the left-behind-history card, so both describe it the same way.
 fn history_summary(history: &query::LedgerAccount, currency: &str) -> String {
     let months = match (&history.first_period, &history.last_period) {
-        (Some(first), Some(last)) if first == last => format!(" in {first}"),
-        (Some(first), Some(last)) => format!(" from {first} to {last}"),
+        (Some(first), Some(last)) if first == last => {
+            tr!("accounts.history_in", month = first).to_string()
+        }
+        (Some(first), Some(last)) => {
+            tr!("accounts.history_from_to", first = first, last = last).to_string()
+        }
         _ => String::new(),
     };
     if history.charges == 0 {
-        return "Its balance history".to_string();
+        return tr!("accounts.balance_history").into();
     }
-    format!(
-        "{} charge{}{} ({} of usage)",
-        history.charges,
-        if history.charges == 1 { "" } else { "s" },
-        months,
-        fmt::amount(history.usage_cost, currency)
+    let charges = match history.charges {
+        1 => tr!("accounts.one_charge"),
+        n => tr!("accounts.n_charges", n = n),
+    };
+    tr!(
+        "accounts.history_summary",
+        charges = charges,
+        months = months,
+        usage = fmt::amount(history.usage_cost, currency)
     )
+    .into()
 }
 
 fn format_bytes(bytes: u64) -> String {
@@ -2278,11 +2294,12 @@ fn render_untagged_finding(untagged: &UntaggedSummary, currency: &str, cx: &App)
         .v_flex()
         .child(data_health::issue_row(
             untagged.severity,
-            format!(
-                "Usage with no '{}' tag ({:.1}% of the period's usage)",
-                data::BUSINESS_LINE_TAG,
-                untagged.share * 100.0
-            ),
+            tr!(
+                "accounts.untagged_finding",
+                tag = data::BUSINESS_LINE_TAG,
+                pct = format!("{:.1}", untagged.share * 100.0)
+            )
+            .to_string(),
             Some(untagged.amount),
             currency,
             cx,
@@ -2328,10 +2345,10 @@ fn render_untagged_finding(untagged: &UntaggedSummary, currency: &str, cx: &App)
                     el.child(
                         div().flex().child(
                             Button::new("open-untagged-query")
-                                .label("Open Query template")
+                                .label(tr!("accounts.open_query_template"))
                                 .outline()
                                 .small()
-                                .tooltip("Unallocated spend by service")
+                                .tooltip(tr!("accounts.query_template_tooltip"))
                                 .on_click(|_, _, cx| {
                                     crate::app::navigate_to(crate::app::CurrentView::Query, cx)
                                 }),

@@ -125,7 +125,7 @@ impl AccountDetailView {
                             this.error = None;
                         }
                         Err(e) => {
-                            this.error = Some(format!("Could not load the account: {e}"));
+                            this.error = Some(tr!("detail.load_failed", error = e).into());
                         }
                     }
                 }
@@ -149,7 +149,7 @@ impl AccountDetailView {
                     .gap_1()
                     .child(
                         Button::new("back-to-accounts")
-                            .label("← Accounts")
+                            .label(tr!("detail.back"))
                             .ghost()
                             .small()
                             .on_click(|_, _, cx| {
@@ -159,9 +159,11 @@ impl AccountDetailView {
                     .child(theme::page_title(cx, d.account_name.clone()))
                     .child(theme::caption(
                         cx,
-                        format!(
-                            "{}, {}, reported in {}",
-                            d.provider, d.window_caption, d.currency
+                        tr!(
+                            "detail.caption",
+                            provider = d.provider,
+                            window = d.window_caption,
+                            currency = d.currency
                         ),
                     )),
             )
@@ -205,8 +207,8 @@ impl AccountDetailView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let title = match d.range {
-            Range::Months12 => "Monthly usage",
-            _ => "Daily usage",
+            Range::Months12 => tr!("detail.monthly_usage"),
+            _ => tr!("detail.daily_usage"),
         };
         theme::card(cx)
             .w_full()
@@ -257,34 +259,30 @@ impl AccountDetailView {
     fn render_services(&self, d: &AccountDetailData, cx: &App) -> impl IntoElement {
         let currency = d.currency.as_str();
         let vs_prior = match d.range {
-            Range::Mtd => "VS LAST MONTH",
-            Range::Days30 => "VS PRIOR 30D",
-            Range::Months12 => "VS PRIOR 12M",
+            Range::Mtd => tr!("overview.vs_last_month"),
+            Range::Days30 => tr!("overview.col_vs_prior_30d"),
+            Range::Months12 => tr!("overview.col_vs_prior_12m"),
         };
         let card = theme::card(cx)
             .w_full()
             .p_5()
             .v_flex()
             .gap_4()
-            .child(theme::section_title(cx, "By service or model"));
+            .child(theme::section_title(cx, tr!("detail.by_service")));
 
         if d.services.is_empty() {
             if !d.is_snapshot {
-                return card.child(theme::caption(cx, "No usage in this window."));
+                return card.child(theme::caption(cx, tr!("detail.no_usage")));
             }
             return card.child(
                 div()
                     .v_flex()
                     .gap_2()
                     .items_start()
-                    .child(theme::caption(
-                        cx,
-                        "No usage in this window. A balance-reporting source's usage \
-                         arrives through its bill file import.",
-                    ))
+                    .child(theme::caption(cx, tr!("detail.no_usage_snapshot")))
                     .child(
                         Button::new("go-to-accounts")
-                            .label("Open Accounts")
+                            .label(tr!("models.open_accounts"))
                             .outline()
                             .small()
                             .on_click(|_, _, cx| {
@@ -299,9 +297,21 @@ impl AccountDetailView {
                 .h_flex()
                 .items_center()
                 .pb_2()
-                .child(theme::header_cell(cx, "SERVICE / MODEL").flex_1().min_w_0())
-                .child(theme::header_cell(cx, "AMOUNT").w_24().text_right())
-                .child(theme::header_cell(cx, "SHARE").w_32().px_2())
+                .child(
+                    theme::header_cell(cx, tr!("detail.col_service_model"))
+                        .flex_1()
+                        .min_w_0(),
+                )
+                .child(
+                    theme::header_cell(cx, tr!("detail.col_amount"))
+                        .w_24()
+                        .text_right(),
+                )
+                .child(
+                    theme::header_cell(cx, tr!("models.col_share"))
+                        .w_32()
+                        .px_2(),
+                )
                 .child(theme::header_cell(cx, vs_prior).w_24().text_right()),
         )
         .child(
@@ -339,7 +349,7 @@ impl AccountDetailView {
                         .v_flex()
                         .gap_1()
                         .child(theme::section_title(cx, dim.title()))
-                        .child(theme::caption(cx, "Current billing period")),
+                        .child(theme::caption(cx, tr!("detail.current_period"))),
                 )
                 .child(
                     div()
@@ -374,7 +384,7 @@ impl AccountDetailView {
 
         if rows.is_empty() {
             return card
-                .child(theme::caption(cx, "No usage in this billing period."))
+                .child(theme::caption(cx, tr!("detail.no_usage_period")))
                 .into_any_element();
         }
 
@@ -388,8 +398,16 @@ impl AccountDetailView {
                         .flex_1()
                         .min_w_0(),
                 )
-                .child(theme::header_cell(cx, "AMOUNT").w_24().text_right())
-                .child(theme::header_cell(cx, "SHARE").w_32().px_2()),
+                .child(
+                    theme::header_cell(cx, tr!("detail.col_amount"))
+                        .w_24()
+                        .text_right(),
+                )
+                .child(
+                    theme::header_cell(cx, tr!("models.col_share"))
+                        .w_32()
+                        .px_2(),
+                ),
         )
         .child(
             div().v_flex().children(
@@ -440,7 +458,7 @@ impl AccountDetailView {
 impl Render for AccountDetailView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body: AnyElement = match (&self.account_id, &self.data) {
-            (None, _) => theme::caption(cx, "No account selected.").into_any_element(),
+            (None, _) => theme::caption(cx, tr!("detail.no_account")).into_any_element(),
             (Some(_), None) if self.loading => render_skeleton(cx).into_any_element(),
             (Some(_), None) => div().into_any_element(),
             (Some(_), Some(d)) => div()
@@ -490,23 +508,23 @@ fn render_stats(d: &AccountDetailData, cx: &App) -> impl IntoElement {
         .gap_4()
         .child(theme::stat_card(
             cx,
-            "SPEND",
+            tr!("detail.spend"),
             fmt::amount(d.spend, currency),
-            div().text_color(theme::text_muted(cx)).child(format!(
-                "usage {}, credits {}",
-                fmt::amount(d.usage, currency),
-                fmt::amount(d.credits, currency)
+            div().text_color(theme::text_muted(cx)).child(tr!(
+                "overview.usage_credits",
+                usage = fmt::amount(d.usage, currency),
+                credits = fmt::amount(d.credits, currency)
             )),
         ))
         .child(theme::stat_card(
             cx,
-            "CHANGE",
+            tr!("overview.col_change"),
             d.change_pct
                 .map(fmt::change_pct)
                 .unwrap_or_else(|| "—".to_string()),
             div()
                 .text_color(theme::text_muted(cx))
-                .child(d.change_caption),
+                .child(d.change_caption.clone()),
         ))
 }
 
@@ -637,10 +655,10 @@ enum DrillDim {
 impl DrillDim {
     const ALL: [DrillDim; 2] = [DrillDim::Region, DrillDim::ServiceCategory];
 
-    fn label(self) -> &'static str {
+    fn label(self) -> SharedString {
         match self {
-            DrillDim::Region => "Region",
-            DrillDim::ServiceCategory => "Category",
+            DrillDim::Region => tr!("detail.dim_region"),
+            DrillDim::ServiceCategory => tr!("detail.dim_category"),
         }
     }
 
@@ -652,27 +670,27 @@ impl DrillDim {
     }
 
     /// The card's title in this dimension.
-    fn title(self) -> &'static str {
+    fn title(self) -> SharedString {
         match self {
-            DrillDim::Region => "By region",
-            DrillDim::ServiceCategory => "By service category",
+            DrillDim::Region => tr!("detail.by_region"),
+            DrillDim::ServiceCategory => tr!("detail.by_category"),
         }
     }
 
     /// The bucket column's table header.
-    fn bucket_header(self) -> &'static str {
+    fn bucket_header(self) -> SharedString {
         match self {
-            DrillDim::Region => "REGION",
-            DrillDim::ServiceCategory => "SERVICE CATEGORY",
+            DrillDim::Region => tr!("detail.col_region"),
+            DrillDim::ServiceCategory => tr!("detail.col_category"),
         }
     }
 
     /// Footnote under a breakdown that has an 'Other' bucket, naming what
     /// landed there.
-    fn other_caption(self) -> &'static str {
+    fn other_caption(self) -> SharedString {
         match self {
-            DrillDim::Region => "Charges with no region read as 'Other'.",
-            DrillDim::ServiceCategory => "Charges with no service category read as 'Other'.",
+            DrillDim::Region => tr!("detail.other_region"),
+            DrillDim::ServiceCategory => tr!("detail.other_category"),
         }
     }
 }
@@ -764,7 +782,7 @@ fn drilldown_row(cx: &App, label: &str, amount: f64, total: f64, currency: &str)
                 .text_ellipsis()
                 .text_sm()
                 .text_color(label_color)
-                .child(label.to_string()),
+                .child(crate::i18n::bucket_label(label)),
         )
         .child(
             div()

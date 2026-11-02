@@ -247,7 +247,7 @@ impl InsightsView {
                         view.data = Some(loaded);
                         view.error = None;
                     }
-                    Err(e) => view.error = Some(format!("Could not load insights: {e}")),
+                    Err(e) => view.error = Some(tr!("insights.load_failed", error = e).into()),
                 }
                 view.loading = false;
                 cx.notify();
@@ -309,7 +309,7 @@ impl InsightsView {
             return false;
         }
         if let Err(e) = choice.save() {
-            self.scan_outcome = Some(Err(format!("Couldn't save the regions: {e}")));
+            self.scan_outcome = Some(Err(tr!("insights.save_regions_failed", error = e).into()));
         } else {
             self.scan_outcome = None;
         }
@@ -332,26 +332,23 @@ impl InsightsView {
     /// in. Each step is its own blocking call, so the page can say which
     /// one it is on.
     fn run_scan(&mut self, cx: &mut Context<Self>) {
-        self.scan = ScanState::Running("Getting ready…".to_string());
+        self.scan = ScanState::Running(tr!("insights.getting_ready").into());
         cx.notify();
 
         cx.spawn(async move |this, cx| {
             let outcome: Result<String, String> = async {
                 if !ingest::scanner_installed() {
-                    Self::step(&this, cx, "Installing the scanner…".to_string());
+                    Self::step(&this, cx, tr!("insights.installing").into());
                     smol::unblock(ingest::install_scanner)
                         .await
-                        .map_err(|e| format!("Couldn't install the scanner: {e}"))?;
+                        .map_err(|e| tr!("insights.install_failed", error = e).to_string())?;
                 }
 
                 let targets = smol::unblock(ingest::scan_targets)
                     .await
                     .map_err(|e| e.to_string())?;
                 if targets.is_empty() {
-                    return Err(
-                        "Add an AWS or Cloudflare account on the Accounts page to scan it."
-                            .to_string(),
-                    );
+                    return Err(tr!("insights.no_targets").into());
                 }
 
                 let mut scans = Vec::new();
@@ -367,10 +364,12 @@ impl InsightsView {
                     Self::step(
                         &this,
                         cx,
-                        format!(
-                            "Scanning {}{place}… this usually takes a minute or two",
-                            target.account.name,
-                        ),
+                        tr!(
+                            "insights.scanning",
+                            name = target.account.name,
+                            place = place
+                        )
+                        .into(),
                     );
                     let name = target.account.name.clone();
                     match smol::unblock(move || ingest::scan_target(&target)).await {
@@ -385,16 +384,17 @@ impl InsightsView {
                     return Err(failures.join("\n"));
                 }
 
-                Self::step(&this, cx, "Reading the results…".to_string());
+                Self::step(&this, cx, tr!("insights.reading_results").into());
                 let scope = smol::unblock(move || ingest::import_scans(&scans))
                     .await
-                    .map_err(|e| format!("Couldn't read the scan: {e}"))?;
+                    .map_err(|e| tr!("insights.read_failed", error = e).to_string())?;
                 tracing::info!("Insights scan: {} resources", scope.resource_count);
                 // A complete scan says so in the page itself; only what
                 // it could not reach needs a message.
                 let mut message: Vec<String> = Vec::new();
                 if !failures.is_empty() {
-                    message.push(format!("Not scanned: {}", failures.join("; ")));
+                    message
+                        .push(tr!("insights.not_scanned", failures = failures.join("; ")).into());
                 }
                 message.extend(notes);
                 Ok(message.join("\n"))
@@ -417,7 +417,7 @@ impl InsightsView {
         .detach();
     }
 
-    fn scan_button(&self, id: &'static str, label: &'static str, cx: &Context<Self>) -> Button {
+    fn scan_button(&self, id: &'static str, label: SharedString, cx: &Context<Self>) -> Button {
         Button::new(id)
             .label(label)
             .small()
@@ -429,11 +429,8 @@ impl InsightsView {
 
     fn render_header(&self, cx: &Context<Self>) -> impl IntoElement {
         let caption = match &self.data {
-            Some(d) => format!(
-                "Resources worth a look in {}, priced from the bill",
-                d.period_label
-            ),
-            None => "Resources worth a look this period, priced from the bill".to_string(),
+            Some(d) => tr!("insights.subtitle_period", period = d.period_label),
+            None => tr!("insights.subtitle"),
         };
         div()
             .w_full()
@@ -445,7 +442,7 @@ impl InsightsView {
                 div()
                     .v_flex()
                     .gap_1()
-                    .child(theme::page_title(cx, "Insights"))
+                    .child(theme::page_title(cx, tr!("nav.insights")))
                     .child(theme::caption(cx, caption)),
             )
             // Once there is an inventory the header carries the rescan;
@@ -464,11 +461,14 @@ impl InsightsView {
                             .gap_3()
                             .child(theme::caption(
                                 cx,
-                                format!("Scanned {}", fmt::relative_time(scope.scanned_at)),
+                                tr!(
+                                    "insights.scanned",
+                                    when = fmt::relative_time(scope.scanned_at)
+                                ),
                             ))
                             .child(
                                 Button::new("insights-regions")
-                                    .label("Regions")
+                                    .label(tr!("insights.regions"))
                                     .small()
                                     .ghost()
                                     .disabled(self.scan != ScanState::Idle)
@@ -476,7 +476,11 @@ impl InsightsView {
                                         this.open_settings(window, cx)
                                     })),
                             )
-                            .child(self.scan_button("insights-rescan", "Scan again", cx)),
+                            .child(self.scan_button(
+                                "insights-rescan",
+                                tr!("insights.scan_again"),
+                                cx,
+                            )),
                     )
                 },
             )
@@ -502,50 +506,58 @@ impl InsightsView {
                 .iter()
                 .map(|source| {
                     if source.source == "AWS" {
-                        format!(
-                            "{} AWS in {}",
-                            source.total,
-                            if all {
-                                "all regions".to_string()
+                        tr!(
+                            "insights.aws_in",
+                            n = source.total,
+                            regions = if all {
+                                tr!("insights.all_regions_lower").to_string()
                             } else {
                                 regions.join(", ")
                             }
                         )
+                        .to_string()
                     } else {
                         format!("{} {}", source.total, source.source)
                     }
                 })
                 .collect();
-            parts.push(format!(
-                "{} resources: {}",
-                report.resources,
-                by_source.join(", ")
-            ));
+            parts.push(
+                tr!(
+                    "insights.resources_by_source",
+                    n = report.resources,
+                    sources = by_source.join(", ")
+                )
+                .to_string(),
+            );
             if !scope.complete {
-                parts.push("the scan was partial, so nothing billed is called missing".to_string());
+                parts.push(tr!("insights.partial").to_string());
             }
             if report.described < report.resources {
                 // Stopped instances can only be told from configuration.
-                parts.push(format!(
-                    "configuration read for {} of them",
-                    report.described
-                ));
+                parts.push(tr!("insights.described", n = report.described).to_string());
             }
         }
         if report.priced && report.billed_cost > 0.0 {
-            parts.push(format!(
-                "{:.1}% of resource-level usage matched",
-                100.0 * report.matched_cost / report.billed_cost
-            ));
+            parts.push(
+                tr!(
+                    "insights.matched",
+                    pct = format!("{:.1}", 100.0 * report.matched_cost / report.billed_cost)
+                )
+                .to_string(),
+            );
         }
         if let (Some(dir), false) = (&d.scripts.dir, d.scripts.rules.is_empty()) {
             let n = d.scripts.rules.len();
-            parts.push(format!(
-                "{n} script rule{} from {dir}",
-                if n == 1 { "" } else { "s" }
-            ));
+            parts.push(
+                if n == 1 {
+                    tr!("insights.one_script_rule", dir = dir)
+                } else {
+                    tr!("insights.script_rules", n = n, dir = dir)
+                }
+                .to_string(),
+            );
         }
-        theme::caption(cx, parts.join("; "))
+        theme::caption(cx, parts.join(&rust_i18n::t!("insights.parts_separator")))
     }
 
     fn render_stats(&self, d: &InsightsData, cx: &Context<Self>) -> impl IntoElement {
@@ -561,16 +573,26 @@ impl InsightsView {
                 .map(|kind| {
                     let of_kind = d.report.findings.iter().filter(|f| f.kind == *kind);
                     let (count, cost) = of_kind.fold((0, 0.0), |(n, c), f| (n + 1, c + f.cost));
-                    let plural = if count == 1 { "" } else { "s" };
                     // Without a resource-level bill there is no price to lead
                     // with; the count is the figure.
                     let (value, sub) = if d.report.priced {
                         (
                             fmt::amount(cost, &d.currency),
-                            format!("{count} resource{plural}"),
+                            if count == 1 {
+                                tr!("insights.one_resource")
+                            } else {
+                                tr!("insights.n_resources", n = count)
+                            },
                         )
                     } else {
-                        (count.to_string(), format!("resource{plural}, not priced"))
+                        (
+                            count.to_string(),
+                            if count == 1 {
+                                tr!("insights.not_priced_one")
+                            } else {
+                                tr!("insights.not_priced")
+                            },
+                        )
                     };
                     theme::stat_card(
                         cx,
@@ -592,15 +614,12 @@ impl InsightsView {
         };
         let scope = format!("finding:{kind:?}");
         let footnote = match kind {
-            InsightKind::Unclaimed if d.report.unclaimed_free > 0 => Some(format!(
-                "{} more unclaimed resource{} cost nothing this period",
-                d.report.unclaimed_free,
-                if d.report.unclaimed_free == 1 {
-                    ""
-                } else {
-                    "s"
-                }
-            )),
+            InsightKind::Unclaimed if d.report.unclaimed_free == 1 => {
+                Some(tr!("insights.unclaimed_free_one"))
+            }
+            InsightKind::Unclaimed if d.report.unclaimed_free > 1 => {
+                Some(tr!("insights.unclaimed_free", n = d.report.unclaimed_free))
+            }
             _ => None,
         };
 
@@ -625,9 +644,21 @@ impl InsightsView {
                             .items_center()
                             .gap_4()
                             .pb_2()
-                            .child(theme::header_cell(cx, "TYPE").flex_1().min_w_0())
-                            .child(theme::header_cell(cx, "RESOURCES").w_24().text_right())
-                            .child(theme::header_cell(cx, "THIS PERIOD").w_24().text_right()),
+                            .child(
+                                theme::header_cell(cx, tr!("insights.col_type"))
+                                    .flex_1()
+                                    .min_w_0(),
+                            )
+                            .child(
+                                theme::header_cell(cx, tr!("insights.col_resources"))
+                                    .w_24()
+                                    .text_right(),
+                            )
+                            .child(
+                                theme::header_cell(cx, tr!("insights.col_this_period"))
+                                    .w_24()
+                                    .text_right(),
+                            ),
                     )
                     .children(groups.iter().map(|group| {
                         let key = group_key(&scope, &group.resource_type);
@@ -734,19 +765,25 @@ impl InsightsView {
             .gap_3()
             .py_2()
             .when(total > shown, |el| {
-                el.child(theme::caption(cx, format!("Showing {shown} of {total}")))
-                    .child(
-                        Button::new(SharedString::from(format!("more-{key}")))
-                            .label(format!("Show {} more", (total - shown).min(PAGE_ROWS)))
-                            .ghost()
-                            .small()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if let Some(shown) = this.expanded.get_mut(&more_key) {
-                                    *shown += PAGE_ROWS;
-                                }
-                                cx.notify();
-                            })),
-                    )
+                el.child(theme::caption(
+                    cx,
+                    tr!("insights.showing", shown = shown, total = total),
+                ))
+                .child(
+                    Button::new(SharedString::from(format!("more-{key}")))
+                        .label(tr!(
+                            "insights.show_more",
+                            n = (total - shown).min(PAGE_ROWS)
+                        ))
+                        .ghost()
+                        .small()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(shown) = this.expanded.get_mut(&more_key) {
+                                *shown += PAGE_ROWS;
+                            }
+                            cx.notify();
+                        })),
+                )
             })
     }
 
@@ -797,10 +834,22 @@ impl InsightsView {
                             .items_center()
                             .gap_4()
                             .pb_2()
-                            .child(theme::header_cell(cx, "TYPE").flex_1().min_w_0())
-                            .child(theme::header_cell(cx, "RESOURCES").w_24().text_right())
-                            .child(theme::header_cell(cx, "THIS PERIOD").w_24().text_right())
-                            .child(theme::header_cell(cx, "INCLUDING").w_96()),
+                            .child(
+                                theme::header_cell(cx, tr!("insights.col_type"))
+                                    .flex_1()
+                                    .min_w_0(),
+                            )
+                            .child(
+                                theme::header_cell(cx, tr!("insights.col_resources"))
+                                    .w_24()
+                                    .text_right(),
+                            )
+                            .child(
+                                theme::header_cell(cx, tr!("insights.col_this_period"))
+                                    .w_24()
+                                    .text_right(),
+                            )
+                            .child(theme::header_cell(cx, tr!("insights.col_including")).w_96()),
                     )
                     .children(self.costed_types(d, source).into_iter().map(
                         |(kind, cost, members)| {
@@ -809,7 +858,7 @@ impl InsightsView {
                             let more = kind.count.saturating_sub(kind.names.len());
                             let mut names = kind.names.join(", ");
                             if more > 0 {
-                                names.push_str(&format!(" and {more} more"));
+                                names.push_str(&rust_i18n::t!("insights.and_more", n = more));
                             }
                             div()
                                 .v_flex()
@@ -910,18 +959,13 @@ impl InsightsView {
                         div()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme::text_primary(cx))
-                            .child("Prices need a resource-level bill"),
+                            .child(tr!("insights.need_resource_bill")),
                     )
-                    .child(theme::caption(
-                        cx,
-                        "This period's bill names services, not resources, so nothing below can \
-                         be priced yet. Point the AWS account at its Data Export on the Accounts \
-                         page and refresh.",
-                    )),
+                    .child(theme::caption(cx, tr!("insights.need_resource_bill_hint"))),
             )
             .child(
                 Button::new("insights-open-accounts-pricing")
-                    .label("Open Accounts")
+                    .label(tr!("models.open_accounts"))
                     .small()
                     .custom(theme::outline_variant(cx))
                     .card_outline(cx)
@@ -934,22 +978,14 @@ impl InsightsView {
     fn render_empty(&self, d: Option<&InsightsData>, cx: &Context<Self>) -> impl IntoElement {
         let has_inventory = d.is_some_and(|d| d.scope.is_some());
         let (title, body) = if has_inventory {
-            (
-                "Nothing to review this period",
-                "No stopped instance, idle address, unclaimed or missing resource has a \
-                 charge this period.",
-            )
+            (tr!("insights.nothing"), tr!("insights.nothing_hint"))
         } else {
             (
-                "Find resources to cut",
+                tr!("insights.empty"),
                 if ingest::scanner_supported() {
-                    "Insights scans your AWS and Cloudflare accounts for stopped instances, idle \
-                     addresses and resources nobody owns, then prices each from your bill. CloudBridge installs \
-                     and runs the scanner for you; the scan only reads."
+                    tr!("insights.empty_hint")
                 } else {
-                    "Insights scans your AWS and Cloudflare accounts for stopped instances, idle \
-                     addresses and resources nobody owns, then prices each from your bill. Scanning needs the \
-                     desktop app on macOS (Apple Silicon) or Windows."
+                    tr!("insights.empty_hint_unsupported")
                 },
             )
         };
@@ -976,11 +1012,15 @@ impl InsightsView {
                     .h_flex()
                     .gap_2()
                     .when(!has_inventory && ingest::scanner_supported(), |el| {
-                        el.child(self.scan_button("insights-scan", "Set up and scan", cx))
+                        el.child(self.scan_button(
+                            "insights-scan",
+                            tr!("insights.set_up_and_scan"),
+                            cx,
+                        ))
                     })
                     .child(
                         Button::new("insights-open-accounts")
-                            .label("Open Accounts")
+                            .label(tr!("models.open_accounts"))
                             .small()
                             .custom(theme::outline_variant(cx))
                             .card_outline(cx)
@@ -1029,13 +1069,13 @@ impl InsightsView {
             return dialog;
         };
         let installing = !ingest::scanner_installed();
-        let point = |text: &'static str| {
+        let point = |text: SharedString| {
             div()
                 .text_sm()
                 .text_color(theme::text_muted(cx))
                 .child(text)
         };
-        let mode = |id: &'static str, label: &'static str, all: bool| {
+        let mode = |id: &'static str, label: SharedString, all: bool| {
             let active = choice.all == all;
             let button = Button::new(id)
                 .label(label)
@@ -1059,21 +1099,29 @@ impl InsightsView {
                 div()
                     .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child("Regions to scan"),
+                    .child(tr!("insights.regions_to_scan")),
             )
             .child(
                 div()
                     .h_flex()
                     .gap_1()
-                    .child(mode("insights-regions-all", "All regions", true))
-                    .child(mode("insights-regions-chosen", "Choose regions", false)),
+                    .child(mode(
+                        "insights-regions-all",
+                        tr!("attribution.all_regions"),
+                        true,
+                    ))
+                    .child(mode(
+                        "insights-regions-chosen",
+                        tr!("insights.choose_regions"),
+                        false,
+                    )),
             )
             .child(theme::caption(
                 cx,
                 if choice.all {
-                    "Every region AWS enables by default. Scanning all of them takes a few minutes."
+                    tr!("insights.all_regions_hint")
                 } else {
-                    "Only the regions ticked below."
+                    tr!("insights.chosen_regions_hint")
                 },
             ))
             .when(!choice.all, |el| {
@@ -1102,9 +1150,9 @@ impl InsightsView {
             });
 
         let confirm_label = if installing {
-            "Install and scan"
+            tr!("insights.install_and_scan")
         } else {
-            "Scan"
+            tr!("insights.scan")
         };
         let can_scan = choice.can_scan();
 
@@ -1112,9 +1160,9 @@ impl InsightsView {
 
         dialog
             .title(if installing {
-                "Install the resource scanner?"
+                tr!("insights.install_title")
             } else {
-                "Scan settings"
+                tr!("insights.settings_title")
             })
             .w(rems(32.).to_pixels(window.rem_size()))
             .on_close(cx.listener(|this, _, _, cx| this.cancel_scan(cx)))
@@ -1131,20 +1179,9 @@ impl InsightsView {
                             div()
                                 .v_flex()
                                 .gap_2()
-                                .child(point(
-                                    "CloudBridge downloads corkscrew, a free open-source scanner \
-                                     (MIT licence, about 30 MB), and keeps it in its own data folder.",
-                                ))
-                                .child(point(
-                                    "Each AWS or Cloudflare account is scanned with the credential \
-                                     saved for it. The scan only reads: it lists resources and \
-                                     changes nothing.",
-                                ))
-                                .child(point(
-                                    "An AWS key needs read access to resources, such as the \
-                                     ReadOnlyAccess policy. A Cloudflare token needs Read on \
-                                     Workers, R2, KV, Queues, D1 and zones, beside Billing.",
-                                )),
+                                .child(point(tr!("insights.install_point_1")))
+                                .child(point(tr!("insights.install_point_2")))
+                                .child(point(tr!("insights.install_point_3"))),
                         )
                     })
                     .child(regions),
@@ -1154,11 +1191,9 @@ impl InsightsView {
                     .gap_2()
                     .child(
                         Button::new("insights-scan-cancel")
-                            .label("Cancel")
+                            .label(tr!("common.cancel"))
                             .ghost()
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(Cancel), cx)
-                            }),
+                            .on_click(|_, window, cx| window.dispatch_action(Box::new(Cancel), cx)),
                     )
                     .child(
                         Button::new("insights-scan-confirm")
@@ -1368,7 +1403,7 @@ fn usage_line(usage: &[ResourceUsage]) -> String {
 
 /// The inventory card's title for a source.
 fn inventory_title(source: &str) -> String {
-    format!("{source} resources")
+    tr!("insights.inventory_title", source = source).into()
 }
 
 /// A resource type as a person calls it: Cloudflare's plugin names its
@@ -1408,14 +1443,13 @@ fn stat_label(d: &InsightsData, kind: InsightKind) -> SharedString {
         return rule.label.clone().into();
     }
     match kind {
-        InsightKind::StoppedInstance => "STOPPED INSTANCES",
-        InsightKind::IdlePublicIp => "IDLE ADDRESSES",
-        InsightKind::IdleNatGateway => "IDLE NAT GATEWAYS",
-        InsightKind::Unclaimed => "UNCLAIMED",
-        InsightKind::NotInInventory => "NOT IN THE SCAN",
-        InsightKind::Script(_) => "SCRIPT RULE",
+        InsightKind::StoppedInstance => tr!("insights.stat_stopped"),
+        InsightKind::IdlePublicIp => tr!("insights.stat_idle_ip"),
+        InsightKind::IdleNatGateway => tr!("insights.stat_idle_nat"),
+        InsightKind::Unclaimed => tr!("insights.stat_unclaimed"),
+        InsightKind::NotInInventory => tr!("insights.stat_not_in_scan"),
+        InsightKind::Script(_) => tr!("insights.stat_script"),
     }
-    .into()
 }
 
 fn section_title(d: &InsightsData, kind: InsightKind) -> SharedString {
@@ -1423,14 +1457,13 @@ fn section_title(d: &InsightsData, kind: InsightKind) -> SharedString {
         return rule.title.clone().into();
     }
     match kind {
-        InsightKind::StoppedInstance => "Stopped instances",
-        InsightKind::IdlePublicIp => "Idle public addresses",
-        InsightKind::IdleNatGateway => "Idle NAT Gateways",
-        InsightKind::Unclaimed => "Unclaimed resources",
-        InsightKind::NotInInventory => "Billed, but not in the scan",
-        InsightKind::Script(_) => "Script rule",
+        InsightKind::StoppedInstance => tr!("insights.title_stopped"),
+        InsightKind::IdlePublicIp => tr!("insights.title_idle_ip"),
+        InsightKind::IdleNatGateway => tr!("insights.title_idle_nat"),
+        InsightKind::Unclaimed => tr!("insights.title_unclaimed"),
+        InsightKind::NotInInventory => tr!("insights.title_not_in_scan"),
+        InsightKind::Script(_) => tr!("insights.title_script"),
     }
-    .into()
 }
 
 fn explanation(d: &InsightsData, kind: InsightKind) -> SharedString {
@@ -1438,30 +1471,13 @@ fn explanation(d: &InsightsData, kind: InsightKind) -> SharedString {
         return rule.explanation.clone().into();
     }
     match kind {
-        InsightKind::StoppedInstance => {
-            "Stopped when scanned. Compute stops billing; attached volumes and addresses do not. \
-             Snapshot and delete what will not start again."
-        }
-        InsightKind::IdlePublicIp => {
-            "Public IPv4 addresses the bill charges as idle: allocated, attached to nothing. \
-             Release the ones nobody needs."
-        }
-        InsightKind::IdleNatGateway => {
-            "NAT Gateways billed by the hour that processed under 1 GB this period. Each costs \
-             about $32 a month before any traffic. Delete the ones no private subnet routes \
-             through."
-        }
-        InsightKind::Unclaimed => {
-            "No owner tag (owner, team, project, cost-center, business_line) and no stack or app \
-             that manages them. Find an owner, or remove them."
-        }
-        InsightKind::NotInInventory => {
-            "Charged this period in a region the scan covered, but not found by it: deleted \
-             since, or a type the scan does not list."
-        }
-        InsightKind::Script(_) => "",
+        InsightKind::StoppedInstance => tr!("insights.explain_stopped"),
+        InsightKind::IdlePublicIp => tr!("insights.explain_idle_ip"),
+        InsightKind::IdleNatGateway => tr!("insights.explain_idle_nat"),
+        InsightKind::Unclaimed => tr!("insights.explain_unclaimed"),
+        InsightKind::NotInInventory => tr!("insights.explain_not_in_scan"),
+        InsightKind::Script(_) => SharedString::default(),
     }
-    .into()
 }
 
 impl Render for InsightsView {
@@ -1494,7 +1510,9 @@ impl Render for InsightsView {
                 .children(d.scripts.errors.iter().map(|e| {
                     self.render_message(
                         cx,
-                        &Err(format!("Script rule {} did not run: {}", e.file, e.message)),
+                        &Err(
+                            tr!("insights.script_failed", file = e.file, error = e.message).into(),
+                        ),
                     )
                 }))
                 .map(|el| {
@@ -1524,7 +1542,7 @@ impl Render for InsightsView {
                 .child(
                     div().h_flex().child(
                         Button::new("insights-retry")
-                            .label("Retry")
+                            .label(tr!("common.retry"))
                             .custom(theme::outline_variant(cx))
                             .card_outline(cx)
                             .on_click(cx.listener(|this, _, _, cx| this.load(cx))),

@@ -50,8 +50,16 @@ fn icon_badge(alert: &AlertView, cx: &App) -> Div {
 /// The severity marker next to an alert title.
 fn severity_badge(severity: Severity, cx: &App) -> Div {
     match severity {
-        Severity::Critical => theme::pill("Critical", theme::alert_tint(cx), theme::danger(cx)),
-        Severity::Warning => theme::pill("Warning", theme::warning_bg(cx), theme::warning_text(cx)),
+        Severity::Critical => theme::pill(
+            tr!("alerts.critical"),
+            theme::alert_tint(cx),
+            theme::danger(cx),
+        ),
+        Severity::Warning => theme::pill(
+            tr!("alerts.warning"),
+            theme::warning_bg(cx),
+            theme::warning_text(cx),
+        ),
     }
 }
 
@@ -169,7 +177,7 @@ impl AlertsView {
                             this.error = None;
                         }
                         Err(e) => {
-                            this.error = Some(format!("Could not load alerts: {e}"));
+                            this.error = Some(tr!("alerts.load_failed", error = e).into());
                         }
                     }
                     cx.notify();
@@ -201,7 +209,10 @@ impl AlertsView {
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
                     if let Err(e) = result {
-                        this.error = Some(format!("Could not {verb} the alert: {e}"));
+                        this.error = Some(match verb {
+                            "snooze" => tr!("alerts.snooze_failed", error = e).into(),
+                            _ => tr!("alerts.dismiss_failed", error = e).into(),
+                        });
                     }
                     this.load(cx);
                 })
@@ -228,7 +239,7 @@ impl AlertsView {
         let label = filter.label.clone();
 
         Button::new(SharedString::from(format!("alert-filter-{label}")))
-            .label(filter.label.clone())
+            .label(filter_name(&filter.label))
             .child(div().text_xs().opacity(0.7).child(filter.count.to_string()))
             .when(active, |chip| chip.primary())
             .when(!active, |chip| chip.custom(inactive_chip_variant(cx)))
@@ -273,7 +284,7 @@ impl AlertsView {
 
         if action == "Dismiss" {
             Button::new(id)
-                .label(action.to_string())
+                .label(action_name(action))
                 .text()
                 .text_sm()
                 .text_color(theme::accent(cx))
@@ -282,14 +293,14 @@ impl AlertsView {
                 .into_any_element()
         } else if primary {
             Button::new(id)
-                .label(action.to_string())
+                .label(action_name(action))
                 .primary()
                 .disabled(self.loading)
                 .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
                 .into_any_element()
         } else {
             Button::new(id)
-                .label(action.to_string())
+                .label(action_name(action))
                 .custom(theme::outline_variant(cx))
                 .card_outline(cx)
                 .disabled(self.loading)
@@ -406,10 +417,10 @@ impl AlertsView {
                     .text_xs()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme::text_muted(cx))
-                    .child(data::RESOLVED_SECTION_TITLE),
+                    .child(tr!("alerts.resolved_this_month")),
             )
             .when(resolved.is_empty(), |el| {
-                el.child(theme::caption(cx, "Nothing resolved yet."))
+                el.child(theme::caption(cx, tr!("alerts.nothing_resolved")))
             })
             .children(
                 resolved
@@ -429,11 +440,8 @@ impl Render for AlertsView {
                 div()
                     .v_flex()
                     .gap_1()
-                    .child(theme::page_title(cx, "Alerts"))
-                    .child(theme::caption(
-                        cx,
-                        "Evaluated locally against the ledger every ingest",
-                    )),
+                    .child(theme::page_title(cx, tr!("nav.alerts")))
+                    .child(theme::caption(cx, tr!("alerts.subtitle"))),
             )
             // The rules editor is a desktop page: a rule cannot be tuned in a
             // tab that forgets the change when it reloads, and the browser
@@ -444,7 +452,7 @@ impl Render for AlertsView {
                     Button::new("edit-rules")
                         .custom(theme::outline_variant(cx))
                         .card_outline(cx)
-                        .label("Edit rules")
+                        .label(tr!("alerts.edit_rules"))
                         .on_click(|_, _, cx| {
                             crate::app::navigate_to(crate::app::CurrentView::Rules, cx)
                         }),
@@ -492,7 +500,7 @@ impl Render for AlertsView {
                     .child(
                         div().h_flex().child(
                             Button::new("retry-load")
-                                .label("Retry")
+                                .label(tr!("common.retry"))
                                 .custom(theme::outline_variant(cx))
                                 .card_outline(cx)
                                 .on_click(cx.listener(|this, _, _, cx| {
@@ -560,7 +568,7 @@ impl Render for AlertsView {
                         div()
                             .text_sm()
                             .text_color(theme::text_muted(cx))
-                            .child("All clear"),
+                            .child(tr!("alerts.all_clear")),
                     ),
                 )
             })
@@ -577,5 +585,41 @@ impl Render for AlertsView {
             .child(chips)
             .when_some(error_banner, |el, banner| el.child(banner))
             .child(list)
+    }
+}
+
+/// A filter chip's name. The chips are keyed by the English kind label the
+/// data layer emits, which the filter matches on; only the text shown is
+/// translated.
+fn filter_name(label: &str) -> SharedString {
+    match label {
+        "All" => tr!("alerts.filter_all"),
+        _ => kind_name(label),
+    }
+}
+
+/// An alert kind's name, from its English [`AlertKind::label`].
+///
+/// [`AlertKind::label`]: crate::alerts::AlertKind::label
+pub fn kind_name(label: &str) -> SharedString {
+    use crate::alerts::AlertKind;
+    match label {
+        l if l == AlertKind::CostAnomaly.label() => tr!("alerts.kind_cost_anomaly"),
+        l if l == AlertKind::Balance.label() => tr!("alerts.kind_balance"),
+        l if l == AlertKind::UntaggedRatio.label() => tr!("alerts.kind_untagged"),
+        l if l == AlertKind::Budget.label() => tr!("alerts.kind_budget"),
+        other => SharedString::from(other.to_string()),
+    }
+}
+
+/// An alert action's button text. Actions are dispatched on their English
+/// name (see `render_action`), so only the label is translated.
+fn action_name(action: &str) -> SharedString {
+    match action {
+        "Snooze 24h" => tr!("alerts.action_snooze"),
+        "Dismiss" => tr!("alerts.action_dismiss"),
+        "Trace in attribution" => tr!("alerts.action_trace"),
+        "Write an allocation rule" => tr!("alerts.action_write_rule"),
+        other => SharedString::from(other.to_string()),
     }
 }

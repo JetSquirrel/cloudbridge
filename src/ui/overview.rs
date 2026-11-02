@@ -109,7 +109,7 @@ impl OverviewView {
                             this.error = None;
                         }
                         Err(e) => {
-                            this.error = Some(format!("Could not load the overview: {e}"));
+                            this.error = Some(tr!("overview.load_failed", error = e).into());
                         }
                     }
                 }
@@ -178,11 +178,14 @@ impl OverviewView {
                             this.error = if failures.is_empty() {
                                 None
                             } else {
-                                Some(format!("Some sources failed: {}", failures.join("; ")))
+                                Some(
+                                    tr!("overview.some_failed", failures = failures.join("; "))
+                                        .into(),
+                                )
                             };
                         }
                         Err(e) => {
-                            this.error = Some(format!("Refresh failed: {e}"));
+                            this.error = Some(tr!("overview.refresh_failed", error = e).into());
                         }
                     }
                 }
@@ -198,11 +201,15 @@ impl OverviewView {
         let refreshing = self.refreshing;
         let busy = self.loading || refreshing;
         let caption = match &self.data {
-            Some(d) => format!("{}, reported in {}", d.window_caption, d.currency),
-            None => format!(
-                "{}, reported in {}",
-                self.range.header_caption(self.opened_at),
-                self.reporting_currency
+            Some(d) => tr!(
+                "overview.reported_in",
+                window = d.window_caption,
+                currency = d.currency
+            ),
+            None => tr!(
+                "overview.reported_in",
+                window = self.range.header_caption(self.opened_at),
+                currency = self.reporting_currency
             ),
         };
 
@@ -223,7 +230,7 @@ impl OverviewView {
                 div()
                     .v_flex()
                     .gap_1()
-                    .child(theme::page_title(cx, "Overview"))
+                    .child(theme::page_title(cx, tr!("nav.overview")))
                     .child(theme::caption(cx, caption)),
             )
             .child(
@@ -246,9 +253,9 @@ impl OverviewView {
                                 let button = Button::new(range.id())
                                     .label(range.label())
                                     .tooltip(match range {
-                                        Range::Mtd => "This month to date",
-                                        Range::Days30 => "Last 30 days",
-                                        Range::Months12 => "Last 12 months",
+                                        Range::Mtd => tr!("overview.range_mtd"),
+                                        Range::Days30 => tr!("overview.range_30d"),
+                                        Range::Months12 => tr!("overview.range_12m"),
                                     })
                                     .disabled(busy)
                                     .small()
@@ -272,21 +279,21 @@ impl OverviewView {
                         Button::new("refresh")
                             .icon(IconName::RefreshCw)
                             .label(if refreshing {
-                                "Refreshing…"
+                                tr!("common.refreshing")
                             } else if self.loading {
-                                "Loading…"
+                                tr!("common.loading")
                             } else if cfg!(target_family = "wasm") {
-                                "Reload demo"
+                                tr!("overview.reload_demo")
                             } else {
-                                "Refresh"
+                                tr!("common.refresh")
                             })
                             .small()
                             .primary()
                             .loading(busy)
                             .tooltip(if cfg!(target_family = "wasm") {
-                                "Reload the sample ledger; no live provider data is fetched"
+                                tr!("overview.reload_demo_tooltip")
                             } else {
-                                "Fetch stale sources and update this overview"
+                                tr!("overview.refresh_tooltip")
                             })
                             .disabled(busy)
                             .on_click(cx.listener(|this, _, _, cx| {
@@ -296,10 +303,8 @@ impl OverviewView {
                     .when(cfg!(not(target_family = "wasm")), |el| {
                         el.child(
                             Button::new("force-refresh")
-                                .label("Force refresh")
-                                .tooltip(
-                                    "Fetch every source again, including recently synced periods",
-                                )
+                                .label(tr!("common.force_refresh"))
+                                .tooltip(tr!("overview.force_refresh_tooltip"))
                                 .small()
                                 .custom(theme::outline_variant(cx))
                                 .card_outline(cx)
@@ -351,7 +356,7 @@ impl OverviewView {
                             .gap_2()
                             .items_center()
                             .justify_between()
-                            .child(theme::section_title(cx, d.chart_title))
+                            .child(theme::section_title(cx, d.chart_title.clone()))
                             .child(
                                 div()
                                     .h_flex()
@@ -365,7 +370,7 @@ impl OverviewView {
                                         el.child(legend_dashed(
                                             cx,
                                             theme::olive(cx),
-                                            "7-day baseline",
+                                            tr!("overview.baseline_7d"),
                                         ))
                                     })
                                     // Only the MTD chart carries the
@@ -374,7 +379,7 @@ impl OverviewView {
                                         el.child(legend_dotted(
                                             cx,
                                             theme::grey(cx),
-                                            "Typical day (6-mo avg)",
+                                            tr!("overview.typical_day"),
                                         ))
                                     }),
                             ),
@@ -406,7 +411,7 @@ impl OverviewView {
                     // Only the 12-month caption adds information beyond
                     // the legend; MTD/30d just restate it.
                     .when(d.range == Range::Months12, |el| {
-                        el.child(theme::caption(cx, d.chart_caption))
+                        el.child(theme::caption(cx, d.chart_caption.clone()))
                     }),
             )
             // Where it went
@@ -419,7 +424,7 @@ impl OverviewView {
                     .p_5()
                     .v_flex()
                     .gap_4()
-                    .child(theme::section_title(cx, "Spend breakdown"))
+                    .child(theme::section_title(cx, tr!("overview.spend_breakdown")))
                     .child(
                         div()
                             .v_flex()
@@ -466,7 +471,7 @@ impl OverviewView {
                     )
                     .child(
                         Button::new("open-attribution")
-                            .label("View attribution")
+                            .label(tr!("overview.view_attribution"))
                             .small()
                             .w_full()
                             .custom(theme::outline_variant(cx))
@@ -597,7 +602,7 @@ impl OverviewView {
                     Ok(_) => crate::app::request_reload(cx),
                     Err(e) => {
                         tracing::error!("Demo data operation failed: {}", e);
-                        this.error = Some(format!("Couldn't change the demo data: {e}"));
+                        this.error = Some(tr!("overview.demo_failed", error = e).into());
                     }
                 }
                 cx.notify();
@@ -618,16 +623,11 @@ impl OverviewView {
         let no_accounts = d.accounts.real + d.accounts.demo == 0;
         let (title, caption) = if no_accounts {
             (
-                "No accounts yet",
-                "Add a billing account to see your spend here, or load demo data to look around first.",
+                tr!("overview.no_accounts"),
+                tr!("overview.no_accounts_hint"),
             )
         } else {
-            (
-                "No spend yet",
-                "Refresh fetches the current bill. Providers can take up to a day to report \
-                 new charges, and a source read from a file shows spend once its bill is \
-                 imported on the Accounts page.",
-            )
+            (tr!("overview.no_spend"), tr!("overview.no_spend_hint"))
         };
 
         theme::card(cx)
@@ -658,13 +658,13 @@ impl OverviewView {
                         .gap_2()
                         .child(
                             Button::new("empty-add-account")
-                                .label("Add account…")
+                                .label(tr!("palette.add_account"))
                                 .primary()
                                 .on_click(|_, _, cx| crate::app::open_add_account(cx)),
                         )
                         .child(
                             Button::new("empty-load-demo")
-                                .label("Load demo data")
+                                .label(tr!("settings.load_demo"))
                                 .custom(theme::outline_variant(cx))
                                 .card_outline(cx)
                                 .loading(self.demo_running)
@@ -685,20 +685,20 @@ impl OverviewView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let text = if d.accounts.real == 0 {
-            "Showing demo data"
+            tr!("overview.showing_demo")
         } else {
-            "Demo accounts are included in these totals"
+            tr!("overview.demo_included")
         };
         div()
             .w_full()
             .h_flex()
             .items_center()
             .gap_3()
-            .child(theme::pill_outline(cx, "Demo"))
+            .child(theme::pill_outline(cx, tr!("overview.demo")))
             .child(theme::caption(cx, text))
             .child(
                 Button::new("clear-demo")
-                    .label("Clear demo data")
+                    .label(tr!("settings.clear_demo"))
                     .small()
                     .ghost()
                     .loading(self.demo_running)
@@ -912,7 +912,7 @@ fn render_stats(cx: &App, d: &data::OverviewData, columns: u16) -> impl IntoElem
         .gap_4()
         .child(theme::stat_card(
             cx,
-            d.spend_label,
+            d.spend_label.clone(),
             fmt::amount(stats.spend, currency),
             // Two lines, not one wrapping row: at a card's width the change
             // wrapped under the split anyway, and a "·" separator then led
@@ -923,10 +923,10 @@ fn render_stats(cx: &App, d: &data::OverviewData, columns: u16) -> impl IntoElem
                 .min_w_0()
                 // Net stays the big number; the split shows why it differs
                 // from the real burn.
-                .child(div().text_color(theme::text_muted(cx)).child(format!(
-                    "usage {}, credits {}",
-                    fmt::amount(stats.usage, currency),
-                    fmt::amount(stats.credits, currency)
+                .child(div().text_color(theme::text_muted(cx)).child(tr!(
+                    "overview.usage_credits",
+                    usage = fmt::amount(stats.usage, currency),
+                    credits = fmt::amount(stats.credits, currency)
                 )))
                 .when_some(stats.change_pct, |el, pct| {
                     el.child(div().text_color(theme::accent(cx)).child(format!(
@@ -938,33 +938,34 @@ fn render_stats(cx: &App, d: &data::OverviewData, columns: u16) -> impl IntoElem
         ))
         .child(theme::stat_card(
             cx,
-            d.card2_label,
+            d.card2_label.clone(),
             fmt::amount(d.card2_value, currency),
             div()
                 .text_color(theme::text_muted(cx))
                 .child(match &d.forecast_band {
                     // MTD: the confidence band under the point forecast.
-                    Some(band) => format!(
-                        "range {}–{}",
-                        fmt::amount(band.pessimistic, currency),
-                        fmt::amount(band.optimistic, currency)
-                    ),
+                    Some(band) => tr!(
+                        "overview.range",
+                        low = fmt::amount(band.pessimistic, currency),
+                        high = fmt::amount(band.optimistic, currency)
+                    )
+                    .to_string(),
                     None => d.card2_caption.to_string(),
                 }),
         ))
         .child(
             theme::stat_card(
                 cx,
-                "UNALLOCATED",
+                tr!("overview.unallocated"),
                 format!("{:.1}%", stats.unallocated_pct),
-                div().text_color(theme::text_muted(cx)).child(format!(
-                    "{} with no tag or metric match",
-                    fmt::amount(stats.unallocated_amount, currency)
+                div().text_color(theme::text_muted(cx)).child(tr!(
+                    "overview.unallocated_caption",
+                    amount = fmt::amount(stats.unallocated_amount, currency)
                 )),
             )
             .child(
                 Button::new("review-allocation")
-                    .label("Review allocation")
+                    .label(tr!("overview.review_allocation"))
                     .ghost()
                     .small()
                     .justify_start()
@@ -977,11 +978,12 @@ fn render_stats(cx: &App, d: &data::OverviewData, columns: u16) -> impl IntoElem
         .child(
             theme::stat_card(
                 cx,
-                "OPEN ALERTS",
+                tr!("overview.open_alerts"),
                 stats.open_alerts.to_string(),
-                div().text_color(theme::text_muted(cx)).child(format!(
-                    "{} critical, {} warning",
-                    stats.critical_alerts, stats.warning_alerts
+                div().text_color(theme::text_muted(cx)).child(tr!(
+                    "overview.alerts_caption",
+                    critical = stats.critical_alerts,
+                    warning = stats.warning_alerts
                 )),
             )
             .when(stats.open_alerts > 0, |el| {
@@ -989,7 +991,7 @@ fn render_stats(cx: &App, d: &data::OverviewData, columns: u16) -> impl IntoElem
             })
             .child(
                 Button::new("review-alerts")
-                    .label("View alerts")
+                    .label(tr!("overview.view_alerts"))
                     .ghost()
                     .small()
                     .justify_start()
@@ -1010,9 +1012,9 @@ fn render_movers(cx: &App, d: &data::OverviewData, compact: bool) -> impl IntoEl
         .p_5()
         .v_flex()
         .gap_4()
-        .child(theme::section_title(cx, d.movers_title))
+        .child(theme::section_title(cx, d.movers_title.clone()))
         .when(compact, |el| {
-            el.child(theme::caption(cx, "Scroll horizontally to see all columns"))
+            el.child(theme::caption(cx, tr!("common.scroll_horizontally")))
         })
         .child(
             div().w_full().overflow_x_scrollbar().child(
@@ -1028,9 +1030,9 @@ fn render_movers(cx: &App, d: &data::OverviewData, compact: bool) -> impl IntoEl
                             .items_center()
                             .gap_4()
                             .pb_2()
-                            .child(theme::header_cell(cx, "SOURCE").w_32())
+                            .child(theme::header_cell(cx, tr!("overview.col_source")).w_32())
                             .child(
-                                theme::header_cell(cx, "MODEL OR SERVICE")
+                                theme::header_cell(cx, tr!("overview.col_model_or_service"))
                                     .flex_1()
                                     .min_w_0(),
                             )
@@ -1040,11 +1042,11 @@ fn render_movers(cx: &App, d: &data::OverviewData, compact: bool) -> impl IntoEl
                                     .text_right(),
                             )
                             .child(
-                                theme::header_cell(cx, d.movers_delta_header)
+                                theme::header_cell(cx, d.movers_delta_header.clone())
                                     .w_40()
                                     .text_right(),
                             )
-                            .child(theme::header_cell(cx, "DRIVES").w_32()),
+                            .child(theme::header_cell(cx, tr!("overview.col_drives")).w_32()),
                     )
                     .children(movers.iter().map(|mover| {
                         let (delta_text, delta_color) = match mover.change_pct {
@@ -1141,25 +1143,20 @@ fn render_month_over_month(
         .p_5()
         .v_flex()
         .gap_4()
-        .child(theme::section_title(cx, "Month over month"))
+        .child(theme::section_title(cx, tr!("overview.month_over_month")))
         .when(compact, |el| {
-            el.child(theme::caption(cx, "Scroll horizontally to see all columns"))
+            el.child(theme::caption(cx, tr!("common.scroll_horizontally")))
         })
         .child(
             div()
                 .h_flex()
                 .items_center()
                 .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme::text_muted(cx))
-                        .child(format!(
-                            "{} so far vs {} in all of last month",
-                            fmt::amount(mom.current_total, currency),
-                            fmt::amount(mom.previous_total, currency)
-                        )),
-                )
+                .child(div().text_sm().text_color(theme::text_muted(cx)).child(tr!(
+                    "overview.mom_caption",
+                    current = fmt::amount(mom.current_total, currency),
+                    previous = fmt::amount(mom.previous_total, currency)
+                )))
                 .when_some(delta, |el, delta| el.child(delta)),
         )
         .child(
@@ -1172,10 +1169,26 @@ fn render_month_over_month(
                             .h_flex()
                             .items_center()
                             .pb_2()
-                            .child(theme::header_cell(cx, "SERVICE").flex_1().min_w_0())
-                            .child(theme::header_cell(cx, "THIS MONTH").w_24().text_right())
-                            .child(theme::header_cell(cx, "LAST MONTH").w_24().text_right())
-                            .child(theme::header_cell(cx, "CHANGE").w_40().text_right()),
+                            .child(
+                                theme::header_cell(cx, tr!("overview.col_service"))
+                                    .flex_1()
+                                    .min_w_0(),
+                            )
+                            .child(
+                                theme::header_cell(cx, tr!("overview.col_this_month"))
+                                    .w_24()
+                                    .text_right(),
+                            )
+                            .child(
+                                theme::header_cell(cx, tr!("overview.col_last_month"))
+                                    .w_24()
+                                    .text_right(),
+                            )
+                            .child(
+                                theme::header_cell(cx, tr!("overview.col_change"))
+                                    .w_40()
+                                    .text_right(),
+                            ),
                     )
                     .children(mom.services.iter().map(|row| {
                         let (delta_text, delta_color) = match row.change_pct {
@@ -1252,7 +1265,7 @@ fn render_why_it_changed(
         .pt_4()
         .border_t_1()
         .border_color(theme::card_border(cx))
-        .child(theme::section_title(cx, "Why it changed"))
+        .child(theme::section_title(cx, tr!("overview.why_changed")))
         .child(
             div()
                 .h_flex()
@@ -1264,7 +1277,7 @@ fn render_why_it_changed(
                         .min_w_0()
                         .v_flex()
                         .gap_1()
-                        .child(theme::header_cell(cx, "BY CATEGORY"))
+                        .child(theme::header_cell(cx, tr!("overview.by_category")))
                         .children(why.categories.iter().map(|row| {
                             div()
                                 .h_flex()
@@ -1286,7 +1299,7 @@ fn render_why_it_changed(
                         .min_w_0()
                         .v_flex()
                         .gap_1()
-                        .child(theme::header_cell(cx, "BY SERVICE"))
+                        .child(theme::header_cell(cx, tr!("overview.by_service")))
                         .children(why.movements.iter().map(|row| {
                             let badge_fg = match row.badge {
                                 data::MovementBadge::Appeared | data::MovementBadge::Grown => {
@@ -1328,10 +1341,10 @@ fn render_why_it_changed(
                 div()
                     .text_xs()
                     .text_color(theme::warning_text(cx))
-                    .child(format!(
-                    "This breakdown leaves {} unexplained — the components don't fully reconcile.",
-                    fmt::amount(why.residual.abs(), currency)
-                )),
+                    .child(tr!(
+                        "overview.unreconciled",
+                        amount = fmt::amount(why.residual.abs(), currency)
+                    )),
             )
         })
 }
@@ -1372,7 +1385,7 @@ fn legend_solid(cx: &App, color: Hsla, label: &'static str) -> Div {
         )
 }
 
-fn legend_dashed(cx: &App, color: Hsla, label: &'static str) -> Div {
+fn legend_dashed(cx: &App, color: Hsla, label: SharedString) -> Div {
     div()
         .h_flex()
         .items_center()
@@ -1394,7 +1407,7 @@ fn legend_dashed(cx: &App, color: Hsla, label: &'static str) -> Div {
         )
 }
 
-fn legend_dotted(cx: &App, color: Hsla, label: &'static str) -> Div {
+fn legend_dotted(cx: &App, color: Hsla, label: SharedString) -> Div {
     div()
         .h_flex()
         .items_center()

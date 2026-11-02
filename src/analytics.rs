@@ -538,13 +538,15 @@ pub fn token_findings(models: &[ModelTokenSummary]) -> Vec<TokenFinding> {
             ) {
                 if share < LOW_CACHE_SHARE {
                     findings.push(TokenFinding {
-                        title: "Low cache utilization".to_string(),
-                        detail: format!(
-                            "{name}: cache reads are {:.1}% of the input side ({:.0} read from cache of {:.0} input-side tokens)",
-                            share * 100.0,
-                            model.tokens_cache_read,
-                            model.input_side(),
-                        ),
+                        title: rust_i18n::t!("token_finding.low_cache").into_owned(),
+                        detail: rust_i18n::t!(
+                            "token_finding.low_cache_detail",
+                            name = name,
+                            pct = format!("{:.1}", share * 100.0),
+                            read = format!("{:.0}", model.tokens_cache_read),
+                            input = format!("{:.0}", model.input_side())
+                        )
+                        .into_owned(),
                         severity: FindingSeverity::Notice,
                     });
                 }
@@ -568,11 +570,16 @@ pub fn token_findings(models: &[ModelTokenSummary]) -> Vec<TokenFinding> {
                         let current_unit =
                             blended_unit_cost(model.usage_cost, tokens).unwrap_or(0.0);
                         findings.push(TokenFinding {
-                            title: "Unit price rising".to_string(),
-                            detail: format!(
-                                "{name}: blended unit cost rose from ${previous_unit:.2} to ${current_unit:.2} per 1M tokens while spend went {:.2} to {:.2}",
-                                model.previous_cost, model.usage_cost,
-                            ),
+                            title: rust_i18n::t!("token_finding.unit_price").into_owned(),
+                            detail: rust_i18n::t!(
+                                "token_finding.unit_price_detail",
+                                name = name,
+                                from = format!("{previous_unit:.2}"),
+                                to = format!("{current_unit:.2}"),
+                                prev = format!("{:.2}", model.previous_cost),
+                                now = format!("{:.2}", model.usage_cost)
+                            )
+                            .into_owned(),
                             severity: FindingSeverity::Warning,
                         });
                     }
@@ -580,11 +587,13 @@ pub fn token_findings(models: &[ModelTokenSummary]) -> Vec<TokenFinding> {
             }
         } else {
             findings.push(TokenFinding {
-                title: "Cost only — no token metering".to_string(),
-                detail: format!(
-                    "{name} has {:.2} of spend but no token-metered rows, so unit economics cannot be computed for it",
-                    model.usage_cost,
-                ),
+                title: rust_i18n::t!("token_finding.cost_only").into_owned(),
+                detail: rust_i18n::t!(
+                    "token_finding.cost_only_detail",
+                    name = name,
+                    cost = format!("{:.2}", model.usage_cost)
+                )
+                .into_owned(),
                 severity: FindingSeverity::Info,
             });
         }
@@ -595,13 +604,15 @@ pub fn token_findings(models: &[ModelTokenSummary]) -> Vec<TokenFinding> {
             let share = model.usage_cost / total_cost;
             if share > SPEND_CONCENTRATION_SHARE {
                 findings.push(TokenFinding {
-                    title: "Spend concentration".to_string(),
-                    detail: format!(
-                        "{name} is {:.1}% of model spend ({:.2} of {:.2})",
-                        share * 100.0,
-                        model.usage_cost,
-                        total_cost,
-                    ),
+                    title: rust_i18n::t!("token_finding.concentration").into_owned(),
+                    detail: rust_i18n::t!(
+                        "token_finding.concentration_detail",
+                        name = name,
+                        pct = format!("{:.1}", share * 100.0),
+                        cost = format!("{:.2}", model.usage_cost),
+                        total = format!("{:.2}", total_cost)
+                    )
+                    .into_owned(),
                     severity: FindingSeverity::Info,
                 });
             }
@@ -687,10 +698,12 @@ pub fn data_quality(counts: QualityCounts<'_>) -> Vec<DataQualityIssue> {
         issues.push(DataQualityIssue {
             kind: DataQualityKind::UnconvertedCharges,
             severity: IssueSeverity::Warning,
-            message: format!(
-                "{unconverted} charges ({share:.1}% of the period's rows) have no FX rate \
-                 and are missing from every converted total"
-            ),
+            message: rust_i18n::t!(
+                "quality.unconverted",
+                n = unconverted,
+                pct = format!("{share:.1}")
+            )
+            .into_owned(),
             affected_amount: None,
             affected_count: unconverted,
         });
@@ -706,10 +719,12 @@ pub fn data_quality(counts: QualityCounts<'_>) -> Vec<DataQualityIssue> {
             } else {
                 IssueSeverity::Info
             },
-            message: format!(
-                "{:.1}% of the period's usage carries no '{tag_key}' tag",
-                share * 100.0
-            ),
+            message: rust_i18n::t!(
+                "quality.untagged",
+                pct = format!("{:.1}", share * 100.0),
+                tag = tag_key
+            )
+            .into_owned(),
             affected_amount: Some(untagged),
             affected_count: untagged_count,
         });
@@ -729,10 +744,12 @@ pub fn data_quality(counts: QualityCounts<'_>) -> Vec<DataQualityIssue> {
             } else {
                 IssueSeverity::Info
             },
-            message: format!(
-                "{service} usage has no region ({:.1}% of the period's usage)",
-                share * 100.0
-            ),
+            message: rust_i18n::t!(
+                "quality.no_region",
+                service = service,
+                pct = format!("{:.1}", share * 100.0)
+            )
+            .into_owned(),
             affected_amount: Some(amount),
             affected_count: charges,
         });
@@ -743,10 +760,7 @@ pub fn data_quality(counts: QualityCounts<'_>) -> Vec<DataQualityIssue> {
         issues.push(DataQualityIssue {
             kind: DataQualityKind::UnreconciledAdjustment,
             severity: IssueSeverity::Critical,
-            message: format!(
-                "{count} 'Unreconciled' adjustment rows: \
-                 bill lines whose named deductions did not add up"
-            ),
+            message: rust_i18n::t!("quality.unreconciled", n = count).into_owned(),
             affected_amount: Some(amount),
             affected_count: count,
         });
@@ -771,12 +785,12 @@ pub fn data_quality(counts: QualityCounts<'_>) -> Vec<DataQualityIssue> {
         issues.push(DataQualityIssue {
             kind: DataQualityKind::UncategorizedUsage,
             severity: IssueSeverity::Info,
-            message: format!(
-                "{:.1}% of the period's usage is from products with no service category \
-                 yet: {}",
-                share * 100.0,
-                named.join(", ")
-            ),
+            message: rust_i18n::t!(
+                "quality.uncategorized",
+                pct = format!("{:.1}", share * 100.0),
+                products = named.join(", ")
+            )
+            .into_owned(),
             affected_amount: Some(amount),
             affected_count: charges,
         });

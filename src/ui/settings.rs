@@ -11,6 +11,7 @@ use crate::config::{
     load_config, save_config, AppConfig, REFRESH_INTERVAL_CHOICES_HOURS,
     SUPPORTED_REPORTING_CURRENCIES,
 };
+use crate::i18n::Language;
 use crate::ui::theme::CardOutline as _;
 
 /// One entry in the theme picker.
@@ -25,7 +26,7 @@ impl SelectItem for ThemeItem {
 
     fn title(&self) -> SharedString {
         if self.dark {
-            format!("{} (dark)", self.name).into()
+            tr!("settings.theme_dark", name = self.name)
         } else {
             self.name.clone()
         }
@@ -170,9 +171,9 @@ impl SettingsView {
                     Ok(now) => this.open_at_login = Some(now),
                     Err(e) => {
                         tracing::error!("Could not change the login item: {}", e);
-                        this.save_status = Some(StatusMessage::Error(format!(
-                            "Could not change Open at login: {e}"
-                        )));
+                        this.save_status = Some(StatusMessage::Error(
+                            tr!("settings.open_at_login_failed", error = e).into(),
+                        ));
                         this.status_generation += 1;
                     }
                 }
@@ -214,29 +215,21 @@ impl SettingsView {
     fn render_background(&self, cx: &Context<Self>) -> impl IntoElement {
         let windowless = crate::background::RUNS_WINDOWLESS;
         let open_at_login_description = if windowless && self.config.keep_in_menu_bar {
-            "Starts CloudBridge in the menu bar when you log in, without its \
-             window, so alerts keep arriving after a restart."
+            tr!("settings.open_at_login_hint_menu_bar")
         } else {
-            "Starts CloudBridge when you log in, so alerts keep arriving \
-             after a restart."
+            tr!("settings.open_at_login_hint")
         };
         let refresh_description = if windowless && self.config.keep_in_menu_bar {
-            "While CloudBridge runs, window open or closed, it fetches each \
-             account once its refresh interval has passed and runs the alert \
-             rules. It looks for a due account every 15 minutes, without \
-             contacting the provider."
+            tr!("settings.background_refresh_hint_menu_bar")
         } else {
-            "While CloudBridge is open, it fetches each account once its \
-             refresh interval has passed and runs the alert rules. It looks \
-             for a due account every 15 minutes, without contacting the \
-             provider."
+            tr!("settings.background_refresh_hint")
         };
 
         div()
             .v_flex()
             .gap_4()
             .child(Self::setting_row(
-                "Open at login",
+                tr!("settings.open_at_login"),
                 open_at_login_description,
                 Switch::new("open-at-login")
                     .checked(self.open_at_login.unwrap_or(false))
@@ -248,16 +241,11 @@ impl SettingsView {
             ))
             .when(windowless, |el| {
                 el.child(Self::setting_row(
-                    "Keep running in the menu bar",
+                    tr!("settings.keep_in_menu_bar"),
                     if cfg!(target_os = "windows") {
-                        "Closing the window leaves CloudBridge in the \
-                         notification area, showing the month's spend, so \
-                         refreshes and alerts carry on. Off, closing the \
-                         window quits."
+                        tr!("settings.keep_in_tray_hint")
                     } else {
-                        "Closing the window leaves CloudBridge in the menu \
-                         bar, showing the month's spend, so refreshes and \
-                         alerts carry on. Off, closing the window quits."
+                        tr!("settings.keep_in_menu_bar_hint")
                     },
                     Switch::new("keep-in-menu-bar")
                         .checked(self.config.keep_in_menu_bar)
@@ -269,7 +257,7 @@ impl SettingsView {
                 ))
             })
             .child(Self::setting_row(
-                "Refresh in the background",
+                tr!("settings.background_refresh"),
                 refresh_description,
                 Switch::new("background-refresh")
                     .checked(self.config.background_refresh)
@@ -280,9 +268,8 @@ impl SettingsView {
                 cx,
             ))
             .child(Self::setting_row(
-                "Alert notifications",
-                "Posts a system notification when an alert fires, once per \
-                 alert.",
+                tr!("settings.alert_notifications"),
+                tr!("settings.alert_notifications_hint"),
                 Switch::new("alert-notifications")
                     .checked(self.config.alert_notifications)
                     .disabled(self.saving)
@@ -291,6 +278,55 @@ impl SettingsView {
                     })),
                 cx,
             ))
+    }
+
+    /// The language buttons: System, then each translation by its own
+    /// name. Applies at once; the save follows.
+    fn render_language_choices(&self, cx: &Context<Self>) -> impl IntoElement {
+        let chosen = self.config.language.clone();
+        let choice = |id: &'static str,
+                      label: SharedString,
+                      value: Option<&'static str>,
+                      cx: &Context<Self>| {
+            let selected = chosen.as_deref() == value;
+            Button::new(id)
+                .label(label)
+                .small()
+                .when(selected, |button| button.primary())
+                .when(!selected, |button| {
+                    button.custom(theme::outline_variant(cx)).card_outline(cx)
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.set_language(value, cx);
+                }))
+        };
+        div()
+            .h_flex()
+            .gap_2()
+            .child(choice(
+                "language-system",
+                tr!("settings.language_system"),
+                None,
+                cx,
+            ))
+            .children(Language::ALL.iter().map(|language| {
+                choice(
+                    language.code(),
+                    language.native_name().into(),
+                    Some(language.code()),
+                    cx,
+                )
+            }))
+    }
+
+    /// Switch the interface language and remember the choice; `None`
+    /// follows the system.
+    fn set_language(&mut self, code: Option<&'static str>, cx: &mut Context<Self>) {
+        self.save_status = None;
+        self.status_generation += 1;
+        self.config.language = code.map(str::to_string);
+        crate::i18n::set_language(Language::resolve(code), cx);
+        self.save_config(cx);
     }
 
     /// Apply a theme picked in the selector and remember it.
@@ -363,16 +399,18 @@ impl SettingsView {
                 Save(String),
             }
             let result = smol::unblock(move || -> Result<(), Failure> {
-                crate::ledger::set_reporting_currency(&currency)
-                    .map_err(|e| Failure::Switch(format!("Could not switch currency: {e}")))?;
-                save_config(&config).map_err(|e| Failure::Save(format!("Save failed: {e}")))?;
+                crate::ledger::set_reporting_currency(&currency).map_err(|e| {
+                    Failure::Switch(tr!("settings.currency_failed", error = e).into())
+                })?;
+                save_config(&config)
+                    .map_err(|e| Failure::Save(tr!("settings.save_failed", error = e).into()))?;
                 Ok(())
             })
             .await;
             this.update(cx, |this, cx| {
                 this.saving = false;
                 this.save_status = Some(match result {
-                    Ok(()) => StatusMessage::Success("Settings saved".to_string()),
+                    Ok(()) => StatusMessage::Success(tr!("settings.saved").into()),
                     Err(Failure::Switch(e)) => {
                         tracing::error!("Failed to switch reporting currency: {}", e);
                         this.config.reporting_currency = previous;
@@ -433,7 +471,9 @@ impl SettingsView {
                 this.saving = false;
                 if let Err(e) = result {
                     tracing::error!("Failed to save settings: {}", e);
-                    this.save_status = Some(StatusMessage::Error(format!("Save failed: {e}")));
+                    this.save_status = Some(StatusMessage::Error(
+                        tr!("settings.save_failed", error = e).into(),
+                    ));
                     this.status_generation += 1;
                 }
                 if this.save_pending {
@@ -470,7 +510,7 @@ impl SettingsView {
                     }
                     Err(e) => {
                         tracing::error!("Demo data operation failed: {}", e);
-                        StatusMessage::Error(format!("Demo data failed: {e}"))
+                        StatusMessage::Error(tr!("settings.demo_failed", error = e).into())
                     }
                 });
                 if matches!(this.save_status, Some(StatusMessage::Success(_))) {
@@ -544,14 +584,16 @@ impl SettingsView {
                 Ok(Ok(Some(path))) => Some(
                     smol::unblock(move || {
                         crate::ledger::focus_export::export_csv(&path)
-                            .map(|rows| format!("Exported {rows} charges to {}", path.display()))
-                            .map_err(|e| format!("Could not export: {e}"))
+                            .map(|rows| {
+                                tr!("settings.exported", rows = rows, path = path.display()).into()
+                            })
+                            .map_err(|e| tr!("settings.export_failed", error = e).into())
                     })
                     .await,
                 ),
                 // Cancelled: nothing to say.
                 Ok(Ok(None)) | Err(_) => None,
-                Ok(Err(e)) => Some(Err(format!("Could not open the save dialog: {e}"))),
+                Ok(Err(e)) => Some(Err(tr!("settings.save_dialog_failed", error = e).into())),
             };
             this.update(cx, |this, cx| {
                 this.exporting = false;
@@ -578,12 +620,10 @@ impl SettingsView {
     #[cfg(not(target_family = "wasm"))]
     fn render_data(&self, cx: &Context<Self>) -> impl IntoElement {
         Self::setting_row(
-            "Export as FOCUS",
-            "Every charge as a CSV with FOCUS 1.5 column names, for another \
-             FinOps tool: amounts in the currency each was billed in, and a \
-             model's tokens as ConsumedQuantity and SkuPriceDetails.",
+            tr!("settings.export_focus"),
+            tr!("settings.export_focus_hint"),
             Button::new("export-focus")
-                .label("Export…")
+                .label(tr!("settings.export"))
                 .small()
                 .custom(theme::outline_variant(cx))
                 .card_outline(cx)
@@ -598,7 +638,7 @@ impl SettingsView {
 
     fn render_section(
         &self,
-        title: &'static str,
+        title: SharedString,
         children: impl IntoElement,
         cx: &Context<Self>,
     ) -> impl IntoElement {
@@ -614,8 +654,8 @@ impl SettingsView {
     /// A labelled setting: name and muted description on the left, the
     /// control pinned to the right.
     fn setting_row(
-        label: &'static str,
-        description: &'static str,
+        label: SharedString,
+        description: SharedString,
         control: impl IntoElement,
         cx: &Context<Self>,
     ) -> Div {
@@ -651,11 +691,8 @@ impl Render for SettingsView {
                 div()
                     .v_flex()
                     .gap_1()
-                    .child(theme::page_title(cx, "Settings"))
-                    .child(theme::caption(
-                        cx,
-                        "Saved locally and applied across every page",
-                    )),
+                    .child(theme::page_title(cx, tr!("settings.title")))
+                    .child(theme::caption(cx, tr!("settings.subtitle"))),
             )
             // Save status
             .when_some(self.save_status.clone(), |el, status| {
@@ -678,24 +715,34 @@ impl Render for SettingsView {
                 )
             })
             // Appearance settings
-            .child(self.render_section(
-                "Appearance",
-                Self::setting_row(
-                    "Theme",
-                    "Applies immediately and is remembered across launches",
-                    Select::new(&self.theme_select).w_72(),
+            .child(
+                self.render_section(
+                    tr!("settings.appearance"),
+                    div()
+                        .v_flex()
+                        .gap_4()
+                        .child(Self::setting_row(
+                            tr!("settings.theme"),
+                            tr!("settings.theme_hint"),
+                            Select::new(&self.theme_select).w_72(),
+                            cx,
+                        ))
+                        .child(Self::setting_row(
+                            tr!("settings.language"),
+                            tr!("settings.language_hint"),
+                            self.render_language_choices(cx),
+                            cx,
+                        )),
                     cx,
                 ),
-                cx,
-            ))
+            )
             // Reporting currency
             .child(
                 self.render_section(
-                    "Reporting",
+                    tr!("settings.reporting"),
                     Self::setting_row(
-                        "Currency",
-                        "Totals are converted to this currency. \
-                     Charges keep the currency they were billed in.",
+                        tr!("settings.currency"),
+                        tr!("settings.currency_hint"),
                         div()
                             .h_flex()
                             .gap_2()
@@ -722,21 +769,17 @@ impl Render for SettingsView {
             // Refreshing
             .child(
                 self.render_section(
-                    "Refreshing",
+                    tr!("settings.refreshing"),
                     Self::setting_row(
-                        "Refresh interval",
-                        "A billing period is fetched again only once \
-                     this has passed. Longer is cheaper: AWS Cost \
-                     Explorer bills per request. Force Refresh \
-                     ignores it; an imported bill file is never \
-                     re-fetched.",
+                        tr!("settings.refresh_interval"),
+                        tr!("settings.refresh_interval_hint"),
                         div()
                             .h_flex()
                             .gap_2()
                             .children(REFRESH_INTERVAL_CHOICES_HOURS.iter().map(|hours| {
                                 let selected = *hours == refresh_interval_hours;
                                 Button::new(SharedString::from(format!("refresh-{hours}h")))
-                                    .label(format!("{hours}h"))
+                                    .label(tr!("settings.hours", n = hours))
                                     .small()
                                     .when(selected, |button| button.primary())
                                     .when(!selected, |button| {
@@ -756,32 +799,39 @@ impl Render for SettingsView {
             .map(|el| {
                 #[cfg(not(target_family = "wasm"))]
                 let el = el
-                    .child(self.render_section("Background", self.render_background(cx), cx))
-                    .child(self.render_section("Data", self.render_data(cx), cx))
-                    .child(self.render_section("Insights rules", self.insight_rules.clone(), cx));
+                    .child(self.render_section(
+                        tr!("settings.background"),
+                        self.render_background(cx),
+                        cx,
+                    ))
+                    .child(self.render_section(tr!("settings.data"), self.render_data(cx), cx))
+                    .child(self.render_section(
+                        tr!("settings.insights_rules"),
+                        self.insight_rules.clone(),
+                        cx,
+                    ));
                 el
             })
             // Demo data
             .child(
                 self.render_section(
-                    "Demo data",
+                    tr!("settings.demo_data"),
                     div()
                         .h_flex()
                         .justify_between()
                         .items_center()
-                        .child(div().min_w_0().child(theme::caption(
-                            cx,
-                            "Twelve months of fake but realistic spend across \
-                         three demo accounts, for design review. Demo rows \
-                         never touch a real API.",
-                        )))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .child(theme::caption(cx, tr!("settings.demo_data_hint"))),
+                        )
                         .child(
                             div()
                                 .h_flex()
                                 .gap_2()
                                 .child(
                                     Button::new("load-demo-data")
-                                        .label("Load demo data")
+                                        .label(tr!("settings.load_demo"))
                                         .primary()
                                         .loading(self.demo_running)
                                         .disabled(self.demo_running)
@@ -791,7 +841,7 @@ impl Render for SettingsView {
                                 )
                                 .child(
                                     Button::new("clear-demo-data")
-                                        .label("Clear demo data")
+                                        .label(tr!("settings.clear_demo"))
                                         .small()
                                         .custom(theme::outline_variant(cx))
                                         .card_outline(cx)
@@ -807,7 +857,7 @@ impl Render for SettingsView {
             // About
             .child(
                 self.render_section(
-                    "About",
+                    tr!("settings.about"),
                     div()
                         .v_flex()
                         .gap_2()
@@ -820,7 +870,7 @@ impl Render for SettingsView {
                                         .w_24()
                                         .flex_shrink_0()
                                         .text_color(cx.theme().muted_foreground)
-                                        .child("Version:"),
+                                        .child(tr!("settings.version")),
                                 )
                                 .child(div().child(env!("CARGO_PKG_VERSION"))),
                         )
@@ -833,7 +883,7 @@ impl Render for SettingsView {
                                         .w_24()
                                         .flex_shrink_0()
                                         .text_color(cx.theme().muted_foreground)
-                                        .child("Built with:"),
+                                        .child(tr!("settings.built_with")),
                                 )
                                 .child(div().child("GPUI + Rust")),
                         )
@@ -843,9 +893,9 @@ impl Render for SettingsView {
                                 div().pt_2().child(
                                     Button::new("copy-system-info")
                                         .label(if self.copied.is_some() {
-                                            "Copied"
+                                            tr!("settings.copied")
                                         } else {
-                                            "Copy system info"
+                                            tr!("settings.copy_system_info")
                                         })
                                         .icon(if self.copied.is_some() {
                                             IconName::Check
@@ -855,11 +905,7 @@ impl Render for SettingsView {
                                         .small()
                                         .custom(theme::outline_variant(cx))
                                         .card_outline(cx)
-                                        .tooltip(
-                                            "Version, platform, settings, source types \
-                                             and the data folder's path, for a bug \
-                                             report. No account names, keys or amounts.",
-                                        )
+                                        .tooltip(tr!("settings.copy_system_info_tooltip"))
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.copy_system_info(cx);
                                         })),

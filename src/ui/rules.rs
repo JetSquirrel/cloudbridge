@@ -22,43 +22,47 @@ use super::{data, dialogs, fmt, theme};
 /// One selectable rule kind in the "New rule" dialog.
 struct RuleKindSpec {
     kind: &'static str,
-    /// Default name, also the selector label.
+    /// `locales/ui.yml` key of the default name, also the selector label.
     name: &'static str,
 }
 
 const RULE_KINDS: [RuleKindSpec; 4] = [
     RuleKindSpec {
         kind: alerts::RULE_COST_ANOMALY,
-        name: "Model cost growth anomaly",
+        name: "rules.kind_cost_anomaly",
     },
     RuleKindSpec {
         kind: alerts::RULE_BALANCE_FLOOR,
-        name: "Balance floor",
+        name: "rules.kind_balance_floor",
     },
     RuleKindSpec {
         kind: alerts::RULE_UNTAGGED_RATIO,
-        name: "Untagged spend ratio",
+        name: "rules.kind_untagged_ratio",
     },
     RuleKindSpec {
         kind: alerts::RULE_BUDGET,
-        name: "Account budget",
+        name: "rules.kind_budget",
     },
 ];
 
-/// What a budget rule compares against its threshold, as selector labels
-/// and config values.
-const BASED_OPTIONS: [(&str, &str); 2] =
-    [("cost", "Cost to date"), ("forecast", "Month-end forecast")];
+/// What a budget rule compares against its threshold, as config values and
+/// the `locales/ui.yml` keys of their selector labels.
+const BASED_OPTIONS: [(&str, &str); 2] = [
+    ("cost", "rules.based_cost"),
+    ("forecast", "rules.based_forecast"),
+];
 
-/// A budget rule's threshold type, as selector labels and config values.
-const THRESHOLD_TYPE_OPTIONS: [(&str, &str); 2] =
-    [("percent", "% of budget"), ("absolute", "Amount")];
+/// A budget rule's threshold type, as config values and label keys.
+const THRESHOLD_TYPE_OPTIONS: [(&str, &str); 2] = [
+    ("percent", "rules.threshold_percent"),
+    ("absolute", "rules.threshold_absolute"),
+];
 
 /// Humanized "last fired" line under a rule's switch.
 fn last_fired_label(last_fired_at: Option<DateTime<Utc>>) -> String {
     match last_fired_at {
-        Some(at) => format!("Fired {}", fmt::relative_time(at)),
-        None => "Never fired".to_string(),
+        Some(at) => tr!("rules.fired", when = fmt::relative_time(at)).into(),
+        None => tr!("rules.never_fired").into(),
     }
 }
 
@@ -206,7 +210,7 @@ impl RulesView {
                             this.error = None;
                         }
                         Err(e) => {
-                            this.error = Some(format!("Could not load rules: {e}"));
+                            this.error = Some(tr!("rules.load_failed", error = e).into());
                         }
                     }
                     cx.notify();
@@ -242,7 +246,7 @@ impl RulesView {
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
                     if let Err(e) = result {
-                        this.error = Some(format!("Could not update the rule: {e}"));
+                        this.error = Some(tr!("rules.update_failed", error = e).into());
                     }
                     this.load(cx);
                 })
@@ -284,7 +288,7 @@ impl RulesView {
             .find(|spec| spec.kind == kind)
             .unwrap_or(&RULE_KINDS[0]);
         self.name_input.update(cx, |state, cx| {
-            state.set_value(spec.name, window, cx);
+            state.set_value(tr!(spec.name), window, cx);
         });
         self.multiplier_input.update(cx, |state, cx| {
             state.set_value("2.5", window, cx);
@@ -326,10 +330,10 @@ impl RulesView {
             alerts::RULE_COST_ANOMALY => {
                 let multiplier = value(&self.multiplier_input)
                     .parse::<f64>()
-                    .map_err(|_| "The multiplier must be a number, e.g. 2.5".to_string())?;
+                    .map_err(|_| tr!("rules.bad_multiplier").to_string())?;
                 let consecutive_days = value(&self.consecutive_input)
                     .parse::<u64>()
-                    .map_err(|_| "Consecutive days must be a whole number, e.g. 2".to_string())?;
+                    .map_err(|_| tr!("rules.bad_days").to_string())?;
                 Ok(json!({
                     "multiplier": multiplier,
                     "consecutive_days": consecutive_days,
@@ -338,17 +342,17 @@ impl RulesView {
             alerts::RULE_BALANCE_FLOOR => {
                 let floor = value(&self.floor_input)
                     .parse::<f64>()
-                    .map_err(|_| "The floor must be a number, e.g. 200".to_string())?;
+                    .map_err(|_| tr!("rules.bad_floor").to_string())?;
                 Ok(json!({ "floor": floor }))
             }
             alerts::RULE_BUDGET => {
                 let account_id = self
                     .rule_account
                     .clone()
-                    .ok_or_else(|| "Pick the account the rule watches".to_string())?;
+                    .ok_or_else(|| tr!("rules.pick_account").to_string())?;
                 let threshold = value(&self.threshold_input)
                     .parse::<f64>()
-                    .map_err(|_| "The threshold must be a number, e.g. 80".to_string())?;
+                    .map_err(|_| tr!("rules.bad_threshold_80").to_string())?;
                 Ok(json!({
                     "account_id": account_id,
                     "based": self.rule_based,
@@ -360,7 +364,7 @@ impl RulesView {
                 // The dialog asks for a percent; the config is a ratio.
                 let percent = value(&self.threshold_input)
                     .parse::<f64>()
-                    .map_err(|_| "The threshold must be a number, e.g. 15".to_string())?;
+                    .map_err(|_| tr!("rules.bad_threshold_15").to_string())?;
                 Ok(json!({ "threshold": percent / 100.0 }))
             }
         }
@@ -457,8 +461,7 @@ impl RulesView {
         let monthly_budget = match value(&self.budget_amount_input).parse::<f64>() {
             Ok(amount) if amount > 0.0 => amount,
             _ => {
-                self.budget_error =
-                    Some("The budget must be a number above zero, e.g. 500".to_string());
+                self.budget_error = Some(tr!("rules.bad_budget").into());
                 cx.notify();
                 return;
             }
@@ -466,8 +469,7 @@ impl RulesView {
         let alert_threshold = match value(&self.budget_threshold_input).parse::<f64>() {
             Ok(percent) if percent > 0.0 => percent,
             _ => {
-                self.budget_error =
-                    Some("The alert threshold must be a percent above zero, e.g. 80".to_string());
+                self.budget_error = Some(tr!("rules.bad_alert_percent").into());
                 cx.notify();
                 return;
             }
@@ -491,7 +493,7 @@ impl RulesView {
                 this.update(cx, |this, cx| {
                     this.saving_budget = false;
                     if let Err(e) = result {
-                        this.budget_error = Some(format!("Could not save the budget: {e}"));
+                        this.budget_error = Some(tr!("rules.budget_save_failed", error = e).into());
                         cx.notify();
                     } else {
                         this.load(cx);
@@ -523,7 +525,8 @@ impl RulesView {
                 this.update(cx, |this, cx| {
                     this.saving_budget = false;
                     if let Err(e) = result {
-                        this.budget_error = Some(format!("Could not remove the budget: {e}"));
+                        this.budget_error =
+                            Some(tr!("rules.budget_remove_failed", error = e).into());
                         cx.notify();
                     } else {
                         this.load(cx);
@@ -556,7 +559,7 @@ impl RulesView {
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
                     if let Err(e) = result {
-                        this.error = Some(format!("Could not delete the rule: {e}"));
+                        this.error = Some(tr!("rules.delete_failed", error = e).into());
                     }
                     this.load(cx);
                 })
@@ -664,7 +667,7 @@ impl RulesView {
                         let rule_id = rule.id.clone();
                         el.child(
                             Button::new(SharedString::from(format!("rule-delete-{}", rule.id)))
-                                .label("Delete")
+                                .label(tr!("common.delete"))
                                 .ghost()
                                 .danger()
                                 .small()
@@ -714,7 +717,7 @@ impl RulesView {
                     .w_40()
                     .v_flex()
                     .gap_1()
-                    .child(div().text_sm().child("Monthly budget"))
+                    .child(div().text_sm().child(tr!("rules.monthly_budget")))
                     .child(Input::new(&self.budget_amount_input)),
             )
             .child(
@@ -722,12 +725,12 @@ impl RulesView {
                     .w_40()
                     .v_flex()
                     .gap_1()
-                    .child(div().text_sm().child("Alert at (% of budget)"))
+                    .child(div().text_sm().child(tr!("rules.alert_at")))
                     .child(Input::new(&self.budget_threshold_input)),
             )
             .child(
                 Button::new("save-budget")
-                    .label("Save budget")
+                    .label(tr!("rules.save_budget"))
                     .primary()
                     .small()
                     .disabled(self.saving_budget || self.budget_account.is_none())
@@ -738,7 +741,7 @@ impl RulesView {
             .when(has_budget, |el| {
                 el.child(
                     Button::new("delete-budget")
-                        .label("Remove")
+                        .label(tr!("rules.remove"))
                         .ghost()
                         .danger()
                         .small()
@@ -759,22 +762,24 @@ impl RulesView {
                     .text_base()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme::text_primary(cx))
-                    .child("Monthly budgets"),
+                    .child(tr!("rules.monthly_budgets")),
             )
-            .child(div().text_sm().text_color(theme::text_muted(cx)).child(
-                "What an account may cost in a month. Budget rules measure the \
-                         month-to-date cost or the month-end projection against it.",
-            ))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme::text_muted(cx))
+                    .child(tr!("rules.budgets_hint")),
+            )
             .when(self.accounts.is_empty(), |el| {
                 el.child(
                     div()
                         .h_flex()
                         .items_center()
                         .gap_3()
-                        .child(theme::caption(cx, "A budget belongs to an account."))
+                        .child(theme::caption(cx, tr!("rules.budget_needs_account")))
                         .child(
                             Button::new("budget-add-account")
-                                .label("Add account…")
+                                .label(tr!("palette.add_account"))
                                 .small()
                                 .custom(theme::outline_variant(cx))
                                 .card_outline(cx)
@@ -786,12 +791,12 @@ impl RulesView {
                 el.child(account_selector).child(editor)
             })
             .children(self.budgets.iter().map(|status| {
-                let line = format!(
-                    "{} — {} of {} used ({:.0}%)",
-                    status.account_name,
-                    fmt::amount(status.current_cost, &status.currency),
-                    fmt::amount(status.monthly_budget, &status.currency),
-                    status.percentage_used,
+                let line = tr!(
+                    "rules.budget_line",
+                    account = status.account_name,
+                    used = fmt::amount(status.current_cost, &status.currency),
+                    budget = fmt::amount(status.monthly_budget, &status.currency),
+                    pct = format!("{:.0}", status.percentage_used)
                 );
                 div()
                     .text_sm()
@@ -815,7 +820,7 @@ impl RulesView {
             .children(RULE_KINDS.iter().map(|spec| {
                 let kind = spec.kind;
                 Button::new(SharedString::from(format!("rule-kind-{kind}")))
-                    .label(spec.name)
+                    .label(tr!(spec.name))
                     .small()
                     .when(kind == self.selected_kind, |button| button.primary())
                     .when(kind != self.selected_kind, |button| {
@@ -846,7 +851,7 @@ impl RulesView {
                             .flex_1()
                             .v_flex()
                             .gap_1()
-                            .child(div().text_sm().child("Multiplier (× 7-day baseline)"))
+                            .child(div().text_sm().child(tr!("rules.multiplier")))
                             .child(Input::new(&self.multiplier_input)),
                     )
                     .child(
@@ -854,7 +859,7 @@ impl RulesView {
                             .flex_1()
                             .v_flex()
                             .gap_1()
-                            .child(div().text_sm().child("Consecutive days"))
+                            .child(div().text_sm().child(tr!("rules.consecutive_days")))
                             .child(Input::new(&self.consecutive_input)),
                     ),
                 alerts::RULE_BALANCE_FLOOR => div().h_flex().child(
@@ -862,16 +867,16 @@ impl RulesView {
                         .flex_1()
                         .v_flex()
                         .gap_1()
-                        .child(div().text_sm().child("Floor (account's currency)"))
+                        .child(div().text_sm().child(tr!("rules.floor")))
                         .child(Input::new(&self.floor_input)),
                 ),
                 alerts::RULE_BUDGET => {
                     let account_picker = div()
                         .v_flex()
                         .gap_1()
-                        .child(div().text_sm().child("Account"))
+                        .child(div().text_sm().child(tr!("rules.account")))
                         .when(self.accounts.is_empty(), |el| {
-                            el.child(theme::caption(cx, "No accounts yet — add one first."))
+                            el.child(theme::caption(cx, tr!("rules.no_accounts")))
                         })
                         .child(div().h_flex().gap_2().flex_wrap().children(
                             self.accounts.iter().map(|(id, name)| {
@@ -895,13 +900,13 @@ impl RulesView {
                         .flex_1()
                         .v_flex()
                         .gap_1()
-                        .child(div().text_sm().child("Based on"))
+                        .child(div().text_sm().child(tr!("rules.based_on")))
                         .child(div().h_flex().gap_2().children(BASED_OPTIONS.iter().map(
                             |(value, label)| {
                                 let value = *value;
                                 let selected = self.rule_based == value;
                                 Button::new(SharedString::from(format!("rule-based-{value}")))
-                                    .label(*label)
+                                    .label(tr!(*label))
                                     .small()
                                     .when(selected, |button| button.primary())
                                     .when(!selected, |button| {
@@ -919,7 +924,7 @@ impl RulesView {
                             .flex_1()
                             .v_flex()
                             .gap_1()
-                            .child(div().text_sm().child("Threshold type"))
+                            .child(div().text_sm().child(tr!("rules.threshold_type")))
                             .child(div().h_flex().gap_2().children(
                                 THRESHOLD_TYPE_OPTIONS.iter().map(|(value, label)| {
                                     let value = *value;
@@ -927,7 +932,7 @@ impl RulesView {
                                     Button::new(SharedString::from(format!(
                                         "rule-threshold-type-{value}"
                                     )))
-                                    .label(*label)
+                                    .label(tr!(*label))
                                     .small()
                                     .when(selected, |button| button.primary())
                                     .when(!selected, |button| {
@@ -959,9 +964,9 @@ impl RulesView {
                                     .gap_1()
                                     .child(div().text_sm().child(
                                         if self.rule_threshold_type == "absolute" {
-                                            "Amount (reporting currency)"
+                                            tr!("rules.amount_reporting")
                                         } else {
-                                            "Percent of budget (%)"
+                                            tr!("rules.percent_of_budget")
                                         },
                                     ))
                                     .child(Input::new(&self.threshold_input)),
@@ -973,14 +978,14 @@ impl RulesView {
                         .flex_1()
                         .v_flex()
                         .gap_1()
-                        .child(div().text_sm().child("Threshold (%)"))
+                        .child(div().text_sm().child(tr!("rules.threshold_pct")))
                         .child(Input::new(&self.threshold_input)),
                 ),
             };
 
         let view = cx.entity().downgrade();
         dialog
-            .title("New rule")
+            .title(tr!("rules.new_rule_title"))
             .w(rems(32.).to_pixels(window.rem_size()))
             .max_h(rems(37.5))
             .on_close(cx.listener(|this, _, _, cx| this.new_dialog_closed(cx)))
@@ -997,14 +1002,14 @@ impl RulesView {
                         div()
                             .v_flex()
                             .gap_1()
-                            .child(div().text_sm().child("Kind"))
+                            .child(div().text_sm().child(tr!("rules.kind")))
                             .child(self.render_kind_selector(cx)),
                     )
                     .child(
                         div()
                             .v_flex()
                             .gap_1()
-                            .child(div().text_sm().child("Name"))
+                            .child(div().text_sm().child(tr!("accounts.name")))
                             .child(Input::new(&self.name_input)),
                     )
                     .child(parameters)
@@ -1012,7 +1017,7 @@ impl RulesView {
                         div()
                             .text_xs()
                             .text_color(theme::text_muted(cx))
-                            .child("The rule is enabled on creation."),
+                            .child(tr!("rules.enabled_on_creation")),
                     ),
             )
             .footer(
@@ -1034,13 +1039,13 @@ impl RulesView {
                     })
                     .child(
                         Button::new("cancel-new-rule")
-                            .label("Cancel")
+                            .label(tr!("common.cancel"))
                             .ghost()
                             .on_click(|_, window, cx| window.dispatch_action(Box::new(Cancel), cx)),
                     )
                     .child(
                         Button::new("save-new-rule")
-                            .label("Create rule")
+                            .label(tr!("rules.create_rule"))
                             .primary()
                             .disabled(self.creating)
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -1061,16 +1066,16 @@ impl RulesView {
                     .as_ref()
                     .and_then(|data| data.rules.iter().find(|rule| &rule.id == id))
             })
-            .map(|rule| format!("\u{201c}{}\u{201d}", rule.name))
-            .unwrap_or_else(|| "this rule".to_string());
+            .map(|rule| tr!("rules.quoted", name = rule.name).to_string())
+            .unwrap_or_else(|| tr!("rules.this_rule").into());
         let view = cx.entity().downgrade();
 
         alert
-            .title(format!("Delete {name}?"))
-            .description("Its past alerts stay; the rule stops running.")
+            .title(tr!("rules.delete_title", name = name))
+            .description(tr!("rules.delete_body"))
             .button_props(
                 DialogButtonProps::default()
-                    .ok_text("Delete")
+                    .ok_text(tr!("common.delete"))
                     .ok_variant(ButtonVariant::Danger)
                     .show_cancel(true),
             )
@@ -1095,7 +1100,7 @@ impl Render for RulesView {
                 div()
                     .v_flex()
                     .gap_1()
-                    .child(theme::page_title(cx, "Rules"))
+                    .child(theme::page_title(cx, tr!("nav.rules")))
                     .child(theme::caption(
                         cx,
                         "Every rule runs on the local ledger after each ingest. \
@@ -1105,7 +1110,7 @@ impl Render for RulesView {
             .child(
                 Button::new("new-rule")
                     .primary()
-                    .label("New rule…")
+                    .label(tr!("rules.new_rule"))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.show_new_dialog(window, cx);
                     })),
@@ -1152,7 +1157,7 @@ impl Render for RulesView {
                             .child(div().text_sm().text_color(theme::danger(cx)).child(error))
                             .child(
                                 Button::new("retry-load-rules")
-                                    .label("Retry")
+                                    .label(tr!("common.retry"))
                                     .small()
                                     .custom(theme::outline_variant(cx))
                                     .card_outline(cx)
@@ -1168,7 +1173,7 @@ impl Render for RulesView {
                             div()
                                 .text_sm()
                                 .text_color(theme::text_muted(cx))
-                                .child("No rules yet. Create one with New rule in the top right."),
+                                .child(tr!("rules.empty")),
                         ),
                     )
                 })
@@ -1191,7 +1196,7 @@ impl Render for RulesView {
                 .child(
                     div().h_flex().child(
                         Button::new("retry-first-load-rules")
-                            .label("Retry")
+                            .label(tr!("common.retry"))
                             .small()
                             .custom(theme::outline_variant(cx))
                             .card_outline(cx)

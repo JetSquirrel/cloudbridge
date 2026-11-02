@@ -1,0 +1,2156 @@
+_version: 2
+# Interface strings, looked up with `rust_i18n::t!` (see `src/i18n.rs`).
+#
+# Every key needs every language: `i18n::tests` fails on a missing one.
+# A value that places something keeps it inside the sentence as `%{name}`,
+# so a translation can move it.
+#
+# Keys under `gpui_component` override gpui-kit's own component strings;
+# their names must match the component crate's `locales/ui.yml` exactly.
+
+app:
+  name:
+    en: CloudBridge
+    zh-CN: CloudBridge
+  tagline:
+    en: Cost workspace
+    zh-CN: 云成本工作台
+  search:
+    en: Search workspace
+    zh-CN: 搜索工作台
+  search_tooltip:
+    en: Search pages, accounts and commands
+    zh-CN: 搜索页面、账户和命令
+  local_ledger:
+    en: Local ledger
+    zh-CN: 本地账本
+  opening_ledger:
+    en: Opening the ledger…
+    zh-CN: 正在打开账本…
+
+nav:
+  workspace:
+    en: WORKSPACE
+    zh-CN: 工作台
+  manage:
+    en: MANAGE
+    zh-CN: 管理
+  overview:
+    en: Overview
+    zh-CN: 概览
+  alerts:
+    en: Alerts
+    zh-CN: 告警
+  attribution:
+    en: Attribution
+    zh-CN: 成本归属
+  models:
+    en: Models
+    zh-CN: 模型
+  insights:
+    en: Insights
+    zh-CN: 洞察
+  query:
+    en: Query
+    zh-CN: 查询
+  accounts:
+    en: Accounts
+    zh-CN: 账户
+  account_detail:
+    en: Account detail
+    zh-CN: 账户详情
+  rules:
+    en: Rules
+    zh-CN: 规则
+  settings:
+    en: Settings
+    zh-CN: 设置
+
+status:
+  failing_one:
+    en: 1 account is failing to refresh. See Accounts.
+    zh-CN: 1 个账户刷新失败，请查看“账户”页。
+  failing_many:
+    en: "%{n} accounts are failing to refresh. See Accounts."
+    zh-CN: "%{n} 个账户刷新失败，请查看“账户”页。"
+  synced:
+    en: "Synced %{when}"
+    zh-CN: "%{when}已同步"
+  never_synced:
+    en: Never synced
+    zh-CN: 从未同步
+  syncing:
+    en: Syncing…
+    zh-CN: 正在同步…
+  line:
+    en: "%{synced}. %{detail}"
+    zh-CN: "%{synced}。%{detail}"
+  no_sources:
+    en: No sources configured
+    zh-CN: 未配置数据源
+  sources_one:
+    en: 1 source
+    zh-CN: 1 个数据源
+  sources_many:
+    en: "%{n} sources"
+    zh-CN: "%{n} 个数据源"
+  not_fetched:
+    en: "%{sources}, not fetched yet"
+    zh-CN: "%{sources}，尚未获取"
+  due:
+    en: "%{sources}, due for a refresh"
+    zh-CN: "%{sources}，需要刷新"
+  current_hours:
+    en: "%{sources}, current for %{h}h %{m}m"
+    zh-CN: "%{sources}，%{h} 小时 %{m} 分钟内有效"
+  current_minutes:
+    en: "%{sources}, current for %{m} min"
+    zh-CN: "%{sources}，%{m} 分钟内有效"
+
+settings:
+  title:
+    en: Settings
+    zh-CN: 设置
+  subtitle:
+    en: Saved locally and applied across every page
+    zh-CN: 保存在本地，对所有页面生效
+  appearance:
+    en: Appearance
+    zh-CN: 外观
+  theme:
+    en: Theme
+    zh-CN: 主题
+  theme_hint:
+    en: Applies immediately and is remembered across launches
+    zh-CN: 立即生效，重启后仍会保留
+  theme_dark:
+    en: "%{name} (dark)"
+    zh-CN: "%{name}（深色）"
+  language:
+    en: Language
+    zh-CN: 语言
+  language_hint:
+    en: The interface language. System follows the operating system's.
+    zh-CN: 界面语言。“跟随系统”使用操作系统的语言。
+  language_system:
+    en: System
+    zh-CN: 跟随系统
+  reporting:
+    en: Reporting
+    zh-CN: 报表
+  currency:
+    en: Currency
+    zh-CN: 货币
+  currency_hint:
+    en: Totals are converted to this currency. Charges keep the currency they were billed in.
+    zh-CN: 合计金额会换算为此货币。各项费用仍保留其计费时的货币。
+  refreshing:
+    en: Refreshing
+    zh-CN: 刷新
+  refresh_interval:
+    en: Refresh interval
+    zh-CN: 刷新间隔
+  refresh_interval_hint:
+    en: "A billing period is fetched again only once this has passed. Longer is cheaper: AWS Cost Explorer bills per request. Force Refresh ignores it; an imported bill file is never re-fetched."
+    zh-CN: 账期只有在超过此间隔后才会重新获取。间隔越长越省钱：AWS Cost Explorer 按请求计费。“强制刷新”会忽略此设置；导入的账单文件不会被重新获取。
+  hours:
+    en: "%{n}h"
+    zh-CN: "%{n} 小时"
+  background:
+    en: Background
+    zh-CN: 后台
+  data:
+    en: Data
+    zh-CN: 数据
+  insights_rules:
+    en: Insights rules
+    zh-CN: 洞察规则
+  demo_data:
+    en: Demo data
+    zh-CN: 演示数据
+  demo_data_hint:
+    en: Twelve months of fake but realistic spend across three demo accounts, for design review. Demo rows never touch a real API.
+    zh-CN: 三个演示账户十二个月的虚构但逼真的支出，用于设计评审。演示数据不会调用任何真实 API。
+  load_demo:
+    en: Load demo data
+    zh-CN: 加载演示数据
+  clear_demo:
+    en: Clear demo data
+    zh-CN: 清除演示数据
+  about:
+    en: About
+    zh-CN: 关于
+  version:
+    en: "Version:"
+    zh-CN: 版本：
+  built_with:
+    en: "Built with:"
+    zh-CN: 构建技术：
+  copied:
+    en: Copied
+    zh-CN: 已复制
+  copy_system_info:
+    en: Copy system info
+    zh-CN: 复制系统信息
+  copy_system_info_tooltip:
+    en: Version, platform, settings, source types and the data folder's path, for a bug report. No account names, keys or amounts.
+    zh-CN: 版本、平台、设置、数据源类型和数据文件夹路径，用于提交问题报告。不含账户名称、密钥或金额。
+  open_at_login:
+    en: Open at login
+    zh-CN: 登录时打开
+  open_at_login_hint_menu_bar:
+    en: Starts CloudBridge in the menu bar when you log in, without its window, so alerts keep arriving after a restart.
+    zh-CN: 登录时在菜单栏中启动 CloudBridge，不打开窗口，重启后也能继续收到告警。
+  open_at_login_hint:
+    en: Starts CloudBridge when you log in, so alerts keep arriving after a restart.
+    zh-CN: 登录时启动 CloudBridge，重启后也能继续收到告警。
+  open_at_login_failed:
+    en: "Could not change Open at login: %{error}"
+    zh-CN: 无法更改“登录时打开”：%{error}
+  keep_in_menu_bar:
+    en: Keep running in the menu bar
+    zh-CN: 在菜单栏中保持运行
+  keep_in_tray_hint:
+    en: Closing the window leaves CloudBridge in the notification area, showing the month's spend, so refreshes and alerts carry on. Off, closing the window quits.
+    zh-CN: 关闭窗口后 CloudBridge 仍留在通知区域并显示本月支出，刷新和告警会继续。关闭此项时，关闭窗口即退出。
+  keep_in_menu_bar_hint:
+    en: Closing the window leaves CloudBridge in the menu bar, showing the month's spend, so refreshes and alerts carry on. Off, closing the window quits.
+    zh-CN: 关闭窗口后 CloudBridge 仍留在菜单栏并显示本月支出，刷新和告警会继续。关闭此项时，关闭窗口即退出。
+  background_refresh:
+    en: Refresh in the background
+    zh-CN: 后台刷新
+  background_refresh_hint_menu_bar:
+    en: While CloudBridge runs, window open or closed, it fetches each account once its refresh interval has passed and runs the alert rules. It looks for a due account every 15 minutes, without contacting the provider.
+    zh-CN: CloudBridge 运行期间（无论窗口是否打开），会在每个账户的刷新间隔过后获取数据并运行告警规则。它每 15 分钟检查一次是否有到期账户，检查时不会联系云服务商。
+  background_refresh_hint:
+    en: While CloudBridge is open, it fetches each account once its refresh interval has passed and runs the alert rules. It looks for a due account every 15 minutes, without contacting the provider.
+    zh-CN: CloudBridge 打开期间，会在每个账户的刷新间隔过后获取数据并运行告警规则。它每 15 分钟检查一次是否有到期账户，检查时不会联系云服务商。
+  alert_notifications:
+    en: Alert notifications
+    zh-CN: 告警通知
+  alert_notifications_hint:
+    en: Posts a system notification when an alert fires, once per alert.
+    zh-CN: 告警触发时发送系统通知，每条告警一次。
+  export_focus:
+    en: Export as FOCUS
+    zh-CN: 导出为 FOCUS
+  export_focus_hint:
+    en: "Every charge as a CSV with FOCUS 1.5 column names, for another FinOps tool: amounts in the currency each was billed in, and a model's tokens as ConsumedQuantity and SkuPriceDetails."
+    zh-CN: 将所有费用导出为使用 FOCUS 1.5 列名的 CSV，供其他 FinOps 工具使用：金额保留各自的计费货币，模型的 token 写入 ConsumedQuantity 和 SkuPriceDetails。
+  export:
+    en: Export…
+    zh-CN: 导出…
+  exported:
+    en: "Exported %{rows} charges to %{path}"
+    zh-CN: 已将 %{rows} 条费用导出到 %{path}
+  export_failed:
+    en: "Could not export: %{error}"
+    zh-CN: 导出失败：%{error}
+  save_dialog_failed:
+    en: "Could not open the save dialog: %{error}"
+    zh-CN: 无法打开保存对话框：%{error}
+  save_failed:
+    en: "Save failed: %{error}"
+    zh-CN: 保存失败：%{error}
+  demo_failed:
+    en: "Demo data failed: %{error}"
+    zh-CN: 演示数据操作失败：%{error}
+  currency_failed:
+    en: "Could not switch currency: %{error}"
+    zh-CN: 无法切换货币：%{error}
+  saved:
+    en: Settings saved
+    zh-CN: 设置已保存
+
+palette:
+  pages:
+    en: Pages
+    zh-CN: 页面
+  commands:
+    en: Commands
+    zh-CN: 命令
+  reload:
+    en: Reload page
+    zh-CN: 重新加载页面
+  add_account:
+    en: Add account…
+    zh-CN: 添加账户…
+  empty:
+    en: Nothing matches
+    zh-CN: 没有匹配项
+  hint_move:
+    en: ↑↓ to move
+    zh-CN: ↑↓ 移动
+  hint_open:
+    en: Enter to open
+    zh-CN: Enter 打开
+  hint_close:
+    en: Esc to close
+    zh-CN: Esc 关闭
+
+time:
+  just_now:
+    en: just now
+    zh-CN: 刚刚
+  minutes_ago:
+    en: "%{n} min ago"
+    zh-CN: "%{n} 分钟前"
+  hours_ago:
+    en: "%{n} h ago"
+    zh-CN: "%{n} 小时前"
+  days_ago:
+    en: "%{n} d ago"
+    zh-CN: "%{n} 天前"
+  # A chrono format string, for a date within the year.
+  short_date:
+    en: "%b %d"
+    zh-CN: "%-m月%-d日"
+
+common:
+  refresh:
+    en: "Refresh"
+    zh-CN: "刷新"
+  refreshing:
+    en: "Refreshing…"
+    zh-CN: "正在刷新…"
+  force_refresh:
+    en: "Force refresh"
+    zh-CN: "强制刷新"
+  loading:
+    en: "Loading…"
+    zh-CN: "正在加载…"
+  scroll_horizontally:
+    en: "Scroll horizontally to see all columns"
+    zh-CN: "横向滚动可查看所有列"
+  cancel:
+    en: "Cancel"
+    zh-CN: "取消"
+  save:
+    en: "Save"
+    zh-CN: "保存"
+  delete:
+    en: "Delete"
+    zh-CN: "删除"
+  edit:
+    en: "Edit"
+    zh-CN: "编辑"
+  add:
+    en: "Add"
+    zh-CN: "添加"
+  close:
+    en: "Close"
+    zh-CN: "关闭"
+  other:
+    en: "Other"
+    zh-CN: "其他"
+  unallocated:
+    en: "Unallocated"
+    zh-CN: "未分配"
+  uncategorized:
+    en: "Uncategorized"
+    zh-CN: "未分类"
+  retry:
+    en: "Retry"
+    zh-CN: "重试"
+
+overview:
+  card_mtd:
+    en: "MONTH TO DATE"
+    zh-CN: "本月至今"
+  vs_same_day:
+    en: "vs same day last month"
+    zh-CN: "对比上月同日"
+  card_forecast:
+    en: "MONTH-END FORECAST"
+    zh-CN: "月末预测"
+  card_forecast_caption:
+    en: "MTD plus the daily run rate for the rest of the month"
+    zh-CN: "本月至今支出加上本月剩余天数按日均速率推算"
+  vs_last_month:
+    en: "VS LAST MONTH"
+    zh-CN: "对比上月"
+  biggest_movers:
+    en: "Biggest movers"
+    zh-CN: "变动最大"
+  daily_chart:
+    en: "Daily spend, all sources"
+    zh-CN: "每日支出（全部数据源）"
+  daily_chart_caption:
+    en: "Actual against the 7-day trailing mean."
+    zh-CN: "实际支出与 7 日滚动均值对比。"
+  card_30d:
+    en: "LAST 30 DAYS"
+    zh-CN: "最近 30 天"
+  vs_prior_30d:
+    en: "vs prior 30 days"
+    zh-CN: "对比前 30 天"
+  col_vs_prior_30d:
+    en: "VS PRIOR 30D"
+    zh-CN: "对比前 30 天"
+  card_daily_avg:
+    en: "DAILY AVERAGE"
+    zh-CN: "日均"
+  card_daily_avg_caption:
+    en: "Mean daily usage over the last 30 days"
+    zh-CN: "最近 30 天的日均用量"
+  card_12m:
+    en: "LAST 12 MONTHS"
+    zh-CN: "最近 12 个月"
+  vs_prior_12m:
+    en: "vs prior 12 months"
+    zh-CN: "对比前 12 个月"
+  col_vs_prior_12m:
+    en: "VS PRIOR 12M"
+    zh-CN: "对比前 12 个月"
+  monthly_chart:
+    en: "Monthly spend, all sources"
+    zh-CN: "每月支出（全部数据源）"
+  monthly_chart_caption:
+    en: "One point per month of gross usage."
+    zh-CN: "每月一个点，按总用量计。"
+  card_monthly_avg:
+    en: "MONTHLY AVERAGE"
+    zh-CN: "月均"
+  card_monthly_avg_caption:
+    en: "Mean monthly usage over the last 12 months"
+    zh-CN: "最近 12 个月的月均用量"
+  load_failed:
+    en: "Could not load the overview: %{error}"
+    zh-CN: "无法加载概览：%{error}"
+  some_failed:
+    en: "Some sources failed: %{failures}"
+    zh-CN: "部分数据源失败：%{failures}"
+  refresh_failed:
+    en: "Refresh failed: %{error}"
+    zh-CN: "刷新失败：%{error}"
+  reported_in:
+    en: "%{window}, reported in %{currency}"
+    zh-CN: "%{window}，以 %{currency} 计"
+  range_mtd:
+    en: "This month to date"
+    zh-CN: "本月至今"
+  range_30d:
+    en: "Last 30 days"
+    zh-CN: "最近 30 天"
+  range_12m:
+    en: "Last 12 months"
+    zh-CN: "最近 12 个月"
+  reload_demo:
+    en: "Reload demo"
+    zh-CN: "重新加载演示"
+  reload_demo_tooltip:
+    en: "Reload the sample ledger; no live provider data is fetched"
+    zh-CN: "重新加载示例账本；不会获取任何真实云服务商数据"
+  refresh_tooltip:
+    en: "Fetch stale sources and update this overview"
+    zh-CN: "获取过期的数据源并更新概览"
+  force_refresh_tooltip:
+    en: "Fetch every source again, including recently synced periods"
+    zh-CN: "重新获取所有数据源，包括最近已同步的账期"
+  baseline_7d:
+    en: "7-day baseline"
+    zh-CN: "7 日基线"
+  typical_day:
+    en: "Typical day (6-mo avg)"
+    zh-CN: "典型日（6 个月均值）"
+  spend_breakdown:
+    en: "Spend breakdown"
+    zh-CN: "支出构成"
+  view_attribution:
+    en: "View attribution"
+    zh-CN: "查看成本归属"
+  demo_failed:
+    en: "Couldn't change the demo data: %{error}"
+    zh-CN: "无法更改演示数据：%{error}"
+  no_accounts:
+    en: "No accounts yet"
+    zh-CN: "还没有账户"
+  no_accounts_hint:
+    en: "Add a billing account to see your spend here, or load demo data to look around first."
+    zh-CN: "添加一个计费账户即可在此查看支出，也可以先加载演示数据看看。"
+  no_spend:
+    en: "No spend yet"
+    zh-CN: "还没有支出"
+  no_spend_hint:
+    en: "Refresh fetches the current bill. Providers can take up to a day to report new charges, and a source read from a file shows spend once its bill is imported on the Accounts page."
+    zh-CN: "“刷新”会获取当前账单。云服务商可能需要最多一天才会报告新费用；从文件读取的数据源在“账户”页导入账单后才会显示支出。"
+  showing_demo:
+    en: "Showing demo data"
+    zh-CN: "正在显示演示数据"
+  demo_included:
+    en: "Demo accounts are included in these totals"
+    zh-CN: "这些合计中包含演示账户"
+  demo:
+    en: "Demo"
+    zh-CN: "演示"
+  usage_credits:
+    en: "usage %{usage}, credits %{credits}"
+    zh-CN: "用量 %{usage}，抵扣 %{credits}"
+  range:
+    en: "range %{low}–%{high}"
+    zh-CN: "区间 %{low}–%{high}"
+  unallocated:
+    en: "UNALLOCATED"
+    zh-CN: "未分配"
+  unallocated_caption:
+    en: "%{amount} with no tag or metric match"
+    zh-CN: "%{amount} 未匹配任何标签或指标"
+  review_allocation:
+    en: "Review allocation"
+    zh-CN: "检查分配"
+  open_alerts:
+    en: "OPEN ALERTS"
+    zh-CN: "未处理告警"
+  alerts_caption:
+    en: "%{critical} critical, %{warning} warning"
+    zh-CN: "%{critical} 个严重，%{warning} 个警告"
+  view_alerts:
+    en: "View alerts"
+    zh-CN: "查看告警"
+  col_source:
+    en: "SOURCE"
+    zh-CN: "数据源"
+  col_model_or_service:
+    en: "MODEL OR SERVICE"
+    zh-CN: "模型或服务"
+  col_drives:
+    en: "DRIVES"
+    zh-CN: "驱动因素"
+  month_over_month:
+    en: "Month over month"
+    zh-CN: "环比"
+  mom_caption:
+    en: "%{current} so far vs %{previous} in all of last month"
+    zh-CN: "本月至今 %{current}，上月全月 %{previous}"
+  col_service:
+    en: "SERVICE"
+    zh-CN: "服务"
+  col_this_month:
+    en: "THIS MONTH"
+    zh-CN: "本月"
+  col_last_month:
+    en: "LAST MONTH"
+    zh-CN: "上月"
+  col_change:
+    en: "CHANGE"
+    zh-CN: "变化"
+  why_changed:
+    en: "Why it changed"
+    zh-CN: "变化原因"
+  by_category:
+    en: "BY CATEGORY"
+    zh-CN: "按类别"
+  by_service:
+    en: "BY SERVICE"
+    zh-CN: "按服务"
+  unreconciled:
+    en: "This breakdown leaves %{amount} unexplained — the components don't fully reconcile."
+    zh-CN: "此分解仍有 %{amount} 无法解释——各组成部分未能完全对账。"
+
+range:
+  mtd:
+    en: "MTD"
+    zh-CN: "本月"
+  30d:
+    en: "30d"
+    zh-CN: "30 天"
+  12m:
+    en: "12m"
+    zh-CN: "12 个月"
+  mtd_caption:
+    en: "%{month}, month to date"
+    zh-CN: "%{month}，本月至今"
+  month_format:
+    en: "%B %Y"
+    zh-CN: "%Y年%-m月"
+
+movement:
+  appeared:
+    en: "Appeared"
+    zh-CN: "新出现"
+  vanished:
+    en: "Vanished"
+    zh-CN: "已消失"
+  grown:
+    en: "Grown"
+    zh-CN: "增长"
+  shrunk:
+    en: "Shrunk"
+    zh-CN: "下降"
+
+account_state:
+  healthy:
+    en: "Healthy"
+    zh-CN: "正常"
+  anomaly:
+    en: "Anomaly"
+    zh-CN: "异常"
+  untagged:
+    en: "Unallocated spend"
+    zh-CN: "未分配支出"
+  low_balance:
+    en: "Low balance"
+    zh-CN: "余额不足"
+
+source_kind:
+  balance_only:
+    en: "Balance only"
+    zh-CN: "仅余额"
+  api_and_import:
+    en: "Cost API + bill import"
+    zh-CN: "成本 API + 账单导入"
+  api:
+    en: "Cost API"
+    zh-CN: "成本 API"
+  import:
+    en: "Bill import"
+    zh-CN: "账单导入"
+  none:
+    en: "None"
+    zh-CN: "无"
+
+alerts:
+  critical:
+    en: "Critical"
+    zh-CN: "严重"
+  warning:
+    en: "Warning"
+    zh-CN: "警告"
+  load_failed:
+    en: "Could not load alerts: %{error}"
+    zh-CN: "无法加载告警：%{error}"
+  snooze_failed:
+    en: "Could not snooze the alert: %{error}"
+    zh-CN: "无法暂停该告警：%{error}"
+  dismiss_failed:
+    en: "Could not dismiss the alert: %{error}"
+    zh-CN: "无法忽略该告警：%{error}"
+  resolved_this_month:
+    en: "RESOLVED THIS MONTH"
+    zh-CN: "本月已解决"
+  nothing_resolved:
+    en: "Nothing resolved yet."
+    zh-CN: "暂无已解决的告警。"
+  subtitle:
+    en: "Evaluated locally against the ledger every ingest"
+    zh-CN: "每次导入数据后在本地根据账本评估"
+  edit_rules:
+    en: "Edit rules"
+    zh-CN: "编辑规则"
+  all_clear:
+    en: "All clear"
+    zh-CN: "一切正常"
+  filter_all:
+    en: "All"
+    zh-CN: "全部"
+  kind_cost_anomaly:
+    en: "Cost anomaly"
+    zh-CN: "成本异常"
+  kind_balance:
+    en: "Balance"
+    zh-CN: "余额"
+  kind_untagged:
+    en: "Untagged spend"
+    zh-CN: "未打标签支出"
+  kind_budget:
+    en: "Budget"
+    zh-CN: "预算"
+  action_snooze:
+    en: "Snooze 24h"
+    zh-CN: "暂停 24 小时"
+  action_dismiss:
+    en: "Dismiss"
+    zh-CN: "忽略"
+  action_trace:
+    en: "Trace in attribution"
+    zh-CN: "在成本归属中追踪"
+  action_write_rule:
+    en: "Write an allocation rule"
+    zh-CN: "编写分配规则"
+
+models:
+  ai_spend:
+    en: "AI SPEND"
+    zh-CN: "AI 支出"
+  models_this_range:
+    en: "%{n} models this range"
+    zh-CN: "此区间共 %{n} 个模型"
+  tokens:
+    en: "TOKENS"
+    zh-CN: "Token 数"
+  tokens_caption:
+    en: "input + output + cache"
+    zh-CN: "输入 + 输出 + 缓存"
+  blended:
+    en: "BLENDED $/1M"
+    zh-CN: "综合单价 /1M"
+  blended_caption:
+    en: "cost ÷ tokens, all models"
+    zh-CN: "成本 ÷ token 数，全部模型"
+  cache_share:
+    en: "CACHE SHARE"
+    zh-CN: "缓存占比"
+  cache_share_caption:
+    en: "of input tokens read from cache"
+    zh-CN: "输入 token 中从缓存读取的比例"
+  per_model:
+    en: "Per model"
+    zh-CN: "按模型"
+  col_model:
+    en: "MODEL"
+    zh-CN: "模型"
+  col_cost:
+    en: "COST"
+    zh-CN: "成本"
+  col_delta:
+    en: "Δ VS PREV"
+    zh-CN: "较上期"
+  col_in:
+    en: "IN"
+    zh-CN: "输入"
+  col_out:
+    en: "OUT"
+    zh-CN: "输出"
+  col_cache:
+    en: "CACHE"
+    zh-CN: "缓存"
+  col_share:
+    en: "SHARE"
+    zh-CN: "占比"
+  tokens_per_day:
+    en: "Tokens per day"
+    zh-CN: "每日 Token"
+  empty:
+    en: "No model-provider data yet"
+    zh-CN: "还没有模型服务商数据"
+  empty_hint:
+    en: "Token counts and per-model costs appear once the ledger has an LLM provider's usage. Import an OpenAI or Anthropic usage export from Accounts."
+    zh-CN: "账本中有大模型服务商的用量后，这里会显示 token 数和各模型成本。可在“账户”页导入 OpenAI 或 Anthropic 的用量导出文件。"
+  open_accounts:
+    en: "Open Accounts"
+    zh-CN: "打开账户页"
+  cache_written:
+    en: "%{n} written to the cache"
+    zh-CN: "%{n} 写入缓存"
+  unsplit:
+    en: "%{n} the bill counts as input and output together"
+    zh-CN: "%{n} 在账单中未区分输入与输出"
+  includes:
+    en: "Includes %{parts}"
+    zh-CN: "包含 %{parts}"
+  and_separator:
+    en: ", and "
+    zh-CN: "，以及 "
+
+detail:
+  load_failed:
+    en: "Could not load the account: %{error}"
+    zh-CN: "无法加载账户：%{error}"
+  back:
+    en: "← Accounts"
+    zh-CN: "← 账户"
+  caption:
+    en: "%{provider}, %{window}, reported in %{currency}"
+    zh-CN: "%{provider}，%{window}，以 %{currency} 计"
+  monthly_usage:
+    en: "Monthly usage"
+    zh-CN: "每月用量"
+  daily_usage:
+    en: "Daily usage"
+    zh-CN: "每日用量"
+  by_service:
+    en: "By service or model"
+    zh-CN: "按服务或模型"
+  no_usage:
+    en: "No usage in this window."
+    zh-CN: "此时间范围内没有用量。"
+  no_usage_snapshot:
+    en: "No usage in this window. A balance-reporting source's usage arrives through its bill file import."
+    zh-CN: "此时间范围内没有用量。仅报告余额的数据源，其用量需通过导入账单文件获得。"
+  col_service_model:
+    en: "SERVICE / MODEL"
+    zh-CN: "服务 / 模型"
+  col_amount:
+    en: "AMOUNT"
+    zh-CN: "金额"
+  current_period:
+    en: "Current billing period"
+    zh-CN: "当前账期"
+  no_usage_period:
+    en: "No usage in this billing period."
+    zh-CN: "本账期没有用量。"
+  no_account:
+    en: "No account selected."
+    zh-CN: "未选择账户。"
+  spend:
+    en: "SPEND"
+    zh-CN: "支出"
+  dim_region:
+    en: "Region"
+    zh-CN: "地域"
+  dim_category:
+    en: "Category"
+    zh-CN: "类别"
+  by_region:
+    en: "By region"
+    zh-CN: "按地域"
+  by_category:
+    en: "By service category"
+    zh-CN: "按服务类别"
+  col_region:
+    en: "REGION"
+    zh-CN: "地域"
+  col_category:
+    en: "SERVICE CATEGORY"
+    zh-CN: "服务类别"
+  other_region:
+    en: "Charges with no region read as 'Other'."
+    zh-CN: "没有地域的费用计入“其他”。"
+  other_category:
+    en: "Charges with no service category read as 'Other'."
+    zh-CN: "没有服务类别的费用计入“其他”。"
+
+attribution:
+  dim_tag:
+    en: "Tag"
+    zh-CN: "标签"
+  dim_service:
+    en: "Service"
+    zh-CN: "服务"
+  by_business_line:
+    en: "By business line"
+    zh-CN: "按业务线"
+  col_business_line:
+    en: "BUSINESS LINE"
+    zh-CN: "业务线"
+  other_tag:
+    en: "Charges with no business-line tag read as 'Other'."
+    zh-CN: "没有业务线标签的费用计入“其他”。"
+  other_service:
+    en: "Charges with no service read as 'Other'."
+    zh-CN: "没有服务的费用计入“其他”。"
+  other_resource:
+    en: "Charges with no resource read as 'Other'."
+    zh-CN: "没有资源的费用计入“其他”。"
+  all_business_lines:
+    en: "All business lines"
+    zh-CN: "全部业务线"
+  all_services:
+    en: "All services"
+    zh-CN: "全部服务"
+  all_regions:
+    en: "All regions"
+    zh-CN: "全部地域"
+  all_categories:
+    en: "All categories"
+    zh-CN: "全部类别"
+  noun_resource:
+    en: "resource"
+    zh-CN: "资源"
+  noun_service:
+    en: "service"
+    zh-CN: "服务"
+  col_resource:
+    en: "RESOURCE"
+    zh-CN: "资源"
+  mode_map:
+    en: "Map"
+    zh-CN: "矩形图"
+  mode_table:
+    en: "Table"
+    zh-CN: "表格"
+  load_failed:
+    en: "Could not load attribution: %{error}"
+    zh-CN: "无法加载成本归属：%{error}"
+  this_period:
+    en: "%{amount} this billing period"
+    zh-CN: "本账期 %{amount}"
+  path:
+    en: "PATH"
+    zh-CN: "路径"
+  step_source:
+    en: "Source"
+    zh-CN: "数据源"
+  step_service:
+    en: "Service"
+    zh-CN: "服务"
+  step_business_line:
+    en: "Business line"
+    zh-CN: "业务线"
+  all_allocated:
+    en: "Every charge this period reached a business line."
+    zh-CN: "本期所有费用都已归入业务线。"
+  untagged_charge:
+    en: "untagged charge"
+    zh-CN: "未打标签的费用"
+  unallocated_title:
+    en: "Unallocated: %{amount} (%{pct}%)"
+    zh-CN: "未分配：%{amount}（%{pct}%）"
+  no_usage:
+    en: "No usage in this period."
+    zh-CN: "本期没有用量。"
+  net_breakdown:
+    en: "Net %{net} = positive costs %{positive} + credits / adjustments %{adjustments}. %{note}"
+    zh-CN: "净额 %{net} = 正向成本 %{positive} + 抵扣 / 调整 %{adjustments}。%{note}"
+  net_note_map:
+    en: "Tiles show positive costs; adjustments are listed below."
+    zh-CN: "色块显示正向成本；调整项列在下方。"
+  net_note_table:
+    en: "Shares use the net total."
+    zh-CN: "占比按净额计算。"
+  net:
+    en: "Net %{net}"
+    zh-CN: "净额 %{net}"
+  adjustments:
+    en: "Credits / adjustments (share of net)"
+    zh-CN: "抵扣 / 调整（占净额比例）"
+  click_tile:
+    en: "Click a tile to split it by %{noun}."
+    zh-CN: "点击色块可按%{noun}拆分。"
+  col_share_of_net:
+    en: "SHARE OF NET"
+    zh-CN: "占净额"
+  top_resources:
+    en: "Top resources"
+    zh-CN: "主要资源"
+  empty:
+    en: "Nothing to attribute yet"
+    zh-CN: "暂无可归属的成本"
+  empty_hint:
+    en: "The source → service → business line flow appears once this period has charges. Fetch or import a bill from Accounts."
+    zh-CN: "本期有费用后，这里会显示 数据源 → 服务 → 业务线 的流向。可在“账户”页获取或导入账单。"
+
+accounts:
+  import_only_tooltip:
+    en: "Read from a bill file you import"
+    zh-CN: "从你导入的账单文件读取"
+  setup_guide:
+    en: "Setup guide"
+    zh-CN: "配置指南"
+  subtitle:
+    en: "%{n} accounts. Credentials stay in the OS keyring, never in the database"
+    zh-CN: "%{n} 个账户。凭据保存在系统密钥环中，不会写入数据库"
+  col_account:
+    en: "ACCOUNT"
+    zh-CN: "账户"
+  col_reports:
+    en: "REPORTS"
+    zh-CN: "报告内容"
+  col_mtd_bal:
+    en: "MTD / BAL"
+    zh-CN: "本月 / 余额"
+  col_last_fetch:
+    en: "LAST FETCH"
+    zh-CN: "上次获取"
+  col_state:
+    en: "STATE"
+    zh-CN: "状态"
+  loading:
+    en: "Loading accounts…"
+    zh-CN: "正在加载账户…"
+  empty:
+    en: "No accounts yet. Add one to connect a billing source."
+    zh-CN: "还没有账户。添加一个以连接计费数据源。"
+  never:
+    en: "never"
+    zh-CN: "从未"
+  system_credentials:
+    en: "This machine's credentials"
+    zh-CN: "本机凭据"
+  failing:
+    en: "Failing"
+    zh-CN: "失败"
+  failing_tooltip:
+    en: "Background refresh failing: %{reason}"
+    zh-CN: "后台刷新失败：%{reason}"
+  validate:
+    en: "Validate"
+    zh-CN: "验证"
+  raw_body:
+    en: "%{size} of Parquet under %{path}. A mapping fix replays these instead of paying for another fetch."
+    zh-CN: "%{path} 下有 %{size} 的 Parquet 数据。修正映射后可直接重放这些数据，无需再次付费获取。"
+  reading_raw:
+    en: "Reading the raw store…"
+    zh-CN: "正在读取原始数据…"
+  api_budget:
+    en: "Paid API budget"
+    zh-CN: "付费 API 预算"
+  api_budget_caption:
+    en: "%{used} of a %{ceiling}-call monthly ceiling"
+    zh-CN: "已用 %{used} 次，每月上限 %{ceiling} 次"
+  raw_payloads:
+    en: "Raw payloads on disk"
+    zh-CN: "磁盘上的原始数据"
+  replay:
+    en: "Replay normalization"
+    zh-CN: "重放规范化"
+  orphans_title:
+    en: "Billing history from deleted accounts"
+    zh-CN: "已删除账户的账单历史"
+  orphans_caption:
+    en: "No account owns these charges any more, but they still count in every total."
+    zh-CN: "这些费用已不属于任何账户，但仍计入所有合计。"
+  delete_history:
+    en: "Delete history"
+    zh-CN: "删除历史"
+  add_title:
+    en: "Add account"
+    zh-CN: "添加账户"
+  provider:
+    en: "Provider"
+    zh-CN: "服务商"
+  name:
+    en: "Name"
+    zh-CN: "名称"
+  export_uri:
+    en: "Data export S3 URI"
+    zh-CN: "数据导出 S3 URI"
+  fill_from_system:
+    en: "Fill from system"
+    zh-CN: "从系统填入"
+  this_account:
+    en: "this account"
+    zh-CN: "此账户"
+  delete_title:
+    en: "Delete “%{name}”?"
+    zh-CN: "删除“%{name}”？"
+  delete_body:
+    en: "Its credentials in the OS keyring are removed. This cannot be undone."
+    zh-CN: "其保存在系统密钥环中的凭据将被删除。此操作无法撤销。"
+  delete_history_title:
+    en: "Delete billing history?"
+    zh-CN: "删除账单历史？"
+  delete_history_body:
+    en: "%{history} and the raw payloads behind it are removed. This cannot be undone."
+    zh-CN: "%{history}及其原始数据将被删除。此操作无法撤销。"
+  this_history:
+    en: "This history"
+    zh-CN: "此历史"
+  history_removed_too:
+    en: "%{history} and its raw payloads are removed too."
+    zh-CN: "%{history}及其原始数据也会被删除。"
+  history_stays:
+    en: "%{history} stays in the ledger and keeps counting in every total."
+    zh-CN: "%{history}会保留在账本中，并继续计入所有合计。"
+  also_delete_history:
+    en: "Also delete its billing history"
+    zh-CN: "同时删除其账单历史"
+  balance_left:
+    en: "%{amount} left"
+    zh-CN: "剩余 %{amount}"
+  history_in:
+    en: " in %{month}"
+    zh-CN: "（%{month}）"
+  history_from_to:
+    en: " from %{first} to %{last}"
+    zh-CN: "（%{first} 至 %{last}）"
+  balance_history:
+    en: "Its balance history"
+    zh-CN: "其余额历史"
+  one_charge:
+    en: "1 charge"
+    zh-CN: "1 条费用"
+  n_charges:
+    en: "%{n} charges"
+    zh-CN: "%{n} 条费用"
+  history_summary:
+    en: "%{charges}%{months} (%{usage} of usage)"
+    zh-CN: "%{charges}%{months}（用量 %{usage}）"
+  untagged_finding:
+    en: "Usage with no '%{tag}' tag (%{pct}% of the period's usage)"
+    zh-CN: "没有“%{tag}”标签的用量（占本期用量的 %{pct}%）"
+  open_query_template:
+    en: "Open Query template"
+    zh-CN: "打开查询模板"
+  query_template_tooltip:
+    en: "Unallocated spend by service"
+    zh-CN: "按服务查看未分配支出"
+  keyring_macos:
+    en: "Saved in the macOS Keychain, never in CloudBridge's own files. The first time CloudBridge reads it, macOS asks for permission: choose Always Allow."
+    zh-CN: "保存在 macOS 钥匙串中，不会写入 CloudBridge 自己的文件。CloudBridge 首次读取时 macOS 会请求授权：请选择“始终允许”。"
+  keyring_windows:
+    en: "Saved in Windows Credential Manager, never in CloudBridge's own files."
+    zh-CN: "保存在 Windows 凭据管理器中，不会写入 CloudBridge 自己的文件。"
+  keyring_other:
+    en: "Saved in the system keyring, never in CloudBridge's own files."
+    zh-CN: "保存在系统密钥环中，不会写入 CloudBridge 自己的文件。"
+  join_or:
+    en: " or "
+    zh-CN: " 或 "
+  join_and:
+    en: " and "
+    zh-CN: " 和 "
+  ph_name:
+    en: "Account name"
+    zh-CN: "账户名称"
+  ph_region:
+    en: "Region (optional, default us-east-1)"
+    zh-CN: "地域（可选，默认 us-east-1）"
+  ph_export_uri:
+    en: "s3://bucket/prefix/export-name (optional)"
+    zh-CN: "s3://bucket/prefix/export-name（可选）"
+  load_failed:
+    en: "Failed to load accounts: %{error}"
+    zh-CN: "加载账户失败：%{error}"
+  load_data_failed:
+    en: "Failed to load account data: %{error}"
+    zh-CN: "加载账户数据失败：%{error}"
+  replaying:
+    en: "Replaying normalization from the raw store…"
+    zh-CN: "正在从原始数据重新规范化…"
+  replayed:
+    en: "Re-normalized %{periods} period(s), %{charges} charge(s) written"
+    zh-CN: "已重新规范化 %{periods} 个账期，写入 %{charges} 条费用"
+  use_system:
+    en: "Use this machine's credentials"
+    zh-CN: "使用本机凭据"
+  use_system_hint:
+    en: "Read from %{places} each time they are needed; nothing is saved. An app opened from Finder cannot see shell variables, so the credentials file is what counts."
+    zh-CN: "每次需要时从 %{places} 读取，不保存任何内容。从访达打开的应用看不到 shell 环境变量，因此以凭据文件为准。"
+  enter_key_hint:
+    en: "Or enter a key below. Found nothing in %{places}? Untick to type one."
+    zh-CN: "或在下方输入密钥。在 %{places} 中没找到？取消勾选即可手动输入。"
+  filled_from:
+    en: "Filled from %{origin}"
+    zh-CN: "已从 %{origin} 填入"
+  not_found_in:
+    en: "No credentials found in %{places}"
+    zh-CN: "在 %{places} 中未找到凭据"
+  need_name:
+    en: "Enter a name for the account."
+    zh-CN: "请输入账户名称。"
+  no_system_credentials:
+    en: "No credentials found on this machine (looked in %{places}). Untick \"Use this machine's credentials\" to enter a key instead."
+    zh-CN: "本机未找到凭据（已查找 %{places}）。取消勾选“使用本机凭据”即可手动输入密钥。"
+  enter_field:
+    en: "Enter the %{field}."
+    zh-CN: "请输入%{field}。"
+  secret_key:
+    en: "secret key"
+    zh-CN: "密钥"
+  bad_export_uri:
+    en: "The export URI starts with s3://, e.g. s3://bucket/prefix/export-name."
+    zh-CN: "导出 URI 须以 s3:// 开头，例如 s3://bucket/prefix/export-name。"
+  added_import:
+    en: "Added %{name}. Use Import on its row to read the %{format}."
+    zh-CN: "已添加 %{name}。使用该行的“导入”读取%{format}。"
+  added:
+    en: "Added %{name}."
+    zh-CN: "已添加 %{name}。"
+  save_failed:
+    en: "Couldn't save the account: %{error}"
+    zh-CN: "无法保存账户：%{error}"
+  added_fetching:
+    en: "Added %{name}. Fetching its bill…"
+    zh-CN: "已添加 %{name}，正在获取账单…"
+  added_no_bill:
+    en: "Added %{name}. No bill to fetch yet."
+    zh-CN: "已添加 %{name}，暂无可获取的账单。"
+  added_fetched:
+    en: "Added %{name} and fetched %{charges} charge(s)."
+    zh-CN: "已添加 %{name}，获取了 %{charges} 条费用。"
+  added_fetch_failed:
+    en: "Added %{name}, but its bill couldn't be fetched: %{error}"
+    zh-CN: "已添加 %{name}，但无法获取其账单：%{error}"
+  deleted_with_history:
+    en: "Account and its billing history deleted"
+    zh-CN: "已删除账户及其账单历史"
+  deleted:
+    en: "Account deleted"
+    zh-CN: "已删除账户"
+  delete_failed:
+    en: "Delete failed: %{error}"
+    zh-CN: "删除失败：%{error}"
+  history_deleted:
+    en: "Deleted %{charges} charge(s) of billing history"
+    zh-CN: "已删除 %{charges} 条账单历史"
+  history_delete_failed:
+    en: "Couldn't delete the history: %{error}"
+    zh-CN: "无法删除账单历史：%{error}"
+  unknown_source:
+    en: "Account %{name} uses an unknown billing source"
+    zh-CN: "账户 %{name} 使用了未知的计费数据源"
+  cannot_validate:
+    en: "Cannot validate %{name}: %{error}"
+    zh-CN: "无法验证 %{name}：%{error}"
+  validating:
+    en: "Validating account %{name}…"
+    zh-CN: "正在验证账户 %{name}…"
+  validation_timeout:
+    en: "Validation timeout"
+    zh-CN: "验证超时"
+  validated:
+    en: "Account %{name} validated successfully!"
+    zh-CN: "账户 %{name} 验证成功！"
+  invalid:
+    en: "Account %{name} credentials invalid"
+    zh-CN: "账户 %{name} 的凭据无效"
+  validation_failed:
+    en: "Validation failed: %{error}"
+    zh-CN: "验证失败：%{error}"
+  no_bill_export:
+    en: "%{source} publishes no bill export CloudBridge can read"
+    zh-CN: "%{source} 没有提供 CloudBridge 可读取的账单导出"
+  import:
+    en: "Import"
+    zh-CN: "导入"
+  choose_file:
+    en: "Choose the %{format} to import (%{extensions})"
+    zh-CN: "选择要导入的%{format}（%{extensions}）"
+  picker_failed:
+    en: "Could not open the file picker: %{error}"
+    zh-CN: "无法打开文件选择器：%{error}"
+  import_timeout:
+    en: "The import timed out"
+    zh-CN: "导入超时"
+  imported:
+    en: "Imported %{charges} charge(s) into %{name} from its %{format}, replacing %{periods}"
+    zh-CN: "已从%{format}向 %{name} 导入 %{charges} 条费用，替换了 %{periods}"
+
+insights:
+  load_failed:
+    en: "Could not load insights: %{error}"
+    zh-CN: "无法加载洞察：%{error}"
+  save_regions_failed:
+    en: "Couldn't save the regions: %{error}"
+    zh-CN: "无法保存地域设置：%{error}"
+  getting_ready:
+    en: "Getting ready…"
+    zh-CN: "正在准备…"
+  installing:
+    en: "Installing the scanner…"
+    zh-CN: "正在安装扫描器…"
+  install_failed:
+    en: "Couldn't install the scanner: %{error}"
+    zh-CN: "无法安装扫描器：%{error}"
+  no_targets:
+    en: "Add an AWS or Cloudflare account on the Accounts page to scan it."
+    zh-CN: "请先在“账户”页添加 AWS 或 Cloudflare 账户再扫描。"
+  scanning:
+    en: "Scanning %{name}%{place}… this usually takes a minute or two"
+    zh-CN: "正在扫描 %{name}%{place}…通常需要一两分钟"
+  reading_results:
+    en: "Reading the results…"
+    zh-CN: "正在读取结果…"
+  read_failed:
+    en: "Couldn't read the scan: %{error}"
+    zh-CN: "无法读取扫描结果：%{error}"
+  not_scanned:
+    en: "Not scanned: %{failures}"
+    zh-CN: "未扫描：%{failures}"
+  subtitle_period:
+    en: "Resources worth a look in %{period}, priced from the bill"
+    zh-CN: "%{period} 值得关注的资源，按账单计价"
+  subtitle:
+    en: "Resources worth a look this period, priced from the bill"
+    zh-CN: "本期值得关注的资源，按账单计价"
+  scanned:
+    en: "Scanned %{when}"
+    zh-CN: "%{when}扫描"
+  regions:
+    en: "Regions"
+    zh-CN: "地域"
+  scan_again:
+    en: "Scan again"
+    zh-CN: "重新扫描"
+  aws_in:
+    en: "%{n} AWS in %{regions}"
+    zh-CN: "AWS %{n} 个（%{regions}）"
+  all_regions_lower:
+    en: "all regions"
+    zh-CN: "全部地域"
+  resources_by_source:
+    en: "%{n} resources: %{sources}"
+    zh-CN: "%{n} 个资源：%{sources}"
+  partial:
+    en: "the scan was partial, so nothing billed is called missing"
+    zh-CN: "扫描不完整，因此不会将已计费资源判为缺失"
+  described:
+    en: "configuration read for %{n} of them"
+    zh-CN: "其中 %{n} 个读取了配置"
+  matched:
+    en: "%{pct}% of resource-level usage matched"
+    zh-CN: "资源级用量匹配率 %{pct}%"
+  one_script_rule:
+    en: "1 script rule from %{dir}"
+    zh-CN: "来自 %{dir} 的 1 条脚本规则"
+  script_rules:
+    en: "%{n} script rules from %{dir}"
+    zh-CN: "来自 %{dir} 的 %{n} 条脚本规则"
+  parts_separator:
+    en: "; "
+    zh-CN: "；"
+  one_resource:
+    en: "1 resource"
+    zh-CN: "1 个资源"
+  n_resources:
+    en: "%{n} resources"
+    zh-CN: "%{n} 个资源"
+  not_priced_one:
+    en: "resource, not priced"
+    zh-CN: "个资源，未计价"
+  not_priced:
+    en: "resources, not priced"
+    zh-CN: "个资源，未计价"
+  unclaimed_free_one:
+    en: "1 more unclaimed resource cost nothing this period"
+    zh-CN: "另有 1 个无人认领的资源本期无费用"
+  unclaimed_free:
+    en: "%{n} more unclaimed resources cost nothing this period"
+    zh-CN: "另有 %{n} 个无人认领的资源本期无费用"
+  showing:
+    en: "Showing %{shown} of %{total}"
+    zh-CN: "显示 %{shown} / %{total}"
+  show_more:
+    en: "Show %{n} more"
+    zh-CN: "再显示 %{n} 个"
+  and_more:
+    en: " and %{n} more"
+    zh-CN: " 等另外 %{n} 个"
+  need_resource_bill:
+    en: "Prices need a resource-level bill"
+    zh-CN: "计价需要资源级账单"
+  need_resource_bill_hint:
+    en: "This period's bill names services, not resources, so nothing below can be priced yet. Point the AWS account at its Data Export on the Accounts page and refresh."
+    zh-CN: "本期账单只列出服务、未列出资源，因此下面的内容暂时无法计价。请在“账户”页为 AWS 账户配置 Data Export 后刷新。"
+  nothing:
+    en: "Nothing to review this period"
+    zh-CN: "本期没有需要检查的内容"
+  nothing_hint:
+    en: "No stopped instance, idle address, unclaimed or missing resource has a charge this period."
+    zh-CN: "本期没有已停止实例、闲置地址、无人认领或缺失的资源产生费用。"
+  empty:
+    en: "Find resources to cut"
+    zh-CN: "找出可以削减的资源"
+  empty_hint:
+    en: "Insights scans your AWS and Cloudflare accounts for stopped instances, idle addresses and resources nobody owns, then prices each from your bill. CloudBridge installs and runs the scanner for you; the scan only reads."
+    zh-CN: "洞察会扫描你的 AWS 和 Cloudflare 账户，找出已停止的实例、闲置地址和无人认领的资源，并按账单为每项计价。CloudBridge 会为你安装并运行扫描器；扫描只读不写。"
+  empty_hint_unsupported:
+    en: "Insights scans your AWS and Cloudflare accounts for stopped instances, idle addresses and resources nobody owns, then prices each from your bill. Scanning needs the desktop app on macOS (Apple Silicon) or Windows."
+    zh-CN: "洞察会扫描你的 AWS 和 Cloudflare 账户，找出已停止的实例、闲置地址和无人认领的资源，并按账单为每项计价。扫描需要在 macOS（Apple 芯片）或 Windows 上使用桌面版。"
+  set_up_and_scan:
+    en: "Set up and scan"
+    zh-CN: "设置并扫描"
+  regions_to_scan:
+    en: "Regions to scan"
+    zh-CN: "扫描地域"
+  choose_regions:
+    en: "Choose regions"
+    zh-CN: "选择地域"
+  all_regions_hint:
+    en: "Every region AWS enables by default. Scanning all of them takes a few minutes."
+    zh-CN: "AWS 默认启用的所有地域。全部扫描需要几分钟。"
+  chosen_regions_hint:
+    en: "Only the regions ticked below."
+    zh-CN: "仅扫描下方勾选的地域。"
+  install_and_scan:
+    en: "Install and scan"
+    zh-CN: "安装并扫描"
+  scan:
+    en: "Scan"
+    zh-CN: "扫描"
+  install_title:
+    en: "Install the resource scanner?"
+    zh-CN: "安装资源扫描器？"
+  settings_title:
+    en: "Scan settings"
+    zh-CN: "扫描设置"
+  install_point_1:
+    en: "CloudBridge downloads corkscrew, a free open-source scanner (MIT licence, about 30 MB), and keeps it in its own data folder."
+    zh-CN: "CloudBridge 会下载免费开源扫描器 corkscrew（MIT 许可，约 30 MB），并保存在自己的数据文件夹中。"
+  install_point_2:
+    en: "Each AWS or Cloudflare account is scanned with the credential saved for it. The scan only reads: it lists resources and changes nothing."
+    zh-CN: "每个 AWS 或 Cloudflare 账户都使用为其保存的凭据进行扫描。扫描只读：仅列出资源，不做任何更改。"
+  install_point_3:
+    en: "An AWS key needs read access to resources, such as the ReadOnlyAccess policy. A Cloudflare token needs Read on Workers, R2, KV, Queues, D1 and zones, beside Billing."
+    zh-CN: "AWS 密钥需要资源的读取权限，例如 ReadOnlyAccess 策略。Cloudflare 令牌除 Billing 外，还需要 Workers、R2、KV、Queues、D1 和 zones 的读取权限。"
+  inventory_title:
+    en: "%{source} resources"
+    zh-CN: "%{source} 资源"
+  stat_stopped:
+    en: "STOPPED INSTANCES"
+    zh-CN: "已停止实例"
+  stat_idle_ip:
+    en: "IDLE ADDRESSES"
+    zh-CN: "闲置地址"
+  stat_idle_nat:
+    en: "IDLE NAT GATEWAYS"
+    zh-CN: "闲置 NAT 网关"
+  stat_unclaimed:
+    en: "UNCLAIMED"
+    zh-CN: "无人认领"
+  stat_not_in_scan:
+    en: "NOT IN THE SCAN"
+    zh-CN: "扫描中未发现"
+  stat_script:
+    en: "SCRIPT RULE"
+    zh-CN: "脚本规则"
+  title_stopped:
+    en: "Stopped instances"
+    zh-CN: "已停止的实例"
+  title_idle_ip:
+    en: "Idle public addresses"
+    zh-CN: "闲置的公网地址"
+  title_idle_nat:
+    en: "Idle NAT Gateways"
+    zh-CN: "闲置的 NAT 网关"
+  title_unclaimed:
+    en: "Unclaimed resources"
+    zh-CN: "无人认领的资源"
+  title_not_in_scan:
+    en: "Billed, but not in the scan"
+    zh-CN: "已计费但扫描中未发现"
+  title_script:
+    en: "Script rule"
+    zh-CN: "脚本规则"
+  explain_stopped:
+    en: "Stopped when scanned. Compute stops billing; attached volumes and addresses do not. Snapshot and delete what will not start again."
+    zh-CN: "扫描时处于停止状态。计算资源停止计费，但挂载的卷和地址仍会计费。对不再启动的实例，做快照后删除。"
+  explain_idle_ip:
+    en: "Public IPv4 addresses the bill charges as idle: allocated, attached to nothing. Release the ones nobody needs."
+    zh-CN: "账单中按闲置计费的公网 IPv4 地址：已分配但未绑定任何资源。释放不再需要的地址。"
+  explain_idle_nat:
+    en: "NAT Gateways billed by the hour that processed under 1 GB this period. Each costs about $32 a month before any traffic. Delete the ones no private subnet routes through."
+    zh-CN: "按小时计费、本期处理流量不足 1 GB 的 NAT 网关。每个在产生流量前每月约 32 美元。删除没有私有子网路由经过的网关。"
+  explain_unclaimed:
+    en: "No owner tag (owner, team, project, cost-center, business_line) and no stack or app that manages them. Find an owner, or remove them."
+    zh-CN: "没有归属标签（owner、team、project、cost-center、business_line），也没有管理它们的栈或应用。找到负责人，或将其删除。"
+  explain_not_in_scan:
+    en: "Charged this period in a region the scan covered, but not found by it: deleted since, or a type the scan does not list."
+    zh-CN: "本期在已扫描地域产生了费用，但扫描未发现：可能已被删除，或是扫描不列出的类型。"
+  script_failed:
+    en: "Script rule %{file} did not run: %{error}"
+    zh-CN: "脚本规则 %{file} 未能运行：%{error}"
+  col_type:
+    en: "TYPE"
+    zh-CN: "类型"
+  col_resources:
+    en: "RESOURCES"
+    zh-CN: "资源数"
+  col_this_period:
+    en: "THIS PERIOD"
+    zh-CN: "本期"
+  col_including:
+    en: "INCLUDING"
+    zh-CN: "包括"
+
+rules:
+  kind_cost_anomaly:
+    en: "Model cost growth anomaly"
+    zh-CN: "模型成本增长异常"
+  kind_balance_floor:
+    en: "Balance floor"
+    zh-CN: "余额下限"
+  kind_untagged_ratio:
+    en: "Untagged spend ratio"
+    zh-CN: "未打标签支出占比"
+  kind_budget:
+    en: "Account budget"
+    zh-CN: "账户预算"
+  based_cost:
+    en: "Cost to date"
+    zh-CN: "至今成本"
+  based_forecast:
+    en: "Month-end forecast"
+    zh-CN: "月末预测"
+  threshold_percent:
+    en: "% of budget"
+    zh-CN: "预算百分比"
+  threshold_absolute:
+    en: "Amount"
+    zh-CN: "金额"
+  fired:
+    en: "Fired %{when}"
+    zh-CN: "%{when}触发"
+  never_fired:
+    en: "Never fired"
+    zh-CN: "从未触发"
+  load_failed:
+    en: "Could not load rules: %{error}"
+    zh-CN: "无法加载规则：%{error}"
+  update_failed:
+    en: "Could not update the rule: %{error}"
+    zh-CN: "无法更新规则：%{error}"
+  bad_multiplier:
+    en: "The multiplier must be a number, e.g. 2.5"
+    zh-CN: "倍数必须是数字，例如 2.5"
+  bad_days:
+    en: "Consecutive days must be a whole number, e.g. 2"
+    zh-CN: "连续天数必须是整数，例如 2"
+  bad_floor:
+    en: "The floor must be a number, e.g. 200"
+    zh-CN: "下限必须是数字，例如 200"
+  pick_account:
+    en: "Pick the account the rule watches"
+    zh-CN: "请选择规则要监控的账户"
+  bad_threshold_80:
+    en: "The threshold must be a number, e.g. 80"
+    zh-CN: "阈值必须是数字，例如 80"
+  bad_threshold_15:
+    en: "The threshold must be a number, e.g. 15"
+    zh-CN: "阈值必须是数字，例如 15"
+  bad_budget:
+    en: "The budget must be a number above zero, e.g. 500"
+    zh-CN: "预算必须是大于零的数字，例如 500"
+  bad_alert_percent:
+    en: "The alert threshold must be a percent above zero, e.g. 80"
+    zh-CN: "告警阈值必须是大于零的百分比，例如 80"
+  budget_save_failed:
+    en: "Could not save the budget: %{error}"
+    zh-CN: "无法保存预算：%{error}"
+  budget_remove_failed:
+    en: "Could not remove the budget: %{error}"
+    zh-CN: "无法移除预算：%{error}"
+  delete_failed:
+    en: "Could not delete the rule: %{error}"
+    zh-CN: "无法删除规则：%{error}"
+  monthly_budget:
+    en: "Monthly budget"
+    zh-CN: "每月预算"
+  alert_at:
+    en: "Alert at (% of budget)"
+    zh-CN: "告警阈值（预算百分比）"
+  save_budget:
+    en: "Save budget"
+    zh-CN: "保存预算"
+  remove:
+    en: "Remove"
+    zh-CN: "移除"
+  monthly_budgets:
+    en: "Monthly budgets"
+    zh-CN: "每月预算"
+  budgets_hint:
+    en: "What an account may cost in a month. Budget rules measure the month-to-date cost or the month-end projection against it."
+    zh-CN: "账户每月可花费的金额。预算规则会将本月至今成本或月末预测与之比较。"
+  budget_needs_account:
+    en: "A budget belongs to an account."
+    zh-CN: "预算需要归属于某个账户。"
+  budget_line:
+    en: "%{account} — %{used} of %{budget} used (%{pct}%)"
+    zh-CN: "%{account} — 已用 %{used} / %{budget}（%{pct}%）"
+  multiplier:
+    en: "Multiplier (× 7-day baseline)"
+    zh-CN: "倍数（× 7 日基线）"
+  consecutive_days:
+    en: "Consecutive days"
+    zh-CN: "连续天数"
+  floor:
+    en: "Floor (account's currency)"
+    zh-CN: "下限（账户货币）"
+  account:
+    en: "Account"
+    zh-CN: "账户"
+  no_accounts:
+    en: "No accounts yet — add one first."
+    zh-CN: "还没有账户——请先添加一个。"
+  based_on:
+    en: "Based on"
+    zh-CN: "依据"
+  threshold_type:
+    en: "Threshold type"
+    zh-CN: "阈值类型"
+  amount_reporting:
+    en: "Amount (reporting currency)"
+    zh-CN: "金额（报表货币）"
+  percent_of_budget:
+    en: "Percent of budget (%)"
+    zh-CN: "预算百分比（%）"
+  threshold_pct:
+    en: "Threshold (%)"
+    zh-CN: "阈值（%）"
+  new_rule_title:
+    en: "New rule"
+    zh-CN: "新建规则"
+  kind:
+    en: "Kind"
+    zh-CN: "类型"
+  enabled_on_creation:
+    en: "The rule is enabled on creation."
+    zh-CN: "规则创建后即启用。"
+  create_rule:
+    en: "Create rule"
+    zh-CN: "创建规则"
+  quoted:
+    en: "“%{name}”"
+    zh-CN: "“%{name}”"
+  this_rule:
+    en: "this rule"
+    zh-CN: "此规则"
+  delete_title:
+    en: "Delete %{name}?"
+    zh-CN: "删除%{name}？"
+  delete_body:
+    en: "Its past alerts stay; the rule stops running."
+    zh-CN: "已有的告警会保留；规则将停止运行。"
+  new_rule:
+    en: "New rule…"
+    zh-CN: "新建规则…"
+  empty:
+    en: "No rules yet. Create one with New rule in the top right."
+    zh-CN: "还没有规则。点击右上角的“新建规则”创建一个。"
+
+query:
+  running:
+    en: "Running…"
+    zh-CN: "正在运行…"
+  truncated:
+    en: "Showing first %{rows} rows — result truncated, %{ms} ms"
+    zh-CN: "仅显示前 %{rows} 行——结果已截断，用时 %{ms} 毫秒"
+  rows:
+    en: "%{rows} rows in %{ms} ms"
+    zh-CN: "%{rows} 行，用时 %{ms} 毫秒"
+  empty:
+    en: "Run a query or pick a template"
+    zh-CN: "运行查询或选择一个模板"
+  subtitle:
+    en: "Read-only SQL against the local ledger"
+    zh-CN: "对本地账本执行只读 SQL"
+  run:
+    en: "Run"
+    zh-CN: "运行"
+
+health:
+  none:
+    en: "No data-quality issues this billing period"
+    zh-CN: "本账期没有数据质量问题"
+  one:
+    en: "1 finding this billing period"
+    zh-CN: "本账期发现 1 个问题"
+  many:
+    en: "%{n} findings this billing period"
+    zh-CN: "本账期发现 %{n} 个问题"
+  collapse:
+    en: "Collapse"
+    zh-CN: "收起"
+  review:
+    en: "Review %{n} findings"
+    zh-CN: "查看 %{n} 个问题"
+  show_all:
+    en: "Show all %{n}"
+    zh-CN: "显示全部 %{n} 个"
+  dismiss_all:
+    en: "Dismiss all"
+    zh-CN: "全部忽略"
+  title:
+    en: "Data health"
+    zh-CN: "数据健康"
+
+insight_rules:
+  read_failed:
+    en: "Couldn't read the rules folder: %{error}"
+    zh-CN: "无法读取规则文件夹：%{error}"
+  fetch_failed:
+    en: "%{error}. Check your connection and try again."
+    zh-CN: "%{error}。请检查网络连接后重试。"
+  install_failed:
+    en: "Couldn't install %{id}: %{error}"
+    zh-CN: "无法安装 %{id}：%{error}"
+  remove_failed:
+    en: "Couldn't remove %{id}: %{error}"
+    zh-CN: "无法移除 %{id}：%{error}"
+  open_failed:
+    en: "Couldn't open the rules folder: %{error}"
+    zh-CN: "无法打开规则文件夹：%{error}"
+  delete_title:
+    en: "Delete “%{id}.js”?"
+    zh-CN: "删除“%{id}.js”？"
+  delete_body:
+    en: "It is not from the catalog, so it can't be installed again from here."
+    zh-CN: "它不是来自规则目录，因此无法在此重新安装。"
+  replace_title:
+    en: "Replace your edited “%{id}.js”?"
+    zh-CN: "替换你修改过的“%{id}.js”？"
+  replace_body:
+    en: "Version %{version} from the catalog overwrites your changes."
+    zh-CN: "规则目录中的 %{version} 版本会覆盖你的修改。"
+  replace:
+    en: "Replace"
+    zh-CN: "替换"
+  replace_ellipsis:
+    en: "Replace…"
+    zh-CN: "替换…"
+  delete_ellipsis:
+    en: "Delete…"
+    zh-CN: "删除…"
+  install:
+    en: "Install"
+    zh-CN: "安装"
+  update:
+    en: "Update"
+    zh-CN: "更新"
+  for_providers:
+    en: ", for %{providers}"
+    zh-CN: "，适用于 %{providers}"
+  version_by:
+    en: "Version %{version} by %{author}%{providers}"
+    zh-CN: "版本 %{version}，作者 %{author}%{providers}"
+  installed:
+    en: "Installed"
+    zh-CN: "已安装"
+  update_available:
+    en: "Update available, %{installed} installed"
+    zh-CN: "有可用更新，已安装 %{installed}"
+  edited:
+    en: "Edited locally"
+    zh-CN: "已在本地修改"
+  name_clash:
+    en: "Your own file has this name"
+    zh-CN: "你自己的文件使用了这个名称"
+  yours:
+    en: "Your rule"
+    zh-CN: "你的规则"
+  withdrawn:
+    en: "No longer in the catalog"
+    zh-CN: "已不在规则目录中"
+  needs_newer:
+    en: "Needs a newer CloudBridge"
+    zh-CN: "需要更新版本的 CloudBridge"
+  check_updates:
+    en: "Check for updates"
+    zh-CN: "检查更新"
+  browse:
+    en: "Browse catalog"
+    zh-CN: "浏览规则目录"
+  open_folder:
+    en: "Open folder"
+    zh-CN: "打开文件夹"
+  empty_browsed:
+    en: "The catalog has no rules yet, and the folder is empty."
+    zh-CN: "规则目录中还没有规则，文件夹也是空的。"
+  empty:
+    en: "No rules installed. Browse the catalog, or put a .js rule in the folder."
+    zh-CN: "尚未安装规则。浏览规则目录，或将 .js 规则放入文件夹。"
+  contribute:
+    en: "Write and share a rule"
+    zh-CN: "编写并分享规则"
+
+panel:
+  to_date:
+    en: "%{month} to date, in %{currency}"
+    zh-CN: "%{month}至今，以 %{currency} 计"
+  month_format:
+    en: "%B"
+    zh-CN: "%-m月"
+  forecast:
+    en: "Forecast %{amount} by month end"
+    zh-CN: "预计月末 %{amount}"
+  vs_last_month:
+    en: "%{pct} vs last month"
+    zh-CN: "较上月 %{pct}"
+  no_alerts:
+    en: "No open alerts"
+    zh-CN: "没有未处理的告警"
+  one_alert:
+    en: "1 open alert"
+    zh-CN: "1 个未处理告警"
+  n_alerts:
+    en: "%{n} open alerts"
+    zh-CN: "%{n} 个未处理告警"
+  and_more:
+    en: "and %{n} more"
+    zh-CN: "还有 %{n} 个"
+  movers:
+    en: "Biggest movers this month"
+    zh-CN: "本月变动最大"
+  nothing_billed:
+    en: "Nothing billed yet this month."
+    zh-CN: "本月尚无计费。"
+  new:
+    en: "new"
+    zh-CN: "新增"
+  one_failed:
+    en: "1 account failed to refresh"
+    zh-CN: "1 个账户刷新失败"
+  n_failed:
+    en: "%{n} accounts failed to refresh"
+    zh-CN: "%{n} 个账户刷新失败"
+  not_synced:
+    en: "Not synced yet"
+    zh-CN: "尚未同步"
+  quit:
+    en: "Quit"
+    zh-CN: "退出"
+  refresh_tooltip:
+    en: "Fetch accounts that are due"
+    zh-CN: "获取已到期的账户"
+  open:
+    en: "Open CloudBridge"
+    zh-CN: "打开 CloudBridge"
+  reading:
+    en: "Reading the ledger…"
+    zh-CN: "正在读取账本…"
+  add_account:
+    en: "Add an account"
+    zh-CN: "添加账户"
+  no_accounts_hint:
+    en: "Add a cloud account and CloudBridge watches its spend from here, window open or not."
+    zh-CN: "添加云账户后，无论窗口是否打开，CloudBridge 都会在这里监控其支出。"
+
+chart:
+  n_more:
+    en: "%{n} more"
+    zh-CN: "其余 %{n} 项"
+  new_this_period:
+    en: "New this period"
+    zh-CN: "本期新增"
+
+notify:
+  critical:
+    en: "CloudBridge — critical alert"
+    zh-CN: "CloudBridge — 严重告警"
+  warning:
+    en: "CloudBridge alert"
+    zh-CN: "CloudBridge 告警"
+  refresh_failed:
+    en: "CloudBridge could not refresh %{account}"
+    zh-CN: "CloudBridge 无法刷新 %{account}"
+
+tray:
+  tooltip:
+    en: "CloudBridge — %{amount} this month"
+    zh-CN: "CloudBridge — 本月 %{amount}"
+  tooltip_one_alert:
+    en: "CloudBridge — %{amount} this month, 1 open alert"
+    zh-CN: "CloudBridge — 本月 %{amount}，1 个未处理告警"
+  tooltip_alerts:
+    en: "CloudBridge — %{amount} this month, %{n} open alerts"
+    zh-CN: "CloudBridge — 本月 %{amount}，%{n} 个未处理告警"
+  quit:
+    en: "Quit CloudBridge"
+    zh-CN: "退出 CloudBridge"
+
+alert_msg:
+  anomaly_title:
+    en: "Cost growing far above baseline: %{provider} %{service}"
+    zh-CN: "成本远超基线：%{provider} %{service}"
+  anomaly_body:
+    en: "%{provider} %{service} ran %{amount} on %{day} against a 7-day baseline of %{baseline} (%{ratio}×). The streak has held for %{streak} consecutive days, first breach %{first}. At this rate the month ends near %{month_end}."
+    zh-CN: "%{provider} %{service} 在 %{day} 花费 %{amount}，7 日基线为 %{baseline}（%{ratio}×）。已连续 %{streak} 天超标，首次超标于 %{first}。按此速度，本月将以约 %{month_end} 收尾。"
+  f_provider:
+    en: "Provider"
+    zh-CN: "服务商"
+  f_service:
+    en: "Service"
+    zh-CN: "服务"
+  f_24h_cost:
+    en: "24h cost"
+    zh-CN: "24 小时成本"
+  f_baseline:
+    en: "7-day baseline"
+    zh-CN: "7 日基线"
+  f_first_breach:
+    en: "First breach"
+    zh-CN: "首次超标"
+  f_month_end_held:
+    en: "Month-end if held"
+    zh-CN: "保持此速度的月末金额"
+  billed_on:
+    en: "Billed on %{day}"
+    zh-CN: "%{day} 计费"
+  balance_projection:
+    en: " At the last %{days} days of burn (%{burn}/day) the account runs dry in roughly %{left}."
+    zh-CN: "按最近 %{days} 天的消耗（每天 %{burn}），账户大约 %{left}后耗尽。"
+  balance_title:
+    en: "%{source} balance below floor"
+    zh-CN: "%{source} 余额低于下限"
+  balance_body:
+    en: "Balance is %{balance} against a %{floor} floor.%{projection}"
+    zh-CN: "余额为 %{balance}，下限为 %{floor}。%{projection}"
+  f_account:
+    en: "Account"
+    zh-CN: "账户"
+  f_balance:
+    en: "Balance"
+    zh-CN: "余额"
+  f_floor:
+    en: "Floor"
+    zh-CN: "下限"
+  runs_dry_in:
+    en: "Runs dry in"
+    zh-CN: "预计耗尽"
+  untagged_title:
+    en: "Untagged spend share is growing"
+    zh-CN: "未打标签支出占比正在上升"
+  untagged_body:
+    en: "%{share}% of %{period} spend reaches no business line (%{amount}) — up from %{previous}% last month. New workloads are landing outside every allocation rule."
+    zh-CN: "%{period} 有 %{share}% 的支出未归入任何业务线（%{amount}），上月为 %{previous}%。新的工作负载正落在所有分配规则之外。"
+  f_unallocated:
+    en: "Unallocated"
+    zh-CN: "未分配"
+  f_share_this:
+    en: "Share this month"
+    zh-CN: "本月占比"
+  f_share_last:
+    en: "Share last month"
+    zh-CN: "上月占比"
+  f_tag:
+    en: "Tag"
+    zh-CN: "标签"
+  based_forecast:
+    en: "month-end projection"
+    zh-CN: "月末预测"
+  based_cost:
+    en: "month-to-date cost"
+    zh-CN: "本月至今成本"
+  budget_title:
+    en: "%{account} over budget threshold"
+    zh-CN: "%{account} 超过预算阈值"
+  budget_body:
+    en: "The %{based} of %{value} crossed the %{threshold} threshold (%{pct}% of the %{budget} monthly budget). Month to date stands at %{mtd} and the run-rate projection lands near %{forecast}."
+    zh-CN: "%{based} %{value} 已超过 %{threshold} 的阈值（每月预算 %{budget} 的 %{pct}%）。本月至今为 %{mtd}，按当前速度预计月末约 %{forecast}。"
+  f_mtd:
+    en: "Month-to-date"
+    zh-CN: "本月至今"
+  f_forecast:
+    en: "Month-end forecast"
+    zh-CN: "月末预测"
+  f_budget:
+    en: "Monthly budget"
+    zh-CN: "每月预算"
+  f_threshold:
+    en: "Threshold"
+    zh-CN: "阈值"
+  of_budget:
+    en: "Of monthly budget"
+    zh-CN: "占每月预算"
+  less_than_a_day:
+    en: "less than a day"
+    zh-CN: "不到一天"
+  one_day:
+    en: "1 day"
+    zh-CN: "1 天"
+  n_days:
+    en: "%{n} days"
+    zh-CN: "%{n} 天"
+
+rule_view:
+  anomaly_desc:
+    en: "Fires when a service's daily cost exceeds its trailing 7-day baseline by more than the threshold, for consecutive days."
+    zh-CN: "当某服务的每日成本连续数天超过其 7 日滚动基线的阈值倍数时触发。"
+  consecutive_days:
+    en: "%{n} consecutive days"
+    zh-CN: "连续 %{n} 天"
+  desktop_and_centre:
+    en: "Desktop + alert centre"
+    zh-CN: "桌面通知 + 告警中心"
+  balance_desc:
+    en: "Watches balance-reporting sources against a per-account floor (the account's budget, or the default) and projects days remaining from the last 7 days of burn."
+    zh-CN: "按账户下限（账户预算或默认值）监控报告余额的数据源，并根据最近 7 天的消耗推算剩余天数。"
+  every_refresh:
+    en: "Every refresh"
+    zh-CN: "每次刷新"
+  desktop:
+    en: "Desktop"
+    zh-CN: "桌面通知"
+  budget_desc:
+    en: "Fires when an account's month-to-date cost — or its run-rate month-end projection — crosses a threshold of the account's monthly budget."
+    zh-CN: "当账户的本月至今成本（或按当前速度推算的月末预测）超过其每月预算的阈值时触发。"
+  daily:
+    en: "Daily"
+    zh-CN: "每日"
+  centre_only:
+    en: "Alert centre only"
+    zh-CN: "仅告警中心"
+  untagged_desc:
+    en: "Raises a warning when the share of spend that reaches no business line grows month over month, so attribution rules keep pace with new workloads."
+    zh-CN: "当未归入任何业务线的支出占比环比上升时发出警告，让归属规则跟上新的工作负载。"
+  all_sources:
+    en: "All sources"
+    zh-CN: "全部数据源"
+  prepaid:
+    en: "Prepaid accounts"
+    zh-CN: "预付费账户"
+  pct_of_budget:
+    en: "%{based} ≥ %{pct}% of budget"
+    zh-CN: "%{based} ≥ 预算的 %{pct}%"
+
+query_tpl:
+  cat_spend:
+    en: "Spend overview"
+    zh-CN: "支出概览"
+  cat_forecast:
+    en: "Forecast & trends"
+    zh-CN: "预测与趋势"
+  cat_composition:
+    en: "Composition"
+    zh-CN: "构成"
+  cat_health:
+    en: "Data health"
+    zh-CN: "数据健康"
+  t_monthly:
+    en: "Monthly spend"
+    zh-CN: "每月支出"
+  t_provider_month:
+    en: "Spend by provider × month"
+    zh-CN: "按服务商 × 月份的支出"
+  t_daily_30:
+    en: "Daily spend, last 30 days"
+    zh-CN: "最近 30 天每日支出"
+  t_top_services:
+    en: "Top 20 services this month"
+    zh-CN: "本月支出前 20 的服务"
+  t_business_line:
+    en: "Spend by business line"
+    zh-CN: "按业务线的支出"
+  t_unallocated:
+    en: "Unallocated spend by service"
+    zh-CN: "按服务的未分配支出"
+  t_forecast:
+    en: "Month-end forecast"
+    zh-CN: "月末预测"
+  t_mom:
+    en: "Month over month by service"
+    zh-CN: "按服务的环比"
+  t_region:
+    en: "Spend by region this month"
+    zh-CN: "本月按地域的支出"
+  t_category:
+    en: "Spend by service category this month"
+    zh-CN: "本月按服务类别的支出"
+  t_top_resources:
+    en: "Top 20 resources this month"
+    zh-CN: "本月支出前 20 的资源"
+  t_discount:
+    en: "Discount vs list price"
+    zh-CN: "折扣与标价对比"
+  t_ingest:
+    en: "Recent ingest batches"
+    zh-CN: "最近的导入批次"
+  t_balances:
+    en: "Latest balance snapshots"
+    zh-CN: "最新余额快照"
+  d_monthly:
+    en: "Total billed spend per billing month, in reporting currency."
+    zh-CN: "每个账期的计费支出总额，以报表货币计。"
+  d_provider_month:
+    en: "How each month's spend splits across providers, in reporting currency."
+    zh-CN: "每月支出在各服务商之间的分布，以报表货币计。"
+  d_daily_30:
+    en: "Day-by-day spend over the last 30 days, in reporting currency."
+    zh-CN: "最近 30 天的每日支出，以报表货币计。"
+  d_top_services:
+    en: "Which services cost the most this billing month, in reporting currency."
+    zh-CN: "本账期花费最多的服务，以报表货币计。"
+  d_business_line:
+    en: "How spend splits across business lines, in reporting currency; charges without the business_line tag count as Unallocated."
+    zh-CN: "支出在各业务线之间的分布，以报表货币计；没有 business_line 标签的费用计为未分配。"
+  d_unallocated:
+    en: "Which services carry no business_line tag, and what they cost, in reporting currency."
+    zh-CN: "哪些服务没有 business_line 标签，以及它们的花费，以报表货币计。"
+  d_forecast:
+    en: "This month's spend to date, the daily run rate since the first charge, and the projected month-end total, in reporting currency."
+    zh-CN: "本月至今支出、自首笔费用以来的日均速率，以及预计的月末总额，以报表货币计。"
+  d_mom:
+    en: "This month vs last month per service, in reporting currency, biggest movers first."
+    zh-CN: "各服务本月与上月对比，以报表货币计，变动最大的排在前面。"
+  d_region:
+    en: "How this billing month's spend splits across regions, in reporting currency; charges with no region count as Other."
+    zh-CN: "本账期支出在各地域之间的分布，以报表货币计；没有地域的费用计为其他。"
+  d_category:
+    en: "How this billing month's spend splits across FOCUS service categories — the same categories on every cloud — in reporting currency; charges no mapping places count as Uncategorized."
+    zh-CN: "本账期支出在各 FOCUS 服务类别（所有云统一的类别）之间的分布，以报表货币计；未能映射的费用计为未分类。"
+  d_top_resources:
+    en: "The individual resources costing the most this billing month, in reporting currency."
+    zh-CN: "本账期花费最多的单个资源，以报表货币计。"
+  d_discount:
+    en: "List-price spend vs actually billed spend per service this month, in reporting currency — how much discounts and credits shave off."
+    zh-CN: "本月各服务的标价支出与实际计费支出对比，以报表货币计——看折扣和抵扣省下了多少。"
+  d_ingest:
+    en: "The 20 most recent ingest runs, with their channel, status, and row count."
+    zh-CN: "最近 20 次导入运行，含渠道、状态和行数。"
+  d_balances:
+    en: "Each account's most recently observed balance, one row per currency at that instant."
+    zh-CN: "每个账户最近一次观测到的余额，该时刻每种货币一行。"
+
+evidence:
+  stopped:
+    en: "Stopped when scanned; storage and addresses it holds still bill"
+    zh-CN: "扫描时处于停止状态；其占用的存储和地址仍在计费"
+  stopped_one_volume:
+    en: "Stopped when scanned; its 1 attached volume still bills"
+    zh-CN: "扫描时处于停止状态；其挂载的 1 个卷仍在计费"
+  stopped_volumes:
+    en: "Stopped when scanned; its %{n} attached volumes still bill"
+    zh-CN: "扫描时处于停止状态；其挂载的 %{n} 个卷仍在计费"
+  created_ago:
+    en: ". Created %{age} ago"
+    zh-CN: "。创建于 %{age}前"
+  unclaimed:
+    en: "No owner tag, and no stack or app that manages it"
+    zh-CN: "没有归属标签，也没有管理它的栈或应用"
+  idle_ip:
+    en: "Billed as an idle public IPv4 address: allocated, attached to nothing"
+    zh-CN: "按闲置公网 IPv4 地址计费：已分配但未绑定任何资源"
+  idle_nat:
+    en: "Billed for %{hours} NAT Gateway hours while it processed %{processed}"
+    zh-CN: "计费 %{hours} 个 NAT 网关小时，期间处理了 %{processed}"
+  not_in_scan:
+    en: "Billed this period, but not in the scan of %{date}"
+    zh-CN: "本期有计费，但不在 %{date} 的扫描结果中"
+  no_data:
+    en: "no data"
+    zh-CN: "零数据"
+  under_001_gb:
+    en: "under 0.01 GB"
+    zh-CN: "不到 0.01 GB"
+  one_day:
+    en: "1 day"
+    zh-CN: "1 天"
+  n_days:
+    en: "%{n} days"
+    zh-CN: "%{n} 天"
+  one_month:
+    en: "1 month"
+    zh-CN: "1 个月"
+  n_months:
+    en: "%{n} months"
+    zh-CN: "%{n} 个月"
+  one_year:
+    en: "1 year"
+    zh-CN: "1 年"
+  n_years:
+    en: "%{n} years"
+    zh-CN: "%{n} 年"
+
+token_finding:
+  low_cache:
+    en: "Low cache utilization"
+    zh-CN: "缓存利用率低"
+  low_cache_detail:
+    en: "%{name}: cache reads are %{pct}% of the input side (%{read} read from cache of %{input} input-side tokens)"
+    zh-CN: "%{name}：缓存读取占输入侧的 %{pct}%（%{input} 个输入侧 token 中有 %{read} 个来自缓存）"
+  unit_price:
+    en: "Unit price rising"
+    zh-CN: "单价上涨"
+  unit_price_detail:
+    en: "%{name}: blended unit cost rose from $%{from} to $%{to} per 1M tokens while spend went %{prev} to %{now}"
+    zh-CN: "%{name}：每 1M token 的综合单价从 $%{from} 涨到 $%{to}，同期支出从 %{prev} 变为 %{now}"
+  cost_only:
+    en: "Cost only — no token metering"
+    zh-CN: "仅有成本——无 token 计量"
+  cost_only_detail:
+    en: "%{name} has %{cost} of spend but no token-metered rows, so unit economics cannot be computed for it"
+    zh-CN: "%{name} 有 %{cost} 的支出，但没有按 token 计量的记录，因此无法计算其单位经济性"
+  concentration:
+    en: "Spend concentration"
+    zh-CN: "支出集中"
+  concentration_detail:
+    en: "%{name} is %{pct}% of model spend (%{cost} of %{total})"
+    zh-CN: "%{name} 占模型支出的 %{pct}%（%{total} 中的 %{cost}）"
+
+quality:
+  unconverted:
+    en: "%{n} charges (%{pct}% of the period's rows) have no FX rate and are missing from every converted total"
+    zh-CN: "%{n} 条费用（占本期记录的 %{pct}%）没有汇率，未计入任何换算后的合计"
+  untagged:
+    en: "%{pct}% of the period's usage carries no '%{tag}' tag"
+    zh-CN: "本期 %{pct}% 的用量没有“%{tag}”标签"
+  no_region:
+    en: "%{service} usage has no region (%{pct}% of the period's usage)"
+    zh-CN: "%{service} 的用量没有地域（占本期用量的 %{pct}%）"
+  unreconciled:
+    en: "%{n} 'Unreconciled' adjustment rows: bill lines whose named deductions did not add up"
+    zh-CN: "%{n} 条“Unreconciled”调整记录：账单行中列明的扣减项对不上"
+  uncategorized:
+    en: "%{pct}% of the period's usage is from products with no service category yet: %{products}"
+    zh-CN: "本期 %{pct}% 的用量来自尚无服务类别的产品：%{products}"
