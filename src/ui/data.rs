@@ -2357,6 +2357,10 @@ pub struct ModelsData {
 pub fn load_models(range: Range) -> ModelsData {
     let now = Utc::now();
     let ((since, until), (prior_since, prior_until)) = range.windows(now);
+    let prior_until = match range {
+        Range::Mtd => analytics::same_days_end(prior_since, prior_until, now),
+        _ => prior_until,
+    };
 
     let mut models = query::model_token_summary(since, until, prior_since, prior_until)
         .unwrap_or_else(|e| {

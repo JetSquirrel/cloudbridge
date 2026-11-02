@@ -1363,17 +1363,47 @@ pub fn data_quality_issues(billing_period: &str, tag_key: &str) -> Result<Vec<Da
     with_connection_ref(|conn| data_quality_issues_of(conn, billing_period, tag_key))
 }
 
+/// The same findings over one account's charges alone, with shares of that
+/// account's usage.
+pub fn account_data_quality_issues(
+    billing_period: &str,
+    tag_key: &str,
+    account_id: &str,
+) -> Result<Vec<DataQualityIssue>> {
+    with_connection_ref(|conn| {
+        data_quality_issues_in(conn, billing_period, tag_key, Some(account_id))
+    })
+}
+
 fn data_quality_issues_of(
     conn: &Connection,
     billing_period: &str,
     tag_key: &str,
 ) -> Result<Vec<DataQualityIssue>> {
+    data_quality_issues_in(conn, billing_period, tag_key, None)
+}
+
+fn data_quality_issues_in(
+    conn: &Connection,
+    billing_period: &str,
+    tag_key: &str,
+    account_id: Option<&str>,
+) -> Result<Vec<DataQualityIssue>> {
+    // Every check below reads this, so each one narrows together.
+    let source = match account_id {
+        Some(account) => format!(
+            "(SELECT * FROM {NORMALIZED_VIEW} WHERE account_id = '{}')",
+            account.replace('\'', "''")
+        ),
+        None => NORMALIZED_VIEW.to_string(),
+    };
+
     // Charges no rate covers, against the period's row count.
     let (rows, unconverted): (i64, i64) = conn.query_row(
         &format!(
             "SELECT count(*),
                     count(*) FILTER (WHERE billed_cost IS NOT NULL AND billed_cost_base IS NULL)
-             FROM {NORMALIZED_VIEW}
+             FROM {source}
              WHERE billing_period = ?"
         ),
         params![billing_period],
@@ -1385,6 +1415,7 @@ fn data_quality_issues_of(
         conn,
         &Scope {
             billing_period: Some(billing_period),
+            account_id,
             ..Default::default()
         },
     )?;
@@ -1393,7 +1424,7 @@ fn data_quality_issues_of(
     let (untagged, untagged_count): (Option<f64>, i64) = conn.query_row(
         &format!(
             "SELECT sum(billed_cost_base), count(*)
-             FROM {NORMALIZED_VIEW}
+             FROM {source}
              WHERE billing_period = ?
                AND charge_category = 'Usage'
                AND coalesce(nullif(json_extract_string(tags, ?), ''), '') = ''"
@@ -1406,7 +1437,7 @@ fn data_quality_issues_of(
     let mut stmt = conn.prepare(&format!(
         "SELECT coalesce(service_name, 'Other') AS service,
                 sum(billed_cost_base) AS amount, count(*) AS charges
-         FROM {NORMALIZED_VIEW}
+         FROM {source}
          WHERE billing_period = ?
            AND charge_category = 'Usage'
            AND region_id IS NULL
@@ -1428,7 +1459,7 @@ fn data_quality_issues_of(
     let mut stmt = conn.prepare(&format!(
         "SELECT provider || ' ' || coalesce(x_service_code, service_name, 'Other') AS product,
                 sum(billed_cost_base) AS amount, count(*) AS charges
-         FROM {NORMALIZED_VIEW}
+         FROM {source}
          WHERE billing_period = ?
            AND charge_category = 'Usage'
            AND service_category IS NULL
@@ -1451,7 +1482,7 @@ fn data_quality_issues_of(
     let unreconciled: (i64, Option<f64>) = conn.query_row(
         &format!(
             "SELECT count(*), sum(billed_cost_base)
-             FROM {NORMALIZED_VIEW}
+             FROM {source}
              WHERE billing_period = ?
                AND charge_category = 'Adjustment'
                AND charge_description = ?"
@@ -4444,6 +4475,42 @@ mod tests {
             "{}",
             issues[0].message
         );
+    }
+
+    #[test]
+    fn account_findings_read_only_that_accounts_charges() {
+        let mut conn = conn("USD");
+        let aws_key = aws();
+        let other = PeriodKey {
+            account_id: "other-account".to_string(),
+            ..aws()
+        };
+        write(
+            &mut conn,
+            &aws_key,
+            &[charge("Regionless here", 100.0, "USD", 1)],
+        );
+        write(
+            &mut conn,
+            &other,
+            &[charge("Regionless there", 300.0, "USD", 1)],
+        );
+
+        let region_issues = |account: Option<&str>| -> Vec<DataQualityIssue> {
+            data_quality_issues_in(&conn, "2026-08", "business_line", account)
+                .unwrap()
+                .into_iter()
+                .filter(|issue| issue.kind == DataQualityKind::MissingRegion)
+                .collect()
+        };
+
+        assert_eq!(region_issues(None).len(), 2);
+        let mine = region_issues(Some(&aws_key.account_id));
+        assert_eq!(mine.len(), 1);
+        assert_eq!(mine[0].affected_amount, Some(100.0));
+        assert!(mine[0].message.contains("Regionless here"));
+        // A share of this account's usage, not of everyone's.
+        assert!(mine[0].message.contains("100.0%"), "{}", mine[0].message);
     }
 
     #[test]

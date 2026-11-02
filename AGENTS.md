@@ -193,7 +193,9 @@ This is the mechanism gpui-kit's components use, set up as
   cached elsewhere — the tray menu is built once — keeps the old language
   until it is rebuilt.
 - **Stored text keeps the language it was written in.** Alert titles,
-  bodies and field labels are written when the alert fires.
+  bodies and field labels are written when the alert fires. A low-balance
+  alert is the exception: it is rewritten with the latest figures while it
+  stays open, in the language of the moment.
 - Amounts, dates and relative times go through `ui::fmt`; a date format
   string is itself a key (`time.short_date`, `range.month_format`).
 - The system-info text copied for a bug report stays English on purpose.
