@@ -297,6 +297,7 @@ pub fn get_budget_status(account_id: &str) -> Result<Option<BudgetStatus>> {
         account_id: account_id.to_string(),
         account_name: account.name.clone(),
         monthly_budget: budget.monthly_budget,
+        alert_threshold: budget.alert_threshold,
         current_cost,
         currency: budget.currency,
         percentage_used,

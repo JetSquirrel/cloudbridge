@@ -426,27 +426,33 @@ impl RulesView {
     // ==================== Budget editor ====================
 
     /// Select the account the budget editor edits, prefilling the fields
-    /// from its current budget when one exists. (The status carries no
-    /// alert threshold, so the percent field falls back to the default.)
+    /// from its current budget when one exists. Only an account with no
+    /// budget gets the default threshold; saving an edited amount must not
+    /// quietly reset the one it has.
     fn select_budget_account(
         &mut self,
         account_id: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let amount = self
+        let existing = self
             .budgets
             .iter()
-            .find(|status| status.account_id == account_id)
+            .find(|status| status.account_id == account_id);
+        let amount = existing
             .map(|status| format!("{}", status.monthly_budget))
             .unwrap_or_default();
+        let threshold = existing.map_or_else(
+            || "80".to_string(),
+            |status| format!("{}", status.alert_threshold),
+        );
         self.budget_account = Some(account_id);
         self.budget_error = None;
         self.budget_amount_input.update(cx, |state, cx| {
             state.set_value(amount, window, cx);
         });
         self.budget_threshold_input.update(cx, |state, cx| {
-            state.set_value("80", window, cx);
+            state.set_value(threshold, window, cx);
         });
         cx.notify();
     }
@@ -652,6 +658,7 @@ impl RulesView {
                     .gap_2()
                     .child(
                         Switch::new(switch_id)
+                            .accessibility_label(rule.name.clone())
                             .checked(rule.enabled)
                             .on_click(cx.listener(move |this, checked: &bool, _, cx| {
                                 this.set_enabled(rule_id.clone(), *checked, cx);
@@ -953,6 +960,26 @@ impl RulesView {
                         .v_flex()
                         .gap_4()
                         .child(account_picker)
+                        .when_some(self.rule_account.as_deref(), |el, account| {
+                            let budget = self
+                                .budgets
+                                .iter()
+                                .find(|status| status.account_id == account);
+                            el.child(match budget {
+                                Some(status) => theme::caption(
+                                    cx,
+                                    tr!(
+                                        "rules.rule_budget_is",
+                                        budget =
+                                            fmt::amount(status.monthly_budget, &status.currency)
+                                    ),
+                                ),
+                                None => div()
+                                    .text_sm()
+                                    .text_color(theme::warning_text(cx))
+                                    .child(tr!("rules.rule_needs_budget")),
+                            })
+                        })
                         .child(
                             div()
                                 .h_flex()
@@ -1108,11 +1135,7 @@ impl Render for RulesView {
                     .v_flex()
                     .gap_1()
                     .child(theme::page_title(cx, tr!("nav.rules")))
-                    .child(theme::caption(
-                        cx,
-                        "Every rule runs on the local ledger after each ingest. \
-                         Nothing leaves the machine.",
-                    )),
+                    .child(theme::caption(cx, tr!("rules.subtitle"))),
             )
             .child(
                 Button::new("new-rule")

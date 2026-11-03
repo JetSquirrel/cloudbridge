@@ -930,6 +930,23 @@ pub fn tag_usage_breakdown_by_service(
 // ==================== Untagged usage ====================
 
 /// Untagged usage of a period summed per provider, largest first.
+/// Untagged usage of a period per account, for a share of that account's own
+/// spend.
+pub fn untagged_totals_by_account(
+    billing_period: &str,
+    tag_key: &str,
+) -> Result<Vec<(String, f64)>> {
+    read(|all| {
+        let rows: Vec<&NormalizedRow> = all
+            .iter()
+            .filter(|row| row.billing_period == billing_period && untagged(row, tag_key))
+            .filter(|row| row.billed_cost_base.is_some_and(|amount| amount > 0.0))
+            .collect();
+
+        totals_by_bucket(&rows, |row| row.account_id.clone())
+    })
+}
+
 pub fn untagged_totals_by_provider(
     billing_period: &str,
     tag_key: &str,
