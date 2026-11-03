@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `assets/icon.svg` is the source, and `scripts/generate-icon.py` writes the
   PNG, ICNS and ICO from it.
 ### Added
+- **Security configuration on Insights.** A new read-only section flags AWS
+  security groups that open SSH or RDP to the whole internet, with the rule it
+  saw and what to check by hand. A group whose inbound rules could not be read
+  shows as Not evaluated, and a partial scan says so. Cost findings are
+  unchanged, and security findings are never summed with them.
 - **Monthly cost review.** Export report on Overview saves a chosen month as
   one self-contained HTML file, ready to print or share: totals and the change
   from last month, top services and regions, business lines, data health, top

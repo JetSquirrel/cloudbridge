@@ -85,6 +85,8 @@ pub struct InsightsData {
     pub scripts: ScriptRun,
     /// Every kind the page shows, in order.
     pub kinds: Vec<InsightKind>,
+    /// The security configuration checks of the same inventory.
+    pub security: crate::analytics::security::SecurityReport,
 }
 
 /// The inventory judged against one period's resource costs.
@@ -148,6 +150,7 @@ pub fn load_insights() -> Result<InsightsData> {
         .map(|kind| (*kind, findings_by_type(&report.findings, *kind)))
         .collect();
     Ok(InsightsData {
+        security: crate::analytics::security::evaluate(&resources, scope.as_ref()),
         has_demo_accounts: data::AccountCounts::load()?.demo > 0,
         currency,
         period_label: period,
@@ -223,6 +226,8 @@ pub struct InsightsView {
     /// are shown. A list renders only what is open, so a scan of
     /// thousands costs a page of rows, not thousands.
     expanded: HashMap<String, usize>,
+    /// The Security configuration card, which keeps its own filter and row.
+    security: Entity<super::security::SecurityCard>,
 }
 
 /// Rows an opened group shows at first, and adds per "Show more".
@@ -235,8 +240,9 @@ fn group_key(scope: &str, resource_type: &str) -> String {
 }
 
 impl InsightsView {
-    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
+    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
+            security: cx.new(|_| super::security::SecurityCard::default()),
             data: None,
             error: None,
             loading: false,
@@ -275,6 +281,8 @@ impl InsightsView {
                 }
                 match outcome {
                     Ok(loaded) => {
+                        view.security
+                            .update(cx, |card, cx| card.show(loaded.security.clone(), cx));
                         view.data = Some(loaded);
                         view.error = None;
                     }
@@ -1652,6 +1660,7 @@ impl Render for InsightsView {
                         .children(d.kinds.iter().map(|kind| self.render_kind(d, *kind, cx)))
                     }
                 })
+                .child(self.security.clone())
                 .children(
                     d.inventory
                         .iter()
