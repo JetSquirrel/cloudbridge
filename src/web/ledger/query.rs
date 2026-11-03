@@ -945,7 +945,6 @@ pub fn tag_usage_breakdown_by_service(
 
 // ==================== Untagged usage ====================
 
-/// Untagged usage of a period summed per provider, largest first.
 /// Untagged usage of a period per account, for a share of that account's own
 /// spend.
 pub fn untagged_totals_by_account(
@@ -963,6 +962,7 @@ pub fn untagged_totals_by_account(
     })
 }
 
+/// Untagged usage of a period summed per provider, largest first.
 pub fn untagged_totals_by_provider(
     billing_period: &str,
     tag_key: &str,

@@ -2117,8 +2117,6 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
-/// The STATE column: problems get a pill in their severity's colours,
-/// untagged spend an outline pill, healthy plain muted text.
 /// The state badge, which leads to the alert behind it when one does.
 fn render_state_link(account_id: &str, state: data::AccountState, cx: &App) -> AnyElement {
     let badge = render_state(state, cx);
@@ -2144,6 +2142,8 @@ fn render_state_link(account_id: &str, state: data::AccountState, cx: &App) -> A
         .into_any_element()
 }
 
+/// The STATE column: problems get a pill in their severity's colours,
+/// untagged spend an outline pill, healthy plain muted text.
 fn render_state(state: data::AccountState, cx: &App) -> Div {
     match state {
         data::AccountState::Anomaly => {
