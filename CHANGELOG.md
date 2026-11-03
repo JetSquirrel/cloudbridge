@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   turquoise dots above it. It replaces the bar chart over an arc.
   `assets/icon.svg` is the source, and `scripts/generate-icon.py` writes the
   PNG, ICNS and ICO from it.
+- **The menu bar and notification-area icon matches.** It is now a solid arch
+  bridge with three dots instead of a cloud, redrawn to stay legible at this
+  size. While an alert is open, an exclamation mark replaces the dots.
 ### Added
 - **Monthly cost review.** Export report on Overview saves a chosen month as
   one self-contained HTML file, ready to print or share: totals and the change
