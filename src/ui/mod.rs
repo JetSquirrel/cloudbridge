@@ -16,6 +16,7 @@ pub mod models;
 pub mod overview;
 pub mod palette;
 pub mod query;
+pub mod reconciliation;
 mod report;
 pub mod rules;
 mod security;

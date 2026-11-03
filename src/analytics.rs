@@ -17,6 +17,7 @@
 
 pub mod breakdown;
 pub mod insights;
+pub mod reconciliation;
 pub mod security;
 pub mod snapshot;
 

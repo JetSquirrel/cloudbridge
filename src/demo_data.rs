@@ -22,7 +22,8 @@ pub mod inventory;
 use chrono::{DateTime, NaiveDate, Utc};
 
 use crate::model::{
-    BalanceSnapshot, BillingPeriod, Charge, ChargeCategory, CloudAccount, CostBasis,
+    BalanceSnapshot, BillingPeriod, Charge, ChargeCategory, CloudAccount, CostBasis, Invoice,
+    InvoiceSource, PeriodKey,
 };
 
 /// Account-id prefix marking every demo row; also the marker `ingest` uses to
@@ -218,6 +219,70 @@ fn token_quantities(
             ("Cache Creation Tokens", input * CACHE_CREATION_RATIO),
         ]
     }
+}
+
+/// A few invoices for the Reconciliation page: one that matches, one that does
+/// not, and one in a currency the account is not billed in. The other months
+/// are left without an invoice, which is a state of their own.
+pub fn invoices(periods: &[BillingPeriod], now: DateTime<Utc>) -> Vec<Invoice> {
+    let total = |provider: &str, currency: &str, index: usize| -> f64 {
+        period_charges(
+            provider,
+            services_of(provider),
+            currency,
+            periods[index],
+            index,
+            now,
+        )
+        .iter()
+        .filter(|charge| charge.cost_basis == CostBasis::Authoritative)
+        .filter_map(|charge| charge.billed_cost)
+        .sum()
+    };
+    let invoice = |provider: &str, account: &str, index: usize, currency: &str, amount: f64| {
+        let period = periods[index].label();
+        Invoice {
+            invoice_id: format!("{DEMO_PREFIX}invoice-{account}-{period}"),
+            invoice_ref: format!("INV-{}", period.replace('-', "")),
+            key: PeriodKey::new(provider, account, period),
+            currency: currency.to_string(),
+            amount,
+            tax: None,
+            credits: None,
+            adjustments: None,
+            billing_account_id: None,
+            source: InvoiceSource::Manual,
+            source_file: None,
+            entered_at: now,
+        }
+    };
+    let Some(last_ended) = periods.len().checked_sub(2) else {
+        return Vec::new();
+    };
+    let mut invoices = vec![invoice(
+        "AWS",
+        "demo-aws",
+        last_ended,
+        "USD",
+        total("AWS", "USD", last_ended),
+    )];
+    if let Some(earlier) = last_ended.checked_sub(1) {
+        invoices.push(invoice(
+            "AWS",
+            "demo-aws",
+            earlier,
+            "USD",
+            total("AWS", "USD", earlier) + 42.5,
+        ));
+    }
+    invoices.push(invoice(
+        "OpenAI",
+        "demo-openai",
+        last_ended,
+        "EUR",
+        total("OpenAI", "USD", last_ended),
+    ));
+    invoices
 }
 
 /// One demo account, as [`DEMO_SOURCES`] describes it.

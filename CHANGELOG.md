@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bridge with three dots instead of a cloud, redrawn to stay legible at this
   size. While an alert is open, an exclamation mark replaces the dots.
 ### Added
+- **Reconciliation.** A new page holds each invoice's final total against the
+  ledger's authoritative billed cost, or a frozen snapshot, in the invoice's own
+  currency. Enter a total or import a CSV, and each month reads as Matched,
+  Difference, Cannot verify or Missing evidence, with the breakdown by charge
+  category and what to check next. Invoices are stored apart from charges and
+  never change them.
 - **Security configuration on Insights.** A new read-only section flags AWS
   security groups that open SSH or RDP to the whole internet, with the rule it
   saw and what to check by hand. A group whose inbound rules could not be read

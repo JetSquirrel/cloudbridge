@@ -13,7 +13,8 @@ use crate::ui::data::SyncStatus;
 use crate::ui::{
     account_detail::AccountDetailView, accounts::AccountsView, alerts::AlertsView,
     attribution::AttributionView, insights::InsightsView, models::ModelsView,
-    overview::OverviewView, query::QueryView, rules::RulesView, settings::SettingsView,
+    overview::OverviewView, query::QueryView, reconciliation::ReconciliationView, rules::RulesView,
+    settings::SettingsView,
 };
 use crate::ui::{fmt, platform_key_binding, theme};
 
@@ -25,6 +26,7 @@ actions!(
         SwitchToAttribution,
         SwitchToModels,
         SwitchToInsights,
+        SwitchToReconciliation,
         SwitchToQuery,
         SwitchToAccounts,
         SwitchToRules,
@@ -198,6 +200,7 @@ pub struct CloudBridgeApp {
     models_view: Entity<ModelsView>,
     /// Insights view
     insights_view: Entity<InsightsView>,
+    reconciliation_view: Entity<ReconciliationView>,
     /// Query view
     query_view: Entity<QueryView>,
     /// Accounts view
@@ -235,6 +238,7 @@ pub enum CurrentView {
     Attribution,
     Models,
     Insights,
+    Reconciliation,
     Query,
     Accounts,
     /// Per-account drill-down; not a sidebar entry — the Accounts nav item
@@ -255,6 +259,7 @@ impl CloudBridgeApp {
         let attribution_view = cx.new(|cx| AttributionView::new(window, cx));
         let models_view = cx.new(|cx| ModelsView::new(window, cx));
         let insights_view = cx.new(|cx| InsightsView::new(window, cx));
+        let reconciliation_view = cx.new(|cx| ReconciliationView::new(window, cx));
         let query_view = cx.new(|cx| QueryView::new(window, cx));
         let accounts_view = cx.new(|cx| AccountsView::new(window, cx));
         let account_detail_view = cx.new(|cx| AccountDetailView::new(window, cx));
@@ -353,6 +358,7 @@ impl CloudBridgeApp {
             attribution_view,
             models_view,
             insights_view,
+            reconciliation_view,
             query_view,
             accounts_view,
             account_detail_view,
@@ -425,6 +431,9 @@ impl CloudBridgeApp {
                     v.reload(cx);
                 }
             }),
+            CurrentView::Reconciliation => {
+                self.reconciliation_view.update(cx, |v, cx| v.reload(cx))
+            }
             CurrentView::Query => self.query_view.update(cx, |v, cx| v.reload(cx)),
             CurrentView::Accounts => self.accounts_view.update(cx, |v, cx| {
                 if first_visit {
@@ -641,6 +650,14 @@ impl CloudBridgeApp {
                 IconName::Eye,
                 CurrentView::Insights,
                 current == CurrentView::Insights,
+                None,
+                cx,
+            ))
+            .child(self.nav_item(
+                tr!("nav.reconciliation"),
+                IconName::CircleCheck,
+                CurrentView::Reconciliation,
+                current == CurrentView::Reconciliation,
                 None,
                 cx,
             ))
@@ -881,6 +898,9 @@ impl CloudBridgeApp {
             CurrentView::Attribution => div().size_full().child(self.attribution_view.clone()),
             CurrentView::Models => div().size_full().child(self.models_view.clone()),
             CurrentView::Insights => div().size_full().child(self.insights_view.clone()),
+            CurrentView::Reconciliation => {
+                div().size_full().child(self.reconciliation_view.clone())
+            }
             CurrentView::Query => div().size_full().child(self.query_view.clone()),
             CurrentView::Accounts => div().size_full().child(self.accounts_view.clone()),
             CurrentView::AccountDetail => div().size_full().child(self.account_detail_view.clone()),
@@ -912,6 +932,9 @@ impl Render for CloudBridgeApp {
             }))
             .on_action(cx.listener(|this, _: &SwitchToInsights, _, cx| {
                 this.switch_to(CurrentView::Insights, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SwitchToReconciliation, _, cx| {
+                this.switch_to(CurrentView::Reconciliation, cx);
             }))
             .on_action(cx.listener(|this, _: &SwitchToQuery, _, cx| {
                 this.switch_to(CurrentView::Query, cx);

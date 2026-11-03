@@ -19,7 +19,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use crate::alerts::{AlertEvent, AlertRule};
 use crate::model::{
     BalanceSnapshot, BillingPeriod, BillingSnapshot, BudgetInfo, Channel, Charge, ChargeCategory,
-    CloudAccount, InventoryResource, InventoryScope, PeriodKey, SnapshotLine,
+    CloudAccount, InventoryResource, InventoryScope, Invoice, PeriodKey, SnapshotLine,
 };
 
 /// Rates shipped with the build, as `(from, to, date, rate)`.
@@ -70,6 +70,8 @@ pub struct Store {
     pub inventory_scope: RefCell<Option<InventoryScope>>,
     /// The desktop's `billing_snapshot` and its lines.
     pub snapshots: RefCell<Vec<StoredSnapshot>>,
+    /// The desktop's `invoice_evidence`.
+    pub invoices: RefCell<Vec<Invoice>>,
 }
 
 impl Store {
@@ -86,6 +88,7 @@ impl Store {
             resources: RefCell::new(Vec::new()),
             inventory_scope: RefCell::new(None),
             snapshots: RefCell::new(Vec::new()),
+            invoices: RefCell::new(Vec::new()),
         }
     }
 

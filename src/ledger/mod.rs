@@ -16,6 +16,7 @@
 pub mod demo;
 pub mod focus_export;
 pub mod inventory;
+pub mod invoice;
 pub mod query;
 pub mod rollup;
 pub mod schema;
@@ -120,8 +121,8 @@ pub(crate) fn confirm_period_of(conn: &mut Connection, key: &PeriodKey) -> Resul
 }
 
 /// Remove everything the ledger holds for one account — charges, ingest
-/// batches, balance snapshots, the day rollup and month-end snapshots — in
-/// one transaction.
+/// batches, balance snapshots, the day rollup, month-end snapshots and invoice
+/// evidence — in one transaction.
 /// Returns how many charges went. The raw payloads are the caller's: see
 /// [`crate::ingest::delete_account_history`].
 pub fn delete_account_history(account_id: &str) -> Result<usize> {
@@ -144,6 +145,7 @@ pub(crate) fn delete_account_history_of(conn: &mut Connection, account_id: &str)
         "fct_balance_snapshot",
         "daily_cost_rollup",
         "billing_snapshot",
+        "invoice_evidence",
     ] {
         tx.execute(
             &format!("DELETE FROM {table} WHERE account_id = ?"),

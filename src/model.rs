@@ -340,6 +340,137 @@ pub struct AmountDelta {
     pub delta: f64,
 }
 
+/// How an invoice reached the evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvoiceSource {
+    Manual,
+    Csv,
+}
+
+impl InvoiceSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Csv => "csv",
+        }
+    }
+
+    /// The source a stored value names.
+    pub fn from_stored(value: &str) -> Option<Self> {
+        match value {
+            "manual" => Some(Self::Manual),
+            "csv" => Some(Self::Csv),
+            _ => None,
+        }
+    }
+}
+
+/// A provider's final bill for a period, as the user recorded it. Evidence to
+/// compare the ledger with, never a charge. The breakdown is what the invoice
+/// states and is not added to `amount`, which is its final total.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Invoice {
+    pub invoice_id: String,
+    pub key: PeriodKey,
+    /// The provider's own reference for the invoice.
+    pub invoice_ref: String,
+    pub currency: String,
+    pub amount: f64,
+    pub tax: Option<f64>,
+    /// Zero or negative.
+    pub credits: Option<f64>,
+    pub adjustments: Option<f64>,
+    /// Narrows the comparison to one billing account's charges.
+    pub billing_account_id: Option<String>,
+    pub source: InvoiceSource,
+    pub source_file: Option<String>,
+    pub entered_at: DateTime<Utc>,
+}
+
+/// What comparing an invoice with the ledger found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReconcileStatus {
+    Matched,
+    Difference,
+    /// The figures cannot be compared, whatever they say.
+    CannotVerify,
+    /// The month has charges and no invoice to compare them with.
+    MissingEvidence,
+}
+
+/// Why a comparison came out as it did, or what it leaves out.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ReconcileReason {
+    NoLedgerRows,
+    /// The scope has charges, none in the invoice's currency.
+    CurrencyMismatch,
+    /// Every row in the currency is usage with no amount.
+    NoAmounts,
+    PeriodOpen,
+    /// Rows with a derived or estimated amount, which are not in the figure.
+    NonAuthoritative {
+        rows: usize,
+    },
+    MixedBillingAccounts {
+        accounts: usize,
+    },
+    PartialCoverage {
+        from: Option<NaiveDate>,
+        through: Option<NaiveDate>,
+    },
+    TaxDiffers,
+    CreditsDiffer,
+    AdjustmentsDiffer,
+    /// The invoice's total fits this other month's ledger.
+    MonthMismatch {
+        period: String,
+    },
+    /// Usage rows with no amount, beside a bill that has them.
+    UsageWithoutAmount {
+        rows: usize,
+    },
+    /// Rows in a currency this invoice does not answer for.
+    OtherCurrency {
+        currency: String,
+        rows: usize,
+    },
+}
+
+/// One charge category of a comparison.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReconcileComponent {
+    pub category: ChargeCategory,
+    /// What the invoice states, if it breaks this category out.
+    pub invoice: Option<f64>,
+    pub ledger: f64,
+    pub rows: usize,
+}
+
+/// What the ledger side of a comparison covers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReconcileCoverage {
+    pub rows: usize,
+    pub authoritative_rows: usize,
+    pub from: Option<NaiveDate>,
+    pub through: Option<NaiveDate>,
+}
+
+/// One group of invoices held against a set of charges.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reconciliation {
+    pub status: ReconcileStatus,
+    pub currency: String,
+    pub invoice_total: f64,
+    /// `None` when no row carries an authoritative amount.
+    pub ledger_total: Option<f64>,
+    /// Invoice minus ledger, in `currency`.
+    pub difference: Option<f64>,
+    pub tolerance: f64,
+    pub components: Vec<ReconcileComponent>,
+    pub reasons: Vec<ReconcileReason>,
+    pub coverage: ReconcileCoverage,
+}
+
 /// How one charge differs between a frozen month and the ledger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineChangeKind {

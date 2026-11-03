@@ -66,7 +66,11 @@ use duckdb::{params, Connection};
 /// v10 adds `billing_snapshot` and `billing_snapshot_charge`: frozen copies
 /// of a period's bill, which whole-period replacement never touches. New
 /// tables only, so the CREATEs below are the migration.
-pub const SCHEMA_VERSION: i32 = 10;
+///
+/// v11 adds `invoice_evidence`: invoices recorded to compare the ledger with,
+/// never read as charges. A new table only, so the CREATE below is the
+/// migration.
+pub const SCHEMA_VERSION: i32 = 11;
 
 /// The view the application reads: every charge with its amount also
 /// expressed in the reporting currency.
@@ -241,6 +245,26 @@ pub fn apply(conn: &Connection) -> Result<()> {
             credential_id       VARCHAR,
             requester_details   VARCHAR,
             fx_rate             DOUBLE
+        );
+
+        -- An invoice the user recorded. Evidence to hold the ledger against,
+        -- apart from fct_charge and never summed with it.
+        CREATE TABLE IF NOT EXISTS invoice_evidence (
+            invoice_id         VARCHAR PRIMARY KEY,
+            provider           VARCHAR NOT NULL,
+            account_id         VARCHAR NOT NULL,
+            billing_period     VARCHAR NOT NULL,   -- YYYY-MM
+            invoice_ref        VARCHAR NOT NULL,
+            currency           VARCHAR NOT NULL,
+            amount             DOUBLE NOT NULL,
+            tax                DOUBLE,
+            credits            DOUBLE,
+            adjustments        DOUBLE,
+            billing_account_id VARCHAR,
+            source             VARCHAR NOT NULL,   -- manual | csv
+            source_file        VARCHAR,
+            entered_at         TIMESTAMP NOT NULL,
+            UNIQUE (provider, account_id, billing_period, invoice_ref)
         );
 
         -- A balance is state, not a charge: sources that only report one
