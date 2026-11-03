@@ -2181,8 +2181,8 @@ insights:
     en: "Scan settings"
     zh-CN: "扫描设置"
   install_point_1:
-    en: "CloudBridge downloads corkscrew, a free open-source scanner (MIT licence, about 30 MB), and keeps it in its own data folder."
-    zh-CN: "CloudBridge 会下载免费开源扫描器 corkscrew（MIT 许可，约 30 MB），并保存在自己的数据文件夹中。"
+    en: "CloudBridge downloads corkscrew, a free open-source scanner (MIT licence, about 45 MB), and keeps it in its own data folder."
+    zh-CN: "CloudBridge 会下载免费开源扫描器 corkscrew（MIT 许可，约 45 MB），并保存在自己的数据文件夹中。"
   install_point_2:
     en: "Each AWS or Cloudflare account is scanned with the credential saved for it. The scan only reads: it lists resources and changes nothing."
     zh-CN: "每个 AWS 或 Cloudflare 账户都使用为其保存的凭据进行扫描。扫描只读：仅列出资源，不做任何更改。"

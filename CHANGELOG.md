@@ -7,14 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- **A new app icon.** An off-white arch bridge on black, with three
-  turquoise dots above it. It replaces the bar chart over an arc.
-  `assets/icon.svg` is the source, and `scripts/generate-icon.py` writes the
-  PNG, ICNS and ICO from it.
-- **The menu bar and notification-area icon matches.** It is now a solid arch
-  bridge with three dots instead of a cloud, redrawn to stay legible at this
-  size. While an alert is open, an exclamation mark replaces the dots.
+## [0.9.0] - 2026-11-04
+
+Close the month with evidence: freeze a bill, check it against the provider's
+invoice and export a review to share. Insights also flags security groups open
+to the internet, and the app is translated into 简体中文 with a new icon.
+
 ### Added
 - **Reconciliation.** A new page holds each invoice's final total against the
   ledger's authoritative billed cost, or a frozen snapshot, in the invoice's own
@@ -48,6 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   picks up a new language at the next launch.
 
 ### Changed
+- **A new app icon.** An off-white arch bridge on black, with three
+  turquoise dots above it. It replaces the bar chart over an arc.
+  `assets/icon.svg` is the source, and `scripts/generate-icon.py` writes the
+  PNG, ICNS and ICO from it.
+- **The menu bar and notification-area icon matches.** It is now a solid arch
+  bridge with three dots instead of a cloud, redrawn to stay legible at this
+  size. While an alert is open, an exclamation mark replaces the dots.
 - **Buttons are one size.** Buttons with a border or fill are now one
   height across every page, and refreshing, adding an account and alert
   actions no longer use the black emphasis.
@@ -104,9 +109,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   edge, the Overview card links sit under their captions, and the actions on
   the Accounts table hold their columns from row to row.
 - **Installing the scanner failed on a dropped connection.** The Insights
-  scanner is a 46 MB download, and a connection cut partway through
+  scanner is a download of about 45 MB, and a connection cut partway through
   stopped the install with "io: unexpected end of file". A dropped or
-  timed-out download, or a server error, is now tried up to three times.
+  timed-out download, or a server error, is now tried up to three times. The
+  install dialog also gave its size as about 30 MB, and now says about 45 MB.
 
 ## [0.8.0] - 2026-10-31
 
