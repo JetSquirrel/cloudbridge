@@ -91,6 +91,13 @@ Gateways join the built-in findings, read from the bill alone. Scans move
 to corkscrew `cloudbridge-r4`, whose partial scans are imported and whose
 gaps are listed after the scan.
 
+0.9.0 closes the month with evidence. A month-end snapshot freezes an account's
+bill, Reconciliation holds a provider's invoice against the ledger or a snapshot
+in the invoice's own currency, and Overview exports a month as one HTML review.
+Insights gains a read-only check for AWS security groups open to the internet,
+which says what it could not evaluate. Every page is translated into 简体中文,
+and the arch bridge replaces the old app and tray icons.
+
 A source is a `SourceDescriptor` registry entry rather than an enum
 variant. API-backed sources implement `BillingSource`; file-only sources
 provide a bill parser without an API client. The ingest pipeline persists
