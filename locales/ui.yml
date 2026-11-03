@@ -22,103 +22,6 @@ app:
     en: Opening your data…
     zh-CN: 正在打开数据…
 
-security:
-  title:
-    en: "Security configuration"
-    zh-CN: "安全配置"
-  subtitle:
-    en: "A few read-only checks on the scanned configuration. Not a compliance check or a full security review, and separate from the cost findings above."
-    zh-CN: "对已扫描配置的几项只读检查。这不是合规检查，也不是全面的安全评估，并且与上方的成本发现相互独立。"
-  not_scanned:
-    en: "Not evaluated: no inventory has been scanned. This does not mean there are no risks."
-    zh-CN: "未评估：尚未扫描资源清单。这并不代表没有风险。"
-  partial:
-    en: "The scan was partial, so some security groups may not be listed here at all. Do not read this list as complete."
-    zh-CN: "扫描不完整，部分安全组可能根本没有列在这里。请不要把此列表当作完整结果。"
-  no_groups:
-    en: "The scan listed no security groups, so nothing was evaluated. This does not mean none exist."
-    zh-CN: "扫描未列出任何安全组，因此没有进行评估。这并不代表不存在安全组。"
-  coverage:
-    en: "%{groups} security groups in the scan: %{evaluated} evaluated, %{not_evaluated} not evaluated."
-    zh-CN: "扫描中有 %{groups} 个安全组：已评估 %{evaluated} 个，未评估 %{not_evaluated} 个。"
-  all:
-    en: "All"
-    zh-CN: "全部"
-  status_finding:
-    en: "Finding"
-    zh-CN: "发现"
-  status_not_evaluated:
-    en: "Not evaluated"
-    zh-CN: "未评估"
-  status_no_finding:
-    en: "Evaluated, no finding"
-    zh-CN: "已评估，无发现"
-  severity_high:
-    en: "High"
-    zh-CN: "高"
-  rule_ssh:
-    en: "SSH open to the internet"
-    zh-CN: "SSH 向互联网开放"
-  rule_rdp:
-    en: "RDP open to the internet"
-    zh-CN: "RDP 向互联网开放"
-  not_evaluated_row:
-    en: "Inbound rules could not be read"
-    zh-CN: "无法读取入站规则"
-  no_finding_row:
-    en: "No public SSH or RDP in its inbound rules"
-    zh-CN: "入站规则中没有公开的 SSH 或 RDP"
-  no_match:
-    en: "No rows match this filter."
-    zh-CN: "没有符合筛选条件的行。"
-  fact_resource:
-    en: "Resource"
-    zh-CN: "资源"
-  fact_rule:
-    en: "Rule"
-    zh-CN: "规则"
-  fact_observed:
-    en: "Observed"
-    zh-CN: "观察结果"
-  fact_why:
-    en: "Why it matters"
-    zh-CN: "为什么重要"
-  fact_check:
-    en: "Check by hand"
-    zh-CN: "人工检查"
-  fact_reason:
-    en: "Why not"
-    zh-CN: "原因"
-  fact_scan:
-    en: "Scan"
-    zh-CN: "扫描"
-  why_remote:
-    en: "Anyone on the internet can reach this remote administration port and try to log in. CloudBridge changes nothing in your cloud."
-    zh-CN: "互联网上的任何人都能访问这个远程管理端口并尝试登录。CloudBridge 不会更改你的云资源。"
-  check_ssh:
-    en: "Confirm whether this group is attached to anything and needs public SSH. If not, narrow the source to known addresses, or use a bastion or Session Manager."
-    zh-CN: "确认此安全组是否绑定了资源，以及是否需要公开 SSH。如果不需要，请把来源缩小到已知地址，或改用堡垒机或 Session Manager。"
-  check_rdp:
-    en: "Confirm whether this group is attached to anything and needs public RDP. If not, narrow the source to known addresses, or use a VPN or Fleet Manager."
-    zh-CN: "确认此安全组是否绑定了资源，以及是否需要公开 RDP。如果不需要，请把来源缩小到已知地址，或改用 VPN 或 Fleet Manager。"
-  rules_read:
-    en: "Read %{rules} inbound rules. None opens SSH or RDP to the whole internet."
-    zh-CN: "已读取 %{rules} 条入站规则，没有规则向整个互联网开放 SSH 或 RDP。"
-  reason_no_configuration:
-    en: "The scan found this group but returned no configuration for it. Check the scan's permissions, then scan again."
-    zh-CN: "扫描发现了此安全组，但没有返回其配置。请检查扫描权限后重新扫描。"
-  reason_no_ingress:
-    en: "The configuration the scan returned does not include inbound rules. Check this group in the AWS console."
-    zh-CN: "扫描返回的配置不包含入站规则。请在 AWS 控制台中检查此安全组。"
-  reason_undecodable:
-    en: "The inbound rules could not be read in full. Check this group in the AWS console."
-    zh-CN: "无法完整读取入站规则。请在 AWS 控制台中检查此安全组。"
-  scan_complete:
-    en: "Complete scan of %{regions}, %{at}"
-    zh-CN: "%{at} 对 %{regions} 的完整扫描"
-  scan_partial:
-    en: "Partial scan of %{regions}, %{at}"
-    zh-CN: "%{at} 对 %{regions} 的不完整扫描"
 nav:
   workspace:
     en: COSTS
@@ -1352,6 +1255,103 @@ accounts:
     en: "Imported %{charges} charge(s) into %{name} from its %{format}, replacing %{periods}"
     zh-CN: "已从%{format}向 %{name} 导入 %{charges} 条费用，替换了 %{periods}"
 
+security:
+  title:
+    en: "Security configuration"
+    zh-CN: "安全配置"
+  subtitle:
+    en: "A few read-only checks on the scanned configuration. Not a compliance check or a full security review, and separate from the cost findings above."
+    zh-CN: "对已扫描配置的几项只读检查。这不是合规检查，也不是全面的安全评估，并且与上方的成本发现相互独立。"
+  not_scanned:
+    en: "Not evaluated: no inventory has been scanned. This does not mean there are no risks."
+    zh-CN: "未评估：尚未扫描资源清单。这并不代表没有风险。"
+  partial:
+    en: "The scan was partial, so some security groups may not be listed here at all. Do not read this list as complete."
+    zh-CN: "扫描不完整，部分安全组可能根本没有列在这里。请不要把此列表当作完整结果。"
+  no_groups:
+    en: "The scan listed no security groups, so nothing was evaluated. This does not mean none exist."
+    zh-CN: "扫描未列出任何安全组，因此没有进行评估。这并不代表不存在安全组。"
+  coverage:
+    en: "%{groups} security groups in the scan: %{evaluated} evaluated, %{not_evaluated} not evaluated."
+    zh-CN: "扫描中有 %{groups} 个安全组：已评估 %{evaluated} 个，未评估 %{not_evaluated} 个。"
+  all:
+    en: "All"
+    zh-CN: "全部"
+  status_finding:
+    en: "Finding"
+    zh-CN: "发现"
+  status_not_evaluated:
+    en: "Not evaluated"
+    zh-CN: "未评估"
+  status_no_finding:
+    en: "Evaluated, no finding"
+    zh-CN: "已评估，无发现"
+  severity_high:
+    en: "High"
+    zh-CN: "高"
+  rule_ssh:
+    en: "SSH open to the internet"
+    zh-CN: "SSH 向互联网开放"
+  rule_rdp:
+    en: "RDP open to the internet"
+    zh-CN: "RDP 向互联网开放"
+  not_evaluated_row:
+    en: "Inbound rules could not be read"
+    zh-CN: "无法读取入站规则"
+  no_finding_row:
+    en: "No public SSH or RDP in its inbound rules"
+    zh-CN: "入站规则中没有公开的 SSH 或 RDP"
+  no_match:
+    en: "No rows match this filter."
+    zh-CN: "没有符合筛选条件的行。"
+  fact_resource:
+    en: "Resource"
+    zh-CN: "资源"
+  fact_rule:
+    en: "Rule"
+    zh-CN: "规则"
+  fact_observed:
+    en: "Observed"
+    zh-CN: "观察结果"
+  fact_why:
+    en: "Why it matters"
+    zh-CN: "为什么重要"
+  fact_check:
+    en: "Check by hand"
+    zh-CN: "人工检查"
+  fact_reason:
+    en: "Why not"
+    zh-CN: "原因"
+  fact_scan:
+    en: "Scan"
+    zh-CN: "扫描"
+  why_remote:
+    en: "Anyone on the internet can reach this remote administration port and try to log in. CloudBridge changes nothing in your cloud."
+    zh-CN: "互联网上的任何人都能访问这个远程管理端口并尝试登录。CloudBridge 不会更改你的云资源。"
+  check_ssh:
+    en: "Confirm whether this group is attached to anything and needs public SSH. If not, narrow the source to known addresses, or use a bastion or Session Manager."
+    zh-CN: "确认此安全组是否绑定了资源，以及是否需要公开 SSH。如果不需要，请把来源缩小到已知地址，或改用堡垒机或 Session Manager。"
+  check_rdp:
+    en: "Confirm whether this group is attached to anything and needs public RDP. If not, narrow the source to known addresses, or use a VPN or Fleet Manager."
+    zh-CN: "确认此安全组是否绑定了资源，以及是否需要公开 RDP。如果不需要，请把来源缩小到已知地址，或改用 VPN 或 Fleet Manager。"
+  rules_read:
+    en: "Read %{rules} inbound rules. None opens SSH or RDP to the whole internet."
+    zh-CN: "已读取 %{rules} 条入站规则，没有规则向整个互联网开放 SSH 或 RDP。"
+  reason_no_configuration:
+    en: "The scan found this group but returned no configuration for it. Check the scan's permissions, then scan again."
+    zh-CN: "扫描发现了此安全组，但没有返回其配置。请检查扫描权限后重新扫描。"
+  reason_no_ingress:
+    en: "The configuration the scan returned does not include inbound rules. Check this group in the AWS console."
+    zh-CN: "扫描返回的配置不包含入站规则。请在 AWS 控制台中检查此安全组。"
+  reason_undecodable:
+    en: "The inbound rules could not be read in full. Check this group in the AWS console."
+    zh-CN: "无法完整读取入站规则。请在 AWS 控制台中检查此安全组。"
+  scan_complete:
+    en: "Complete scan of %{regions}, %{at}"
+    zh-CN: "%{at} 对 %{regions} 的完整扫描"
+  scan_partial:
+    en: "Partial scan of %{regions}, %{at}"
+    zh-CN: "%{at} 对 %{regions} 的不完整扫描"
 insights:
   demo_included:
     en: "Demo accounts are set up, so these resources and the scan time can come from sample data."
