@@ -6,11 +6,14 @@ use gpui_kit::*;
 
 use super::data::Range;
 use super::data_health::{self, HealthCard};
+use super::report::ReportExport;
 use super::{chart, data, fmt, theme};
 use crate::ui::theme::CardOutline as _;
 
 /// Overview View
 pub struct OverviewView {
+    /// The Export report button, with the month picker it opens.
+    report_export: Entity<ReportExport>,
     /// Selected range in the header segmented control.
     range: Range,
     /// The loaded page data; `None` until the first load completes.
@@ -47,8 +50,9 @@ pub struct OverviewView {
 }
 
 impl OverviewView {
-    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
+    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
+            report_export: cx.new(|_| ReportExport::default()),
             range: Range::Mtd,
             data: None,
             loading: false,
@@ -275,6 +279,11 @@ impl OverviewView {
                                 }
                             })),
                     )
+                    // Saving a file is the desktop's: the demo has no dialog
+                    // to choose where.
+                    .when(cfg!(not(target_family = "wasm")), |el| {
+                        el.child(self.report_export.clone())
+                    })
                     .child(
                         Button::new("refresh")
                             .icon(IconName::RefreshCw)
