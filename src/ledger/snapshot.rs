@@ -336,6 +336,18 @@ fn line_from(row: &Row<'_>) -> Result<SnapshotLine> {
     })
 }
 
+/// The lines of a period, for another module's tests.
+#[cfg(test)]
+pub(crate) fn read_current_for_tests(conn: &Connection, key: &PeriodKey) -> Vec<SnapshotLine> {
+    read_current(conn, key).unwrap()
+}
+
+/// The lines of a snapshot, for another module's tests.
+#[cfg(test)]
+pub(crate) fn stored_lines_for_tests(conn: &Connection, snapshot_id: &str) -> Vec<SnapshotLine> {
+    stored_lines(conn, snapshot_id).unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::{delete_account_history_of, schema, write_period};

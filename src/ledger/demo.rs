@@ -59,6 +59,8 @@ pub fn seed_demo() -> Result<String> {
         record_balance(&snapshot)?;
     }
 
+    super::invoice::save_invoices(&demo_data::invoices(&periods, now))?;
+
     // An imported scan is real data: the demo does not replace it.
     let (scope, resources) = demo_data::inventory::inventory(now);
     with_connection(|conn| {
@@ -110,6 +112,10 @@ pub fn clear_demo() -> Result<String> {
         )?;
         tx.execute(
             "DELETE FROM billing_snapshot WHERE account_id LIKE 'demo-%'",
+            [],
+        )?;
+        tx.execute(
+            "DELETE FROM invoice_evidence WHERE account_id LIKE 'demo-%'",
             [],
         )?;
         tx.execute(

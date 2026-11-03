@@ -7,6 +7,7 @@
 
 pub mod demo;
 pub mod inventory;
+pub mod invoice;
 pub mod query;
 pub mod snapshot;
 
@@ -116,6 +117,10 @@ pub fn delete_account_history(account_id: &str) -> Result<usize> {
             .snapshots
             .borrow_mut()
             .retain(|stored| stored.snapshot.key.account_id != account_id);
+        store
+            .invoices
+            .borrow_mut()
+            .retain(|invoice| invoice.key.account_id != account_id);
         store
             .balances
             .borrow_mut()
