@@ -17,6 +17,7 @@
 
 pub mod breakdown;
 pub mod insights;
+pub mod snapshot;
 
 use std::collections::BTreeMap;
 

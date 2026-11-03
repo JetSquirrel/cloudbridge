@@ -9,6 +9,7 @@ use gpui_kit::*;
 
 use super::data::{AccountDetailData, Range, ServiceRow};
 use super::data_health::{self, HealthCard};
+use super::snapshots::SnapshotsCard;
 use super::{chart, data, fmt, theme};
 use crate::cloud::BillingPeriod;
 use crate::ledger::query::{
@@ -48,10 +49,12 @@ pub struct AccountDetailView {
     generation: u64,
     /// Chart hover state; see [`chart::ChartHover`].
     chart_hover: chart::ChartHover,
+    /// The Month-end snapshots card, which loads on its own.
+    snapshots: Entity<SnapshotsCard>,
 }
 
 impl AccountDetailView {
-    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
+    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
             account_id: None,
             range: Range::Mtd,
@@ -64,6 +67,7 @@ impl AccountDetailView {
             error: None,
             generation: 0,
             chart_hover: chart::ChartHover::new(),
+            snapshots: cx.new(|_| SnapshotsCard::default()),
         }
     }
 
@@ -78,17 +82,21 @@ impl AccountDetailView {
             self.health = None;
             self.health_expanded = false;
         }
-        self.account_id = Some(account_id);
+        self.account_id = Some(account_id.clone());
         self.load(cx);
+        self.snapshots
+            .update(cx, |card, cx| card.show(account_id, cx));
     }
 
     /// Reload the page data. Called by the app shell when this page is
     /// navigated to; a no-op while a load is already in flight.
     pub fn reload(&mut self, cx: &mut Context<Self>) {
-        if self.loading || self.account_id.is_none() {
+        let Some(account_id) = self.account_id.clone().filter(|_| !self.loading) else {
             return;
-        }
+        };
         self.load(cx);
+        self.snapshots
+            .update(cx, |card, cx| card.show(account_id, cx));
     }
 
     /// Load the page data off-thread; the ledger queries are blocking. The
@@ -501,6 +509,7 @@ impl Render for AccountDetailView {
                 .child(self.render_chart(d, window, cx))
                 .child(self.render_services(d, cx))
                 .child(self.render_drilldown(d, cx))
+                .child(self.snapshots.clone())
                 .into_any_element(),
         };
 

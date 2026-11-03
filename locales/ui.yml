@@ -22,6 +22,200 @@ app:
     en: Opening your data…
     zh-CN: 正在打开数据…
 
+report:
+  document_title:
+    en: "Cloud cost review %{period}"
+    zh-CN: "云成本回顾 %{period}"
+  heading:
+    en: "Cloud cost review: %{period}"
+    zh-CN: "云成本回顾：%{period}"
+  context:
+    en: "All amounts in %{currency} unless noted, generated %{at} by CloudBridge from its local ledger."
+    zh-CN: "除特别注明外，金额均为 %{currency}。由 CloudBridge 根据本地账本生成于 %{at}。"
+  demo_notice:
+    en: "This ledger includes demo accounts, so these figures may not be a real bill."
+    zh-CN: "此账本包含演示账户，这些数字可能不是真实账单。"
+  no_data:
+    en: "The ledger has no billing data for %{period}, so this report shows no totals. That is not the same as a month that cost nothing."
+    zh-CN: "账本中没有 %{period} 的账单数据，因此本报告不显示合计。这并不代表当月没有费用。"
+  summary_change:
+    en: "Net cost was %{net}, %{change} against %{previous} the month before. Usage was %{usage}, credits %{credits}."
+    zh-CN: "净成本为 %{net}，与上月的 %{previous} 相比变化 %{change}。用量为 %{usage}，抵扣为 %{credits}。"
+  summary_open:
+    en: "Net cost so far is %{net}. The whole month before came to %{previous}. Usage so far is %{usage}, credits %{credits}."
+    zh-CN: "目前净成本为 %{net}。上月全月为 %{previous}。目前用量为 %{usage}，抵扣为 %{credits}。"
+  not_by_service:
+    en: "Credits and other amounts not listed by service"
+    zh-CN: "抵扣及其他未按服务列出的金额"
+  summary_no_change:
+    en: "Net cost was %{net}. Usage was %{usage}, credits %{credits}. The month before is too small to compare with."
+    zh-CN: "净成本为 %{net}。用量为 %{usage}，抵扣为 %{credits}。上月金额太小，无法比较。"
+  limits:
+    en: "What these figures leave out"
+    zh-CN: "这些数字未涵盖的内容"
+  limit_open:
+    en: "This month has not ended, so its figures are month to date. The previous month's column is that whole month, so no change is shown."
+    zh-CN: "本月尚未结束，数字为月初至今。上月一列是整月金额，因此不显示变化。"
+  limit_unconverted:
+    en: "%{rows} charges have no exchange rate to %{currency} and are in no total here."
+    zh-CN: "%{rows} 条费用没有到 %{currency} 的汇率，未计入此处任何合计。"
+  limit_absent:
+    en: "%{rows} usage rows carry no amount and are in no total here."
+    zh-CN: "%{rows} 行用量记录没有金额，未计入此处任何合计。"
+  limit_not_scanned:
+    en: "No inventory has been scanned, so Insights were not evaluated."
+    zh-CN: "尚未扫描资源清单，因此未评估洞察。"
+  limit_partial_scan:
+    en: "The inventory scan was partial, so Insights may have missed resources."
+    zh-CN: "资源清单扫描不完整，洞察可能遗漏部分资源。"
+  services:
+    en: "Cost by service"
+    zh-CN: "按服务的成本"
+  col_service:
+    en: "Service"
+    zh-CN: "服务"
+  col_previous:
+    en: "Previous month"
+    zh-CN: "上月"
+  col_change:
+    en: "Change"
+    zh-CN: "变化"
+  other_services:
+    en: "%{n} other services"
+    zh-CN: "其他 %{n} 个服务"
+  net_total:
+    en: "Net total"
+    zh-CN: "净合计"
+  regions:
+    en: "Net cost by region"
+    zh-CN: "按区域的净成本"
+  col_region:
+    en: "Region"
+    zh-CN: "区域"
+  business_lines:
+    en: "Usage by business line"
+    zh-CN: "按业务线的用量"
+  col_business_line:
+    en: "Business line"
+    zh-CN: "业务线"
+  col_amount:
+    en: "Amount"
+    zh-CN: "金额"
+  no_rows:
+    en: "No rows for this month."
+    zh-CN: "本月没有相关记录。"
+  outlook:
+    en: "Forecast and budgets"
+    zh-CN: "预测与预算"
+  outlook_skipped:
+    en: "Skipped: forecasts and budgets describe a month in progress, and this one has ended."
+    zh-CN: "已跳过：预测和预算针对进行中的月份，而这个月已经结束。"
+  forecast:
+    en: "Month-end forecast: %{forecast}, from %{days} of %{total} days."
+    zh-CN: "月末预测：%{forecast}，基于 %{total} 天中的 %{days} 天。"
+  forecast_missing:
+    en: "No forecast could be computed for this month."
+    zh-CN: "无法计算本月预测。"
+  no_budgets:
+    en: "No budgets are set."
+    zh-CN: "尚未设置预算。"
+  col_account:
+    en: "Account"
+    zh-CN: "账户"
+  col_budget:
+    en: "Budget"
+    zh-CN: "预算"
+  col_spent:
+    en: "Spent"
+    zh-CN: "已用"
+  col_used:
+    en: "Used"
+    zh-CN: "使用率"
+  data_health:
+    en: "Data health"
+    zh-CN: "数据健康"
+  data_health_clean:
+    en: "The data health checks found nothing for this month."
+    zh-CN: "数据健康检查未发现本月问题。"
+  severity_critical:
+    en: "Critical"
+    zh-CN: "严重"
+  severity_warning:
+    en: "Warning"
+    zh-CN: "警告"
+  severity_info:
+    en: "Info"
+    zh-CN: "提示"
+  insights:
+    en: "Insights"
+    zh-CN: "洞察"
+  insights_unavailable:
+    en: "Insights were unavailable: no inventory has been scanned. This does not mean there are no findings."
+    zh-CN: "洞察不可用：尚未扫描资源清单。这并不代表没有发现问题。"
+  insights_scope:
+    en: "Judged against %{resources} resources scanned %{at}."
+    zh-CN: "基于 %{at} 扫描的 %{resources} 个资源进行评估。"
+  insights_none:
+    en: "No findings for the resources scanned."
+    zh-CN: "已扫描的资源没有发现问题。"
+  insights_none_partial:
+    en: "No findings, but the scan was partial, so some resources were not judged."
+    zh-CN: "没有发现问题，但扫描不完整，部分资源未被评估。"
+  insights_more:
+    en: "Showing the first %{shown} of %{total} findings. The Insights page has them all."
+    zh-CN: "显示前 %{shown} 项，共 %{total} 项发现。洞察页面列出了全部内容。"
+  col_resource:
+    en: "Resource"
+    zh-CN: "资源"
+  col_type:
+    en: "Type"
+    zh-CN: "类型"
+  col_evidence:
+    en: "Evidence"
+    zh-CN: "依据"
+  sources:
+    en: "Sources"
+    zh-CN: "数据来源"
+  col_source:
+    en: "Source"
+    zh-CN: "来源"
+  col_channel:
+    en: "Channel"
+    zh-CN: "渠道"
+  col_last_ingest:
+    en: "Last ingest"
+    zh-CN: "最近导入"
+  channel_api:
+    en: "Provider API"
+    zh-CN: "服务商 API"
+  channel_file:
+    en: "Imported file"
+    zh-CN: "导入文件"
+report_ui:
+  button:
+    en: "Export report"
+    zh-CN: "导出报告"
+  tooltip:
+    en: "Save a month's cost review as one HTML file you can print or share"
+    zh-CN: "将某月的成本回顾保存为一个可打印或分享的 HTML 文件"
+  title:
+    en: "Export monthly cost review"
+    zh-CN: "导出月度成本回顾"
+  hint:
+    en: "Pick a month. The report covers every account, in the reporting currency, and states what it leaves out."
+    zh-CN: "选择月份。报告涵盖所有账户，以报告币种显示，并说明未涵盖的内容。"
+  no_months:
+    en: "The ledger has no billing data yet. Refresh or import an account first."
+    zh-CN: "账本中还没有账单数据。请先刷新或导入账户。"
+  export:
+    en: "Choose file and export"
+    zh-CN: "选择文件并导出"
+  saved:
+    en: "Saved to %{path}"
+    zh-CN: "已保存到 %{path}"
+  failed:
+    en: "Could not export the report: %{error}"
+    zh-CN: "无法导出报告：%{error}"
 nav:
   workspace:
     en: COSTS
@@ -778,6 +972,221 @@ models:
     en: ", and "
     zh-CN: "，以及 "
 
+snapshots:
+  title:
+    en: "Month-end snapshots"
+    zh-CN: "月末快照"
+  subtitle:
+    en: "A frozen month stays as it was, whatever a later refresh or import does to the ledger."
+    zh-CN: "冻结后的月份保持原样，之后的刷新或导入都不会改动它。"
+  freeze:
+    en: "Freeze period"
+    zh-CN: "冻结本期"
+  freeze_again:
+    en: "Freeze new revision"
+    zh-CN: "冻结为新修订"
+  no_data:
+    en: "No billing data to freeze yet. Refresh or import this account first."
+    zh-CN: "还没有可冻结的账单数据。请先刷新或导入此账户。"
+  not_frozen:
+    en: "Not frozen yet. This is what the ledger holds now."
+    zh-CN: "尚未冻结。以下是账本当前的数据。"
+  load_failed:
+    en: "Could not load snapshots: %{error}"
+    zh-CN: "无法加载快照：%{error}"
+  freeze_failed:
+    en: "Could not freeze this period: %{error}"
+    zh-CN: "无法冻结本期：%{error}"
+  notice_frozen:
+    en: "Frozen as revision %{n}, snapshot %{id}, at %{at}."
+    zh-CN: "已冻结为修订 %{n}（快照 %{id}），时间 %{at}。"
+  notice_unchanged:
+    en: "Revision %{n} already holds this bill, so no new revision was added."
+    zh-CN: "修订 %{n} 已包含这份账单，未新增修订。"
+  notice_empty:
+    en: "The ledger has no charges for this period, so nothing was frozen."
+    zh-CN: "账本中没有本期费用，未冻结任何内容。"
+  revisions:
+    en: "Revisions"
+    zh-CN: "修订"
+  revision_short:
+    en: "Rev %{n}"
+    zh-CN: "修订 %{n}"
+  revision_of:
+    en: "%{n} of %{total}"
+    zh-CN: "第 %{n} 个，共 %{total} 个"
+  status_matches:
+    en: "Matches the ledger"
+    zh-CN: "与账本一致"
+  status_differs:
+    en: "Differs from the ledger"
+    zh-CN: "与账本不一致"
+  lines_summary:
+    en: "%{new} new, %{removed} removed, %{changed} changed, %{unchanged} unchanged charges"
+    zh-CN: "费用行：新增 %{new}，移除 %{removed}，变更 %{changed}，未变 %{unchanged}"
+  col_currency:
+    en: "Billing currency"
+    zh-CN: "账单币种"
+  col_frozen:
+    en: "Frozen"
+    zh-CN: "冻结时"
+  col_current:
+    en: "Ledger now"
+    zh-CN: "账本当前"
+  col_change:
+    en: "Change"
+    zh-CN: "变化"
+  no_amount:
+    en: "No amount"
+    zh-CN: "无金额"
+  by_service:
+    en: "Change by service"
+    zh-CN: "按服务的变化"
+  by_category:
+    en: "Change by category"
+    zh-CN: "按费用类别的变化"
+  frozen_by_category:
+    en: "Frozen by charge category"
+    zh-CN: "冻结时按费用类别"
+  charge_count:
+    en: "%{n} charges"
+    zh-CN: "%{n} 条费用"
+  provenance:
+    en: "Source of this revision"
+    zh-CN: "此修订的来源"
+  fact_revision:
+    en: "Revision"
+    zh-CN: "修订"
+  fact_frozen_at:
+    en: "Frozen at"
+    zh-CN: "冻结时间"
+  fact_source:
+    en: "Source"
+    zh-CN: "来源"
+  fact_batch:
+    en: "Ingest batch"
+    zh-CN: "导入批次"
+  fact_rows:
+    en: "Charges"
+    zh-CN: "费用行数"
+  fact_checksum:
+    en: "Checksum"
+    zh-CN: "校验和"
+  fact_reporting_total:
+    en: "Reporting total at freeze"
+    zh-CN: "冻结时的报告币种合计"
+  fact_rate:
+    en: "%{currency} rate"
+    zh-CN: "%{currency} 汇率"
+  source_api:
+    en: "Billing API"
+    zh-CN: "账单 API"
+  source_file:
+    en: "Bill export"
+    zh-CN: "账单导出文件"
+  rate_same:
+    en: "No conversion, %{rows} charges"
+    zh-CN: "无需换算，%{rows} 条费用"
+  rate_used:
+    en: "%{rate} to %{reporting}, %{rows} charges"
+    zh-CN: "换算为 %{reporting} 的汇率 %{rate}，%{rows} 条费用"
+  rate_missing:
+    en: "No rate, %{rows} charges"
+    zh-CN: "无汇率，%{rows} 条费用"
+  warn_open_now:
+    en: "This month has not ended, so a freeze now captures a partial bill."
+    zh-CN: "本月尚未结束，现在冻结只会保存部分账单。"
+  warn_open_frozen:
+    en: "This month had not ended when it was frozen, so the snapshot may be a partial bill."
+    zh-CN: "冻结时本月尚未结束，此快照可能只是部分账单。"
+  warn_no_amounts:
+    en: "These charges carry usage but no amounts, so this month has no total. That does not mean it cost nothing."
+    zh-CN: "这些费用只有用量没有金额，因此本月没有合计。这不代表本月没有费用。"
+  warn_some_absent:
+    en: "%{rows} of %{total} charges have no amount and are not in the totals."
+    zh-CN: "%{total} 条费用中有 %{rows} 条没有金额，未计入合计。"
+  warn_unconverted:
+    en: "%{rows} charges had no %{reporting} rate at freeze and are not in the reporting total."
+    zh-CN: "%{rows} 条费用在冻结时没有 %{reporting} 汇率，未计入报告币种合计。"
+  warn_integrity:
+    en: "The stored lines of this revision no longer match its checksum. Do not rely on it."
+    zh-CN: "此修订保存的费用行与校验和不再一致，请勿依赖。"
+  confirm_title:
+    en: "Freeze %{period} of %{account}?"
+    zh-CN: "冻结 %{account} 的 %{period}？"
+  confirm_body:
+    en: "Keeps a permanent copy of %{rows} charges as they are now: %{totals}. A later refresh or import will not change it. Deleting this account's billing history removes it."
+    zh-CN: "为当前的 %{rows} 条费用保留一份永久副本：%{totals}。之后的刷新或导入不会改动它。删除此账户的账单历史时会一并删除。"
+  confirm_body_open:
+    en: "This month has not ended, so the copy of its %{rows} charges will be incomplete: %{totals}. A later refresh or import will not change it. Deleting this account's billing history removes it."
+    zh-CN: "本月尚未结束，因此这 %{rows} 条费用的副本并不完整：%{totals}。之后的刷新或导入不会改动它。删除此账户的账单历史时会一并删除。"
+  confirm_ok:
+    en: "Freeze %{period}"
+    zh-CN: "冻结 %{period}"
+  all_periods:
+    en: "All %{n} months"
+    zh-CN: "全部 %{n} 个月"
+  recent_periods:
+    en: "Recent months"
+    zh-CN: "最近几个月"
+  frozen_summary:
+    en: "Revision %{n}, frozen %{at}"
+    zh-CN: "修订 %{n}，冻结于 %{at}"
+  ledger_source:
+    en: "Ledger now: %{source}, batch %{batch}, updated %{at}"
+    zh-CN: "账本当前：%{source}，批次 %{batch}，更新于 %{at}"
+  fact_snapshot_id:
+    en: "Snapshot ID"
+    zh-CN: "快照 ID"
+  fact_batch_completed:
+    en: "Batch completed"
+    zh-CN: "批次完成时间"
+  open_charges:
+    en: "Show the charges behind %{label}"
+    zh-CN: "显示 %{label} 背后的费用"
+  changes_title:
+    en: "Charges behind %{label} (%{currency})"
+    zh-CN: "%{label} 背后的费用（%{currency}）"
+  changes_empty:
+    en: "No single charge differs here. The amounts moved only through rounding."
+    zh-CN: "这里没有单条费用发生变化，金额差异仅来自舍入。"
+  changes_truncated:
+    en: "Showing the %{shown} largest of %{total} charges."
+    zh-CN: "显示变化最大的 %{shown} 条，共 %{total} 条费用。"
+  col_charge:
+    en: "Charge"
+    zh-CN: "费用"
+  change_new:
+    en: "New"
+    zh-CN: "新增"
+  change_removed:
+    en: "Removed"
+    zh-CN: "已移除"
+  change_changed:
+    en: "Changed"
+    zh-CN: "已变更"
+  no_description:
+    en: "No description"
+    zh-CN: "无描述"
+  differing_fields:
+    en: "Differs in %{fields}"
+    zh-CN: "差异字段：%{fields}"
+  category_usage:
+    en: "Usage"
+    zh-CN: "用量"
+  category_purchase:
+    en: "Purchase"
+    zh-CN: "购买"
+  category_credit:
+    en: "Credit"
+    zh-CN: "抵扣"
+  category_tax:
+    en: "Tax"
+    zh-CN: "税费"
+  category_adjustment:
+    en: "Adjustment"
+    zh-CN: "调整"
+
 detail:
   load_failed:
     en: "Could not load the account: %{error}"
@@ -1105,8 +1514,8 @@ accounts:
     en: "Delete billing history?"
     zh-CN: "删除账单历史？"
   delete_history_body:
-    en: "%{history} and the raw payloads behind it are removed. This cannot be undone."
-    zh-CN: "%{history}及其原始数据将被删除。此操作无法撤销。"
+    en: "%{history}, its month-end snapshots and the raw payloads behind it are removed. This cannot be undone."
+    zh-CN: "%{history}、其月末快照及原始数据将被删除。此操作无法撤销。"
   this_history:
     en: "This history"
     zh-CN: "此历史"

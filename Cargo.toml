@@ -52,6 +52,9 @@ tracing = "0.1"
 
 # UUID generation
 uuid = { version = "1", features = ["v4"] }
+# Month-end snapshot checksums and charge identities, on both targets.
+sha2 = "0.10"
+hex = "0.4"
 
 # Interface translations, the same mechanism gpui-kit's components use, so
 # one `set_locale` switches both. The strings are in `locales/ui.yml`,
@@ -76,9 +79,7 @@ rquickjs = { package = "quickjs-jit", version = "0.14" }
 
 # AWS signing
 hmac = "0.12"
-sha2 = "0.10"
 sha1 = "0.10"  # Aliyun signing
-hex = "0.4"
 # Google Cloud: a service account signs its token request with RS256.
 # Already in the tree through rustls.
 ring = "0.17"
