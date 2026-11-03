@@ -1369,6 +1369,45 @@ attribution:
     zh-CN: "本期有费用后，这里会显示 数据源 → 服务 → 业务线 的流向。可在“账户”页获取或导入账单。"
 
 accounts:
+  hint_aws:
+    en: "An IAM user's access key with a policy allowing ce:GetCostAndUsage. Cost Explorer charges $0.01 per request."
+    zh-CN: "IAM 用户的访问密钥，其策略需允许 ce:GetCostAndUsage。Cost Explorer 每次请求收费 $0.01。"
+  hint_aliyun:
+    en: "A RAM user's AccessKey with AliyunBSSReadOnlyAccess. Don't use the primary account's key."
+    zh-CN: "具有 AliyunBSSReadOnlyAccess 权限的 RAM 用户 AccessKey。请勿使用主账号的密钥。"
+  hint_azure:
+    en: "An app registration's client ID and secret, with the Cost Management Reader role on the subscription. The subscription's tenant is looked up from it."
+    zh-CN: "应用注册的客户端 ID 和密钥，并在订阅上授予 Cost Management Reader 角色。订阅所属租户会自动查询。"
+  hint_gcp:
+    en: "The path of a service account's JSON key, and the table the billing account's BigQuery export writes to. The account needs BigQuery Job User and Data Viewer there."
+    zh-CN: "服务账号 JSON 密钥的路径，以及结算账号 BigQuery 导出写入的表。该账号需要在那里拥有 BigQuery Job User 和 Data Viewer 权限。"
+  hint_cloudflare:
+    en: "An API token with Account → Billing → Read — and Account → Account Analytics → Read to split the bill by bucket, Worker, D1 database and Durable Object — and the account ID. Pay-as-you-go accounts only."
+    zh-CN: "具有 Account → Billing → Read 权限的 API 令牌（如需按存储桶、Worker、D1 数据库和 Durable Object 拆分账单，还需 Account → Account Analytics → Read），以及账户 ID。仅支持按量付费账户。"
+  hint_deepseek:
+    en: "A platform key reads the balance only; import the cost export for spend detail. The key can also spend, so keep it private."
+    zh-CN: "平台密钥只能读取余额；如需支出明细，请导入费用导出文件。该密钥也可用于消费，请妥善保管。"
+  no_credentials_needed:
+    en: "No credentials needed: this source is read from its %{format}. Save the account, then use Import. (%{origin})"
+    zh-CN: "无需凭据：此数据源从其 %{format} 读取。保存账户后使用“导入”。（%{origin}）"
+  export_uri_hint:
+    en: "Optional. A FOCUS 1.2 export from Billing and Cost Management → Data Exports. When set, the bill is read from S3 and Cost Explorer is not called."
+    zh-CN: "可选。来自 Billing and Cost Management → Data Exports 的 FOCUS 1.2 导出。设置后将从 S3 读取账单，不再调用 Cost Explorer。"
+  fill_tooltip:
+    en: "Read the credentials this machine already has, from the environment or the provider's credentials file"
+    zh-CN: "读取本机已有的凭据，来源为环境变量或服务商的凭据文件"
+  state_tooltip:
+    en: "See the alert"
+    zh-CN: "查看告警"
+  a11y_validate:
+    en: "Validate %{name}"
+    zh-CN: "验证 %{name}"
+  a11y_import:
+    en: "Import a bill for %{name}"
+    zh-CN: "为 %{name} 导入账单"
+  a11y_delete:
+    en: "Delete %{name}"
+    zh-CN: "删除 %{name}"
   tag_hint:
     en: "Tag these resources with '%{tag}' at your provider so their spend lands on a business line."
     zh-CN: "请在服务商处为这些资源添加“%{tag}”标签，其支出才会归入业务线。"
@@ -1382,8 +1421,8 @@ accounts:
     en: "Setup guide"
     zh-CN: "配置指南"
   subtitle:
-    en: "%{n} accounts. Credentials stay in the OS keyring, never in the database"
-    zh-CN: "%{n} 个账户。凭据保存在系统密钥环中，不会写入数据库"
+    en: "%{n} accounts. Credentials stay in the OS keyring, never in the database. Month figures are net of credits, so they can be negative; balances stay in the account's own currency."
+    zh-CN: "%{n} 个账户。凭据保存在系统密钥环中，不会写入数据库。本月金额已扣除抵扣，因此可能为负；余额保留账户自身的币种。"
   col_account:
     en: "ACCOUNT"
     zh-CN: "账户"
@@ -1904,6 +1943,9 @@ insights:
     zh-CN: "包括"
 
 rules:
+  subtitle:
+    en: "Every rule runs on this computer after each refresh or import. Nothing leaves the machine."
+    zh-CN: "每次刷新或导入后，所有规则都在本机运行，数据不会离开本机。"
   kind_cost_anomaly:
     en: "Model cost growth anomaly"
     zh-CN: "模型成本增长异常"
@@ -2033,6 +2075,12 @@ rules:
   kind:
     en: "Kind"
     zh-CN: "类型"
+  rule_budget_is:
+    en: "This account's budget is %{budget}."
+    zh-CN: "此账户的预算为 %{budget}。"
+  rule_needs_budget:
+    en: "This account has no budget, so this rule won't fire until you set one under Monthly budgets."
+    zh-CN: "此账户还没有预算，在“每月预算”中设置之前，此规则不会触发。"
   enabled_on_creation:
     en: "The rule is enabled on creation."
     zh-CN: "规则创建后即启用。"

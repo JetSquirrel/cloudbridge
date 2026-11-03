@@ -57,6 +57,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names in the accessibility tree.
 
 ### Fixed
+- **Editing a budget reset its alert threshold.** Changing the amount put the
+  threshold back to 80%. The editor now starts from the saved threshold, and
+  only an account with no budget gets the default. The rule form also shows
+  the chosen account's budget, or warns that the rule won't fire without one.
+- **One account's problem marked its siblings on Accounts.** Anomaly and
+  untagged spend badges matched by provider. They now read the account, except
+  for an anomaly from a rule that watches a whole provider. An anomaly or low
+  balance badge opens Alerts.
+- **English left on Accounts and Rules in 简体中文.** The setup hints, form
+  notes and the Rules subtitle are translated, and row actions, account links
+  and rule switches name their target for assistive technology.
 - **Account detail listed other accounts' data-health findings.** It now
   reads only that account's charges, with shares of its usage, and Dismiss
   there covers only that account.
