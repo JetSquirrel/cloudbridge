@@ -19,6 +19,7 @@ pub mod query;
 pub mod rules;
 mod security;
 pub mod settings;
+mod snapshots;
 pub mod theme;
 
 use std::rc::Rc;
