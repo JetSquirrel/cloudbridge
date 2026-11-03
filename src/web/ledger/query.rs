@@ -694,6 +694,22 @@ pub fn usage_and_credits(billing_period: &str) -> Result<(f64, f64)> {
     })
 }
 
+/// How many of a period's rows carry no amount: usage records, which are in no
+/// total and must not read as costing nothing.
+pub fn rows_without_amount(billing_period: &str) -> Result<i64> {
+    crate::memory::with_store(|store| {
+        let count = store
+            .periods
+            .borrow()
+            .iter()
+            .filter(|period| period.key.billing_period == billing_period)
+            .flat_map(|period| period.charges.iter())
+            .filter(|charge| charge.billed_cost.is_none())
+            .count();
+        Ok(count as i64)
+    })
+}
+
 /// [`usage_and_credits`] over a charge-time window `[since, until)` instead
 /// of one billing period — the rolling-range variant, where a calendar-month
 /// key cannot express the bounds.
@@ -928,6 +944,23 @@ pub fn tag_usage_breakdown_by_service(
 }
 
 // ==================== Untagged usage ====================
+
+/// Untagged usage of a period per account, for a share of that account's own
+/// spend.
+pub fn untagged_totals_by_account(
+    billing_period: &str,
+    tag_key: &str,
+) -> Result<Vec<(String, f64)>> {
+    read(|all| {
+        let rows: Vec<&NormalizedRow> = all
+            .iter()
+            .filter(|row| row.billing_period == billing_period && untagged(row, tag_key))
+            .filter(|row| row.billed_cost_base.is_some_and(|amount| amount > 0.0))
+            .collect();
+
+        totals_by_bucket(&rows, |row| row.account_id.clone())
+    })
+}
 
 /// Untagged usage of a period summed per provider, largest first.
 pub fn untagged_totals_by_provider(

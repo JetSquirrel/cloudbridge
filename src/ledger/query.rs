@@ -246,6 +246,36 @@ pub fn untagged_totals_by_provider(
     with_connection_ref(|conn| untagged_totals_by_provider_of(conn, billing_period, tag_key))
 }
 
+/// Untagged usage of a period per account, for a share of that account's own
+/// spend.
+pub fn untagged_totals_by_account(
+    billing_period: &str,
+    tag_key: &str,
+) -> Result<Vec<(String, f64)>> {
+    with_connection_ref(|conn| untagged_totals_by_account_of(conn, billing_period, tag_key))
+}
+
+fn untagged_totals_by_account_of(
+    conn: &Connection,
+    billing_period: &str,
+    tag_key: &str,
+) -> Result<Vec<(String, f64)>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT account_id, sum(billed_cost_base) AS amount
+         FROM {NORMALIZED_VIEW}
+         WHERE billing_period = ?
+           AND coalesce(nullif(json_extract_string(tags, ?), ''), '') = ''
+           AND billed_cost_base > 0
+         GROUP BY account_id"
+    ))?;
+    let rows = stmt
+        .query_map(params![billing_period, tag_key], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /// A caller that wants "every row" passes `usize::MAX`, which wraps to -1
 /// as an i64 — and DuckDB refuses a negative LIMIT outright.
 fn bounded_limit(limit: usize) -> i64 {
@@ -615,6 +645,21 @@ fn usage_and_credits_of(conn: &Connection, billing_period: &str) -> Result<(f64,
             ..Default::default()
         },
     )
+}
+
+/// How many of a period's rows carry no amount: usage records, which are in no
+/// total and must not read as costing nothing.
+pub fn rows_without_amount(billing_period: &str) -> Result<i64> {
+    with_connection_ref(|conn| rows_without_amount_of(conn, billing_period))
+}
+
+fn rows_without_amount_of(conn: &Connection, billing_period: &str) -> Result<i64> {
+    let count = conn.query_row(
+        "SELECT count(*) FROM fct_charge WHERE billing_period = ? AND billed_cost IS NULL",
+        duckdb::params![billing_period],
+        |row| row.get(0),
+    )?;
+    Ok(count)
 }
 
 /// [`usage_and_credits`] over a charge-time window `[since, until)`
@@ -4478,6 +4523,22 @@ mod tests {
     }
 
     #[test]
+    fn untagged_totals_split_a_provider_by_account() {
+        let mut conn = conn("USD");
+        let other = PeriodKey::new("AWS", "other-account", "2026-08");
+        write(&mut conn, &aws(), &[charge("EC2", 10.0, "USD", 1)]);
+        write(&mut conn, &other, &[charge("EC2", 90.0, "USD", 1)]);
+
+        let totals: std::collections::HashMap<String, f64> =
+            untagged_totals_by_account_of(&conn, "2026-08", "business_line")
+                .unwrap()
+                .into_iter()
+                .collect();
+        assert_eq!(totals.get("acct-1"), Some(&10.0));
+        assert_eq!(totals.get("other-account"), Some(&90.0));
+    }
+
+    #[test]
     fn account_findings_read_only_that_accounts_charges() {
         let mut conn = conn("USD");
         let aws_key = aws();
@@ -5031,5 +5092,46 @@ mod tests {
         let rows = daily_model_tokens_of(&conn, at(1), at(3)).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].day, "2026-08-02");
+    }
+}
+
+#[cfg(test)]
+mod report_tests {
+    use super::super::{schema, write_period};
+    use super::rows_without_amount_of;
+    use crate::model::{Channel, Charge, CostBasis, PeriodKey};
+    use chrono::{TimeZone, Utc};
+    use duckdb::Connection;
+
+    #[test]
+    fn rows_without_an_amount_are_counted_per_period() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema::apply(&conn).unwrap();
+        schema::apply_reporting_currency(&conn, "USD").unwrap();
+        let start = Utc.with_ymd_and_hms(2026, 8, 1, 0, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2026, 8, 2, 0, 0, 0).unwrap();
+        let tokens = Charge {
+            service_name: Some("Tokens".to_string()),
+            cost_basis: CostBasis::Absent,
+            ..Charge::new(start, end, "USD")
+        };
+        let billed = Charge {
+            service_name: Some("EC2".to_string()),
+            billed_cost: Some(1.0),
+            effective_cost: Some(1.0),
+            ..Charge::new(start, end, "USD")
+        };
+        let key = PeriodKey::new("AWS", "acct", "2026-08");
+        write_period(
+            &mut conn,
+            &key,
+            "b-1",
+            &[tokens, billed],
+            None,
+            Channel::File,
+        )
+        .unwrap();
+        assert_eq!(rows_without_amount_of(&conn, "2026-08").unwrap(), 1);
+        assert_eq!(rows_without_amount_of(&conn, "2026-09").unwrap(), 0);
     }
 }

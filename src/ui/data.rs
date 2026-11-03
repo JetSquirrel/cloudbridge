@@ -1192,7 +1192,7 @@ pub fn load_accounts() -> Result<AccountsData> {
     // Untagged usage per provider of the current period, for the badge
     // check: one period-wide query, built on first use and shared by every
     // account instead of being re-queried per account.
-    let mut untagged_by_provider: Option<BTreeMap<String, f64>> = None;
+    let mut untagged_by_account: Option<BTreeMap<String, f64>> = None;
 
     let mut rows = Vec::new();
     for account in accounts {
@@ -1218,7 +1218,7 @@ pub fn load_accounts() -> Result<AccountsData> {
             mtd,
             &open,
             &current,
-            &mut untagged_by_provider,
+            &mut untagged_by_account,
         )?;
 
         rows.push(AccountRowData {
@@ -1312,7 +1312,7 @@ fn account_state(
     mtd: f64,
     open: &[AlertView],
     current: &BillingPeriod,
-    untagged_by_provider: &mut Option<BTreeMap<String, f64>>,
+    untagged_by_account: &mut Option<BTreeMap<String, f64>>,
 ) -> Result<AccountState> {
     // The worst applicable badge wins, in the mock's order of severity.
     let low_balance = is_snapshot
@@ -1324,9 +1324,14 @@ fn account_state(
         return Ok(AccountState::LowBalance);
     }
 
+    // A rule scoped to an account names it. An unscoped rule watches the whole
+    // provider, so it can only be matched that far.
     let anomaly = open.iter().any(|alert| {
         alert.kind == AlertKind::CostAnomaly
-            && alert.context.get("provider").and_then(|v| v.as_str()) == Some(provider)
+            && match alert.context.get("account_id").and_then(|v| v.as_str()) {
+                Some(account_id) => account_id == account.id,
+                None => alert.context.get("provider").and_then(|v| v.as_str()) == Some(provider),
+            }
     });
     if anomaly {
         return Ok(AccountState::Anomaly);
@@ -1335,13 +1340,17 @@ fn account_state(
     // The month-to-date total comes from the caller, which already read it
     // for the row's mtd column.
     if mtd > 0.0 {
-        if untagged_by_provider.is_none() {
-            *untagged_by_provider = Some(untagged_usage_by_provider(&current.label())?);
+        if untagged_by_account.is_none() {
+            *untagged_by_account = Some(
+                query::untagged_totals_by_account(&current.label(), BUSINESS_LINE_TAG)?
+                    .into_iter()
+                    .collect(),
+            );
         }
-        let untagged = untagged_by_provider
+        let untagged = untagged_by_account
             .as_ref()
             .expect("just populated")
-            .get(provider)
+            .get(&account.id)
             .copied()
             .unwrap_or(0.0);
         if untagged / mtd > alerts::DEFAULT_UNTAGGED_THRESHOLD {
@@ -1350,17 +1359,6 @@ fn account_state(
     }
 
     Ok(AccountState::Healthy)
-}
-
-/// Untagged usage of a period summed per provider — one period-wide
-/// aggregate query, grouped in SQL so the per-account badge check neither
-/// re-queries for every account nor materializes the per-charge list.
-fn untagged_usage_by_provider(billing_period: &str) -> Result<BTreeMap<String, f64>> {
-    Ok(
-        query::untagged_totals_by_provider(billing_period, BUSINESS_LINE_TAG)?
-            .into_iter()
-            .collect(),
-    )
 }
 
 // ==================== Attribution ====================

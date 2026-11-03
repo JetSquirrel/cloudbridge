@@ -936,6 +936,7 @@ fn budget_status_of(
         account_id: budget.account_id.clone(),
         account_name: account.name.clone(),
         monthly_budget: budget.monthly_budget,
+        alert_threshold: budget.alert_threshold,
         current_cost,
         currency: budget.currency.clone(),
         percentage_used,

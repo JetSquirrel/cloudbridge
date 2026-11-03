@@ -42,41 +42,14 @@ const POLICIES_URL: &str = "https://cloudbridge.jetsquirrel.cloud/policies.html"
 /// What a source's API credential is and what it must be allowed to do,
 /// with the anchor of its section on the permissions page. `None` for the
 /// sources read from a bill file, whose form explains that instead.
-fn setup_hint(source_id: &str) -> Option<(&'static str, &'static str)> {
+fn setup_hint(source_id: &str) -> Option<(SharedString, &'static str)> {
     match source_id {
-        "AWS" => Some((
-            "An IAM user's access key with a policy allowing ce:GetCostAndUsage. \
-             Cost Explorer charges $0.01 per request.",
-            "aws-cost-explorer",
-        )),
-        "Aliyun" => Some((
-            "A RAM user's AccessKey with AliyunBSSReadOnlyAccess. Don't use the \
-             primary account's key.",
-            "alibaba-cloud",
-        )),
-        "Azure" => Some((
-            "An app registration's client ID and secret, with the Cost Management \
-             Reader role on the subscription. The subscription's tenant is looked up \
-             from it.",
-            "azure",
-        )),
-        "GCP" => Some((
-            "The path of a service account's JSON key, and the table the billing \
-             account's BigQuery export writes to. The account needs BigQuery Job User \
-             and Data Viewer there.",
-            "google-cloud",
-        )),
-        "Cloudflare" => Some((
-            "An API token with Account → Billing → Read — and Account → Account \
-             Analytics → Read to split the bill by bucket, Worker, D1 database and Durable \
-             Object — and the account ID. Pay-as-you-go accounts only.",
-            "cloudflare",
-        )),
-        "DeepSeek" => Some((
-            "A platform key reads the balance only; import the cost export for \
-             spend detail. The key can also spend, so keep it private.",
-            "deepseek",
-        )),
+        "AWS" => Some((tr!("accounts.hint_aws"), "aws-cost-explorer")),
+        "Aliyun" => Some((tr!("accounts.hint_aliyun"), "alibaba-cloud")),
+        "Azure" => Some((tr!("accounts.hint_azure"), "azure")),
+        "GCP" => Some((tr!("accounts.hint_gcp"), "google-cloud")),
+        "Cloudflare" => Some((tr!("accounts.hint_cloudflare"), "cloudflare")),
+        "DeepSeek" => Some((tr!("accounts.hint_deepseek"), "deepseek")),
         _ => None,
     }
 }
@@ -1365,6 +1338,17 @@ impl AccountsView {
                             )
                         },
                     )
+                    .role(Role::Link)
+                    .aria_label(row.name.clone())
+                    .tab_index(0)
+                    .on_key_down({
+                        let detail_id = detail_id.clone();
+                        move |event, _, cx| {
+                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                crate::app::navigate_to_account(detail_id.clone(), cx);
+                            }
+                        }
+                    })
                     .on_click(move |_, _, cx| {
                         crate::app::navigate_to_account(detail_id.clone(), cx)
                     }),
@@ -1427,7 +1411,7 @@ impl AccountsView {
                     // A flex parent, so the pill hugs its label instead of
                     // stretching across the lane.
                     .flex()
-                    .child(render_state(row.state, cx)),
+                    .child(render_state_link(&row.id, row.state, cx)),
             )
             .child(
                 div()
@@ -1448,6 +1432,10 @@ impl AccountsView {
                                         validate_id
                                     )))
                                     .label(tr!("accounts.validate"))
+                                    .accessibility_label(tr!(
+                                        "accounts.a11y_validate",
+                                        name = row.name
+                                    ))
                                     .ghost()
                                     .small()
                                     .disabled(self.validating_ids.contains(&row.id))
@@ -1467,6 +1455,10 @@ impl AccountsView {
                                         import_id
                                     )))
                                     .label(tr!("accounts.import"))
+                                    .accessibility_label(tr!(
+                                        "accounts.a11y_import",
+                                        name = row.name
+                                    ))
                                     .ghost()
                                     .small()
                                     .disabled(self.importing_ids.contains(&row.id))
@@ -1480,6 +1472,7 @@ impl AccountsView {
                     .child(
                         Button::new(SharedString::from(format!("delete-{}", delete_id)))
                             .label(tr!("common.delete"))
+                            .accessibility_label(tr!("accounts.a11y_delete", name = row.name))
                             .danger()
                             .ghost()
                             .small()
@@ -1812,12 +1805,10 @@ impl AccountsView {
                                     .child(div().text_sm().child(tr!("accounts.export_uri")))
                                     .child(Input::new(&self.export_uri_input))
                                     .child(
-                                        div().text_xs().text_color(theme::text_muted(cx)).child(
-                                            "Optional. A FOCUS 1.2 export from \
-                                                         Billing and Cost Management → Data \
-                                                         Exports. When set, the bill is read \
-                                                         from S3 and Cost Explorer is not called.",
-                                        ),
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme::text_muted(cx))
+                                            .child(tr!("accounts.export_uri_hint")),
                                     ),
                             )
                         })
@@ -1827,14 +1818,11 @@ impl AccountsView {
                             .bill_file
                             .filter(|_| !self.selected_source.fetches_from_api()),
                         |el, format| {
-                            el.child(div().text_sm().text_color(theme::text_muted(cx)).child(
-                                format!(
-                                    "No credentials needed: this source is read \
-                                                 from its {}. Save the account, then use \
-                                                 Import. ({})",
-                                    format.display_name, format.origin_hint
-                                ),
-                            ))
+                            el.child(div().text_sm().text_color(theme::text_muted(cx)).child(tr!(
+                                "accounts.no_credentials_needed",
+                                format = format.display_name,
+                                origin = format.origin_hint
+                            )))
                         },
                     )
                     // Offered whether or not a key was seen when the
@@ -1859,11 +1847,7 @@ impl AccountsView {
                                         Button::new("fill-from-system")
                                             .label(tr!("accounts.fill_from_system"))
                                             .ghost()
-                                            .tooltip(
-                                                "Read the credentials this machine \
-                                                         already has, from the environment or \
-                                                         the provider's credentials file",
-                                            )
+                                            .tooltip(tr!("accounts.fill_tooltip"))
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 this.fill_from_system(window, cx);
                                             })),
@@ -2131,6 +2115,31 @@ fn format_bytes(bytes: u64) -> String {
     } else {
         format!("{} B", bytes)
     }
+}
+
+/// The state badge, which leads to the alert behind it when one does.
+fn render_state_link(account_id: &str, state: data::AccountState, cx: &App) -> AnyElement {
+    let badge = render_state(state, cx);
+    if !matches!(
+        state,
+        data::AccountState::Anomaly | data::AccountState::LowBalance
+    ) {
+        return badge.into_any_element();
+    }
+    badge
+        .id(SharedString::from(format!("state-{account_id}")))
+        .role(Role::Link)
+        .aria_label(state.label())
+        .tab_index(0)
+        .cursor_pointer()
+        .tooltip(|window, cx| Tooltip::new(tr!("accounts.state_tooltip")).build(window, cx))
+        .on_key_down(|event, _, cx| {
+            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                crate::app::navigate_to(crate::app::CurrentView::Alerts, cx);
+            }
+        })
+        .on_click(|_, _, cx| crate::app::navigate_to(crate::app::CurrentView::Alerts, cx))
+        .into_any_element()
 }
 
 /// The STATE column: problems get a pill in their severity's colours,

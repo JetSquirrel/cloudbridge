@@ -709,6 +709,8 @@ pub struct BudgetStatus {
     pub account_name: String,
     /// Monthly budget
     pub monthly_budget: f64,
+    /// The percent of the budget that alerts, as saved.
+    pub alert_threshold: f64,
     /// Current month actual cost
     pub current_cost: f64,
     /// Currency

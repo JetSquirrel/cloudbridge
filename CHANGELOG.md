@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   turquoise dots above it. It replaces the bar chart over an arc.
   `assets/icon.svg` is the source, and `scripts/generate-icon.py` writes the
   PNG, ICNS and ICO from it.
+- **The menu bar and notification-area icon matches.** It is now a solid arch
+  bridge with three dots instead of a cloud, redrawn to stay legible at this
+  size. While an alert is open, an exclamation mark replaces the dots.
 ### Added
 - **Reconciliation.** A new page holds each invoice's final total against the
   ledger's authoritative billed cost, or a frozen snapshot, in the invoice's own
@@ -19,6 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Difference, Cannot verify or Missing evidence, with the breakdown by charge
   category and what to check next. Invoices are stored apart from charges and
   never change them.
+- **Security configuration on Insights.** A new read-only section flags AWS
+  security groups that open SSH or RDP to the whole internet, with the rule it
+  saw and what to check by hand. A group whose inbound rules could not be read
+  shows as Not evaluated, and a partial scan says so. Cost findings are
+  unchanged, and security findings are never summed with them.
+- **Monthly cost review.** Export report on Overview saves a chosen month as
+  one self-contained HTML file, ready to print or share: totals and the change
+  from last month, top services and regions, business lines, data health, top
+  Insights and where the data came from. It says what it leaves out, such as
+  missing exchange rates, usage with no amount or an inventory never scanned.
 - **Month-end snapshots.** Account detail can freeze a month's bill. A frozen
   copy keeps its charges, totals per billing currency, FX rates and source, and
   no later refresh or import changes it. Freezing a changed bill adds a new
@@ -58,6 +71,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names in the accessibility tree.
 
 ### Fixed
+- **Editing a budget reset its alert threshold.** Changing the amount put the
+  threshold back to 80%. The editor now starts from the saved threshold, and
+  only an account with no budget gets the default. The rule form also shows
+  the chosen account's budget, or warns that the rule won't fire without one.
+- **One account's problem marked its siblings on Accounts.** Anomaly and
+  untagged spend badges matched by provider. They now read the account, except
+  for an anomaly from a rule that watches a whole provider. An anomaly or low
+  balance badge opens Alerts.
+- **English left on Accounts and Rules in 简体中文.** The setup hints, form
+  notes and the Rules subtitle are translated, and row actions, account links
+  and rule switches name their target for assistive technology.
 - **Account detail listed other accounts' data-health findings.** It now
   reads only that account's charges, with shares of its usage, and Dismiss
   there covers only that account.
