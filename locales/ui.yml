@@ -22,6 +22,200 @@ app:
     en: Opening your data…
     zh-CN: 正在打开数据…
 
+report:
+  document_title:
+    en: "Cloud cost review %{period}"
+    zh-CN: "云成本回顾 %{period}"
+  heading:
+    en: "Cloud cost review: %{period}"
+    zh-CN: "云成本回顾：%{period}"
+  context:
+    en: "All amounts in %{currency} unless noted, generated %{at} by CloudBridge from its local ledger."
+    zh-CN: "除特别注明外，金额均为 %{currency}。由 CloudBridge 根据本地账本生成于 %{at}。"
+  demo_notice:
+    en: "This ledger includes demo accounts, so these figures may not be a real bill."
+    zh-CN: "此账本包含演示账户，这些数字可能不是真实账单。"
+  no_data:
+    en: "The ledger has no billing data for %{period}, so this report shows no totals. That is not the same as a month that cost nothing."
+    zh-CN: "账本中没有 %{period} 的账单数据，因此本报告不显示合计。这并不代表当月没有费用。"
+  summary_change:
+    en: "Net cost was %{net}, %{change} against %{previous} the month before. Usage was %{usage}, credits %{credits}."
+    zh-CN: "净成本为 %{net}，与上月的 %{previous} 相比变化 %{change}。用量为 %{usage}，抵扣为 %{credits}。"
+  summary_open:
+    en: "Net cost so far is %{net}. The whole month before came to %{previous}. Usage so far is %{usage}, credits %{credits}."
+    zh-CN: "目前净成本为 %{net}。上月全月为 %{previous}。目前用量为 %{usage}，抵扣为 %{credits}。"
+  not_by_service:
+    en: "Credits and other amounts not listed by service"
+    zh-CN: "抵扣及其他未按服务列出的金额"
+  summary_no_change:
+    en: "Net cost was %{net}. Usage was %{usage}, credits %{credits}. The month before is too small to compare with."
+    zh-CN: "净成本为 %{net}。用量为 %{usage}，抵扣为 %{credits}。上月金额太小，无法比较。"
+  limits:
+    en: "What these figures leave out"
+    zh-CN: "这些数字未涵盖的内容"
+  limit_open:
+    en: "This month has not ended, so its figures are month to date. The previous month's column is that whole month, so no change is shown."
+    zh-CN: "本月尚未结束，数字为月初至今。上月一列是整月金额，因此不显示变化。"
+  limit_unconverted:
+    en: "%{rows} charges have no exchange rate to %{currency} and are in no total here."
+    zh-CN: "%{rows} 条费用没有到 %{currency} 的汇率，未计入此处任何合计。"
+  limit_absent:
+    en: "%{rows} usage rows carry no amount and are in no total here."
+    zh-CN: "%{rows} 行用量记录没有金额，未计入此处任何合计。"
+  limit_not_scanned:
+    en: "No inventory has been scanned, so Insights were not evaluated."
+    zh-CN: "尚未扫描资源清单，因此未评估洞察。"
+  limit_partial_scan:
+    en: "The inventory scan was partial, so Insights may have missed resources."
+    zh-CN: "资源清单扫描不完整，洞察可能遗漏部分资源。"
+  services:
+    en: "Cost by service"
+    zh-CN: "按服务的成本"
+  col_service:
+    en: "Service"
+    zh-CN: "服务"
+  col_previous:
+    en: "Previous month"
+    zh-CN: "上月"
+  col_change:
+    en: "Change"
+    zh-CN: "变化"
+  other_services:
+    en: "%{n} other services"
+    zh-CN: "其他 %{n} 个服务"
+  net_total:
+    en: "Net total"
+    zh-CN: "净合计"
+  regions:
+    en: "Net cost by region"
+    zh-CN: "按区域的净成本"
+  col_region:
+    en: "Region"
+    zh-CN: "区域"
+  business_lines:
+    en: "Usage by business line"
+    zh-CN: "按业务线的用量"
+  col_business_line:
+    en: "Business line"
+    zh-CN: "业务线"
+  col_amount:
+    en: "Amount"
+    zh-CN: "金额"
+  no_rows:
+    en: "No rows for this month."
+    zh-CN: "本月没有相关记录。"
+  outlook:
+    en: "Forecast and budgets"
+    zh-CN: "预测与预算"
+  outlook_skipped:
+    en: "Skipped: forecasts and budgets describe a month in progress, and this one has ended."
+    zh-CN: "已跳过：预测和预算针对进行中的月份，而这个月已经结束。"
+  forecast:
+    en: "Month-end forecast: %{forecast}, from %{days} of %{total} days."
+    zh-CN: "月末预测：%{forecast}，基于 %{total} 天中的 %{days} 天。"
+  forecast_missing:
+    en: "No forecast could be computed for this month."
+    zh-CN: "无法计算本月预测。"
+  no_budgets:
+    en: "No budgets are set."
+    zh-CN: "尚未设置预算。"
+  col_account:
+    en: "Account"
+    zh-CN: "账户"
+  col_budget:
+    en: "Budget"
+    zh-CN: "预算"
+  col_spent:
+    en: "Spent"
+    zh-CN: "已用"
+  col_used:
+    en: "Used"
+    zh-CN: "使用率"
+  data_health:
+    en: "Data health"
+    zh-CN: "数据健康"
+  data_health_clean:
+    en: "The data health checks found nothing for this month."
+    zh-CN: "数据健康检查未发现本月问题。"
+  severity_critical:
+    en: "Critical"
+    zh-CN: "严重"
+  severity_warning:
+    en: "Warning"
+    zh-CN: "警告"
+  severity_info:
+    en: "Info"
+    zh-CN: "提示"
+  insights:
+    en: "Insights"
+    zh-CN: "洞察"
+  insights_unavailable:
+    en: "Insights were unavailable: no inventory has been scanned. This does not mean there are no findings."
+    zh-CN: "洞察不可用：尚未扫描资源清单。这并不代表没有发现问题。"
+  insights_scope:
+    en: "Judged against %{resources} resources scanned %{at}."
+    zh-CN: "基于 %{at} 扫描的 %{resources} 个资源进行评估。"
+  insights_none:
+    en: "No findings for the resources scanned."
+    zh-CN: "已扫描的资源没有发现问题。"
+  insights_none_partial:
+    en: "No findings, but the scan was partial, so some resources were not judged."
+    zh-CN: "没有发现问题，但扫描不完整，部分资源未被评估。"
+  insights_more:
+    en: "Showing the first %{shown} of %{total} findings. The Insights page has them all."
+    zh-CN: "显示前 %{shown} 项，共 %{total} 项发现。洞察页面列出了全部内容。"
+  col_resource:
+    en: "Resource"
+    zh-CN: "资源"
+  col_type:
+    en: "Type"
+    zh-CN: "类型"
+  col_evidence:
+    en: "Evidence"
+    zh-CN: "依据"
+  sources:
+    en: "Sources"
+    zh-CN: "数据来源"
+  col_source:
+    en: "Source"
+    zh-CN: "来源"
+  col_channel:
+    en: "Channel"
+    zh-CN: "渠道"
+  col_last_ingest:
+    en: "Last ingest"
+    zh-CN: "最近导入"
+  channel_api:
+    en: "Provider API"
+    zh-CN: "服务商 API"
+  channel_file:
+    en: "Imported file"
+    zh-CN: "导入文件"
+report_ui:
+  button:
+    en: "Export report"
+    zh-CN: "导出报告"
+  tooltip:
+    en: "Save a month's cost review as one HTML file you can print or share"
+    zh-CN: "将某月的成本回顾保存为一个可打印或分享的 HTML 文件"
+  title:
+    en: "Export monthly cost review"
+    zh-CN: "导出月度成本回顾"
+  hint:
+    en: "Pick a month. The report covers every account, in the reporting currency, and states what it leaves out."
+    zh-CN: "选择月份。报告涵盖所有账户，以报告币种显示，并说明未涵盖的内容。"
+  no_months:
+    en: "The ledger has no billing data yet. Refresh or import an account first."
+    zh-CN: "账本中还没有账单数据。请先刷新或导入账户。"
+  export:
+    en: "Choose file and export"
+    zh-CN: "选择文件并导出"
+  saved:
+    en: "Saved to %{path}"
+    zh-CN: "已保存到 %{path}"
+  failed:
+    en: "Could not export the report: %{error}"
+    zh-CN: "无法导出报告：%{error}"
 nav:
   workspace:
     en: COSTS

@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `assets/icon.svg` is the source, and `scripts/generate-icon.py` writes the
   PNG, ICNS and ICO from it.
 ### Added
+- **Monthly cost review.** Export report on Overview saves a chosen month as
+  one self-contained HTML file, ready to print or share: totals and the change
+  from last month, top services and regions, business lines, data health, top
+  Insights and where the data came from. It says what it leaves out, such as
+  missing exchange rates, usage with no amount or an inventory never scanned.
 - **Simplified Chinese.** Every page, dialog, the menu bar panel, its tray
   menu and the system notifications are translated into 简体中文, and
   gpui-kit's own components follow along. The language follows the

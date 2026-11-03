@@ -16,6 +16,7 @@ pub mod models;
 pub mod overview;
 pub mod palette;
 pub mod query;
+mod report;
 pub mod rules;
 pub mod settings;
 pub mod theme;

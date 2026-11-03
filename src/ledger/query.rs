@@ -617,6 +617,21 @@ fn usage_and_credits_of(conn: &Connection, billing_period: &str) -> Result<(f64,
     )
 }
 
+/// How many of a period's rows carry no amount: usage records, which are in no
+/// total and must not read as costing nothing.
+pub fn rows_without_amount(billing_period: &str) -> Result<i64> {
+    with_connection_ref(|conn| rows_without_amount_of(conn, billing_period))
+}
+
+fn rows_without_amount_of(conn: &Connection, billing_period: &str) -> Result<i64> {
+    let count = conn.query_row(
+        "SELECT count(*) FROM fct_charge WHERE billing_period = ? AND billed_cost IS NULL",
+        duckdb::params![billing_period],
+        |row| row.get(0),
+    )?;
+    Ok(count)
+}
+
 /// [`usage_and_credits`] over a charge-time window `[since, until)`
 /// instead of one billing period — the rolling-range variant, where a
 /// calendar-month key cannot express the bounds.
@@ -5031,5 +5046,46 @@ mod tests {
         let rows = daily_model_tokens_of(&conn, at(1), at(3)).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].day, "2026-08-02");
+    }
+}
+
+#[cfg(test)]
+mod report_tests {
+    use super::super::{schema, write_period};
+    use super::rows_without_amount_of;
+    use crate::model::{Channel, Charge, CostBasis, PeriodKey};
+    use chrono::{TimeZone, Utc};
+    use duckdb::Connection;
+
+    #[test]
+    fn rows_without_an_amount_are_counted_per_period() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema::apply(&conn).unwrap();
+        schema::apply_reporting_currency(&conn, "USD").unwrap();
+        let start = Utc.with_ymd_and_hms(2026, 8, 1, 0, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2026, 8, 2, 0, 0, 0).unwrap();
+        let tokens = Charge {
+            service_name: Some("Tokens".to_string()),
+            cost_basis: CostBasis::Absent,
+            ..Charge::new(start, end, "USD")
+        };
+        let billed = Charge {
+            service_name: Some("EC2".to_string()),
+            billed_cost: Some(1.0),
+            effective_cost: Some(1.0),
+            ..Charge::new(start, end, "USD")
+        };
+        let key = PeriodKey::new("AWS", "acct", "2026-08");
+        write_period(
+            &mut conn,
+            &key,
+            "b-1",
+            &[tokens, billed],
+            None,
+            Channel::File,
+        )
+        .unwrap();
+        assert_eq!(rows_without_amount_of(&conn, "2026-08").unwrap(), 1);
+        assert_eq!(rows_without_amount_of(&conn, "2026-09").unwrap(), 0);
     }
 }
