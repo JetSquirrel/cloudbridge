@@ -85,6 +85,13 @@ fn pages() -> Vec<Page> {
             action: || Box::new(app::SwitchToInsights),
             keywords: &["idle", "savings", "resources"],
         },
+        Page {
+            label: "Reconciliation",
+            key: "nav.reconciliation",
+            icon: IconName::CircleCheck,
+            action: || Box::new(app::SwitchToReconciliation),
+            keywords: &["invoice", "bill", "match"],
+        },
     ];
     #[cfg(not(target_family = "wasm"))]
     pages.push(Page {
@@ -277,6 +284,7 @@ fn page_views() -> Vec<app::CurrentView> {
         CurrentView::Attribution,
         CurrentView::Models,
         CurrentView::Insights,
+        CurrentView::Reconciliation,
     ];
     #[cfg(not(target_family = "wasm"))]
     views.push(CurrentView::Query);

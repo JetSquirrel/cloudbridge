@@ -23,6 +23,9 @@ app:
     zh-CN: 正在打开数据…
 
 nav:
+  reconciliation:
+    en: Reconciliation
+    zh-CN: 账单核对
   workspace:
     en: COSTS
     zh-CN: 成本
@@ -778,6 +781,223 @@ models:
     en: ", and "
     zh-CN: "，以及 "
 
+reconciliation:
+  title:
+    en: "Reconciliation"
+    zh-CN: "账单核对"
+  subtitle:
+    en: "Does each provider's final bill match what was imported? Only authoritative billed cost in the invoice's currency is compared."
+    zh-CN: "各服务商的最终账单与导入的数据是否一致？只比较发票币种下的权威账单金额。"
+  filter_placeholder:
+    en: "Filter by source, account, month or invoice"
+    zh-CN: "按来源、账户、月份或发票筛选"
+  all:
+    en: "All"
+    zh-CN: "全部"
+  status_matched:
+    en: "Matched"
+    zh-CN: "一致"
+  status_difference:
+    en: "Difference"
+    zh-CN: "有差异"
+  status_cannot_verify:
+    en: "Cannot verify"
+    zh-CN: "无法核实"
+  status_missing:
+    en: "Missing evidence"
+    zh-CN: "缺少凭据"
+  import_csv:
+    en: "Import invoice CSV"
+    zh-CN: "导入发票 CSV"
+  enter_total:
+    en: "Enter total"
+    zh-CN: "录入总额"
+  col_account:
+    en: "Account"
+    zh-CN: "账户"
+  col_month:
+    en: "Month"
+    zh-CN: "月份"
+  col_invoice_id:
+    en: "Invoice ID"
+    zh-CN: "发票编号"
+  col_invoice:
+    en: "Invoice"
+    zh-CN: "发票"
+  col_ledger:
+    en: "Ledger"
+    zh-CN: "账本"
+  col_difference:
+    en: "Difference"
+    zh-CN: "差额"
+  col_status:
+    en: "Status"
+    zh-CN: "状态"
+  col_currency:
+    en: "Currency"
+    zh-CN: "币种"
+  col_category:
+    en: "Category"
+    zh-CN: "类别"
+  total:
+    en: "Total"
+    zh-CN: "合计"
+  category_rows:
+    en: "%{category} (%{rows} rows)"
+    zh-CN: "%{category}（%{rows} 行）"
+  empty:
+    en: "No invoices or billed months yet. Refresh an account, then enter an invoice total or import a CSV."
+    zh-CN: "还没有发票或已出账的月份。请先刷新账户，再录入发票总额或导入 CSV。"
+  no_match:
+    en: "No rows match this filter."
+    zh-CN: "没有符合筛选条件的行。"
+  load_failed:
+    en: "Could not load reconciliation: %{error}"
+    zh-CN: "无法加载账单核对：%{error}"
+  save_failed:
+    en: "Could not save the invoice: %{error}"
+    zh-CN: "无法保存发票：%{error}"
+  saved:
+    en: "Saved invoice %{reference}."
+    zh-CN: "已保存发票 %{reference}。"
+  imported:
+    en: "Imported %{n} invoices."
+    zh-CN: "已导入 %{n} 张发票。"
+  missing_body:
+    en: "This month has billed charges and no invoice to compare them with, so it has not been checked."
+    zh-CN: "本月已有账单费用，但没有可比对的发票，因此尚未核对。"
+  compare_with:
+    en: "Compare with"
+    zh-CN: "比对对象"
+  basis_current:
+    en: "Current ledger"
+    zh-CN: "当前账本"
+  basis_line:
+    en: "Basis: authoritative billed cost in %{currency}, tolerance %{tolerance}. %{authoritative} of %{rows} rows carry it, dated %{from} to %{through}."
+    zh-CN: "依据：%{currency} 的权威账单金额，容差 %{tolerance}。%{rows} 行中有 %{authoritative} 行计入，日期从 %{from} 到 %{through}。"
+  evidence:
+    en: "Invoice evidence"
+    zh-CN: "发票凭据"
+  evidence_line:
+    en: "%{reference}: %{amount}, %{source}, recorded %{at}"
+    zh-CN: "%{reference}：%{amount}，%{source}，记录于 %{at}"
+  source_manual:
+    en: "entered by hand"
+    zh-CN: "手动录入"
+  source_csv:
+    en: "from a CSV"
+    zh-CN: "来自 CSV"
+  source_csv_file:
+    en: "from %{file}"
+    zh-CN: "来自 %{file}"
+  delete_title:
+    en: "Delete invoice %{reference}?"
+    zh-CN: "删除发票 %{reference}？"
+  delete_body:
+    en: "Only this evidence is removed. The ledger and any snapshots stay as they are."
+    zh-CN: "只会删除这份凭据，账本和快照都不受影响。"
+  form_title:
+    en: "Enter invoice total"
+    zh-CN: "录入发票总额"
+  form_hint:
+    en: "Total is the invoice's final amount. Tax, credits and adjustments are what it states, are not added to the total, and only help explain a difference."
+    zh-CN: "总额是发票的最终金额。税费、抵扣和调整是发票上列明的内容，不会计入总额，只用于解释差异。"
+  field_total:
+    en: "Total"
+    zh-CN: "总额"
+  field_billing_account:
+    en: "Billing account ID"
+    zh-CN: "结算账户 ID"
+  no_accounts:
+    en: "Add an account first."
+    zh-CN: "请先添加账户。"
+  save:
+    en: "Save invoice"
+    zh-CN: "保存发票"
+  ph_reference:
+    en: "e.g. 2041-7733"
+    zh-CN: "例如 2041-7733"
+  ph_optional:
+    en: "Optional"
+    zh-CN: "可选"
+  ph_credits:
+    en: "Optional, zero or negative"
+    zh-CN: "可选，零或负数"
+  reason_no_rows:
+    en: "The ledger has no charges for this month. Refresh the account or import the month's export."
+    zh-CN: "账本中没有本月费用。请刷新账户或导入当月账单。"
+  reason_currency:
+    en: "The ledger has no charges in the invoice's currency, and amounts are not converted to compare them. Check the invoice's currency."
+    zh-CN: "账本中没有发票币种的费用，比对时也不会换算金额。请检查发票币种。"
+  reason_no_amounts:
+    en: "Every charge in this currency is usage with no amount, so there is no billed figure to compare."
+    zh-CN: "此币种的费用都是没有金额的用量记录，因此没有账单金额可比对。"
+  reason_open:
+    en: "This month has not ended, so its charges are not final. Check again after the bill closes."
+    zh-CN: "本月尚未结束，费用还不是最终结果。请在出账后再次核对。"
+  reason_non_authoritative:
+    en: "%{rows} rows carry a derived or estimated amount and are left out of the ledger figure. Import the provider's billed export for this month."
+    zh-CN: "%{rows} 行是推算或估算金额，未计入账本金额。请导入服务商当月的账单导出。"
+  reason_billing_accounts:
+    en: "The charges span %{accounts} billing accounts. Set the invoice's billing account ID so it is compared with the right one."
+    zh-CN: "这些费用涉及 %{accounts} 个结算账户。请填写发票的结算账户 ID，以便与正确的账户比对。"
+  reason_partial:
+    en: "The charges only run from %{from} to %{through}, so the export looks partial. Import the full month."
+    zh-CN: "费用只覆盖 %{from} 到 %{through}，账单导出可能不完整。请导入完整月份。"
+  reason_tax:
+    en: "Tax differs between the invoice and the ledger, or sits on one side only. Check whether the export includes tax."
+    zh-CN: "发票与账本的税费不一致，或只出现在一侧。请检查账单导出是否包含税费。"
+  reason_credits:
+    en: "Credits differ between the invoice and the ledger, or sit on one side only. Look for a credit or refund applied late."
+    zh-CN: "发票与账本的抵扣不一致，或只出现在一侧。请查看是否有延后入账的抵扣或退款。"
+  reason_adjustments:
+    en: "Adjustments differ between the invoice and the ledger, or sit on one side only. Look for a late adjustment or a revised bill."
+    zh-CN: "发票与账本的调整不一致，或只出现在一侧。请查看是否有延后调整或修订账单。"
+  reason_month:
+    en: "The invoice's total fits the ledger's %{period}. Check which billing month it belongs to."
+    zh-CN: "发票总额与账本 %{period} 的金额相符。请确认它属于哪个账单月份。"
+  reason_usage:
+    en: "%{rows} usage rows carry no amount. They are not in the figure and do not change it."
+    zh-CN: "%{rows} 行用量记录没有金额，未计入也不影响比对结果。"
+  reason_other_currency:
+    en: "%{rows} charges in %{currency} are not on this invoice's side of the comparison."
+    zh-CN: "%{currency} 的 %{rows} 条费用不在这张发票的比对范围内。"
+  error_missing:
+    en: "%{field} is required."
+    zh-CN: "必须填写 %{field}。"
+  error_period:
+    en: "%{value} is not a month. Use YYYY-MM."
+    zh-CN: "%{value} 不是有效月份。请使用 YYYY-MM 格式。"
+  error_currency:
+    en: "%{value} is not a currency code. Use three letters, such as USD."
+    zh-CN: "%{value} 不是币种代码。请使用三个字母，例如 USD。"
+  error_amount:
+    en: "%{field} %{value} is not a plain number. Use digits and a decimal point, with no thousands separator."
+    zh-CN: "%{field} %{value} 不是普通数字。请只使用数字和小数点，不要加千位分隔符。"
+  error_credit:
+    en: "Credits of %{value} would add to the bill. Enter credits as zero or negative."
+    zh-CN: "抵扣 %{value} 会增加账单金额。请填写零或负数。"
+  csv_format:
+    en: "A CSV with a header row: %{columns}. Columns from tax on are optional."
+    zh-CN: "带表头的 CSV：%{columns}。tax 及之后的列可选。"
+  csv_empty:
+    en: "The file has no invoices."
+    zh-CN: "文件中没有发票。"
+  csv_column:
+    en: "The file has no %{column} column."
+    zh-CN: "文件缺少 %{column} 列。"
+  csv_fields:
+    en: "Line %{line} does not have the header's number of fields. Nothing was imported."
+    zh-CN: "第 %{line} 行的字段数与表头不一致，未导入任何内容。"
+  csv_row:
+    en: "Line %{line}: %{error} Nothing was imported."
+    zh-CN: "第 %{line} 行：%{error} 未导入任何内容。"
+  csv_unreadable:
+    en: "Could not read the file: %{error}"
+    zh-CN: "无法读取文件：%{error}"
+  csv_unknown_account:
+    en: "The file names %{provider} %{account}, which is not one of your accounts. Nothing was imported."
+    zh-CN: "文件中的 %{provider} %{account} 不是你的账户，未导入任何内容。"
 snapshots:
   title:
     en: "Month-end snapshots"

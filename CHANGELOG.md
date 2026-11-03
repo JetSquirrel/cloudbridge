@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `assets/icon.svg` is the source, and `scripts/generate-icon.py` writes the
   PNG, ICNS and ICO from it.
 ### Added
+- **Reconciliation.** A new page holds each invoice's final total against the
+  ledger's authoritative billed cost, or a frozen snapshot, in the invoice's own
+  currency. Enter a total or import a CSV, and each month reads as Matched,
+  Difference, Cannot verify or Missing evidence, with the breakdown by charge
+  category and what to check next. Invoices are stored apart from charges and
+  never change them.
 - **Month-end snapshots.** Account detail can freeze a month's bill. A frozen
   copy keeps its charges, totals per billing currency, FX rates and source, and
   no later refresh or import changes it. Freezing a changed bill adds a new

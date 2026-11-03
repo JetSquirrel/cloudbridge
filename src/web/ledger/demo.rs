@@ -59,6 +59,8 @@ pub fn seed_demo() -> Result<String> {
         record_balance(&snapshot)?;
     }
 
+    super::invoice::save_invoices(&demo_data::invoices(&periods, now))?;
+
     // An imported scan is real data: the demo does not replace it. (The
     // browser imports none, but the rule is the desktop's.)
     let imported = memory::with_store(|store| {
@@ -111,6 +113,10 @@ pub fn clear_demo() -> Result<String> {
                 .snapshots
                 .borrow_mut()
                 .retain(|stored| !stored.snapshot.key.account_id.starts_with(DEMO_PREFIX));
+            store
+                .invoices
+                .borrow_mut()
+                .retain(|invoice| !invoice.key.account_id.starts_with(DEMO_PREFIX));
             store
                 .balances
                 .borrow_mut()
