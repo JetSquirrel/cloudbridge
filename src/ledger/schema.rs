@@ -62,7 +62,11 @@ use duckdb::{params, Connection};
 /// `complete` to `inventory_scan`, since a partial scan is now imported.
 /// An inventory imported before keeps NULL times and counts as complete,
 /// which is what an earlier import required.
-pub const SCHEMA_VERSION: i32 = 9;
+///
+/// v10 adds `billing_snapshot` and `billing_snapshot_charge`: frozen copies
+/// of a period's bill, which whole-period replacement never touches. New
+/// tables only, so the CREATEs below are the migration.
+pub const SCHEMA_VERSION: i32 = 10;
 
 /// The view the application reads: every charge with its amount also
 /// expressed in the reporting currency.
@@ -177,6 +181,67 @@ pub fn apply(conn: &Connection) -> Result<()> {
             ON fct_charge (provider, account_id, billing_period);
         CREATE INDEX IF NOT EXISTS idx_charge_batch
             ON fct_charge (batch_id);
+
+        -- A month frozen by the user. Written once and never updated: a later
+        -- freeze of the period is a new revision. Totals and rates are JSON
+        -- array text, so what the month showed needs no other table to read.
+        CREATE TABLE IF NOT EXISTS billing_snapshot (
+            snapshot_id        VARCHAR PRIMARY KEY,
+            provider           VARCHAR NOT NULL,
+            account_id         VARCHAR NOT NULL,
+            billing_period     VARCHAR NOT NULL,   -- YYYY-MM
+            revision           INTEGER NOT NULL,
+            frozen_at          TIMESTAMP NOT NULL,
+            batch_id           VARCHAR,
+            channel            VARCHAR NOT NULL,   -- api | file
+            source_ref         VARCHAR,
+            batch_completed_at TIMESTAMP,
+            row_count          BIGINT NOT NULL,
+            checksum           VARCHAR NOT NULL,
+            reporting_currency VARCHAR NOT NULL,
+            period_open        BOOLEAN NOT NULL,
+            totals             VARCHAR NOT NULL,
+            fx_rates           VARCHAR NOT NULL,
+            UNIQUE (provider, account_id, billing_period, revision)
+        );
+
+        -- The frozen rows: fct_charge's columns, plus the rate each converted
+        -- at. Independent of fct_charge and dim_fx_rate once written.
+        CREATE TABLE IF NOT EXISTS billing_snapshot_charge (
+            snapshot_id         VARCHAR NOT NULL,
+            charge_id           VARCHAR NOT NULL,
+            billing_account_id  VARCHAR,
+            charge_period_start TIMESTAMP NOT NULL,
+            charge_period_end   TIMESTAMP NOT NULL,
+            charge_category     VARCHAR NOT NULL,
+            charge_description  VARCHAR,
+            service_name        VARCHAR,
+            service_category    VARCHAR,
+            resource_id         VARCHAR,
+            resource_name       VARCHAR,
+            region_id           VARCHAR,
+            billed_cost         DOUBLE,
+            effective_cost      DOUBLE,
+            list_cost           DOUBLE,
+            billing_currency    VARCHAR NOT NULL,
+            cost_basis          VARCHAR NOT NULL,
+            pricing_quantity    DOUBLE,
+            pricing_unit        VARCHAR,
+            tags                VARCHAR,
+            sub_account_id      VARCHAR,
+            sub_account_name    VARCHAR,
+            service_subcategory VARCHAR,
+            x_service_code      VARCHAR,
+            x_model             VARCHAR,
+            consumed_quantity   DOUBLE,
+            consumed_unit       VARCHAR,
+            sku_meter           VARCHAR,
+            sku_price_details   VARCHAR,
+            principal_id        VARCHAR,
+            credential_id       VARCHAR,
+            requester_details   VARCHAR,
+            fx_rate             DOUBLE
+        );
 
         -- A balance is state, not a charge: sources that only report one
         -- (DeepSeek today) land here, and only their top-ups become charges.

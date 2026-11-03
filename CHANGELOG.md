@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from last month, top services and regions, business lines, data health, top
   Insights and where the data came from. It says what it leaves out, such as
   missing exchange rates, usage with no amount or an inventory never scanned.
+- **Month-end snapshots.** Account detail can freeze a month's bill. A frozen
+  copy keeps its charges, totals per billing currency, FX rates and source, and
+  no later refresh or import changes it. Freezing a changed bill adds a new
+  revision; deleting an account's billing history removes its snapshots too.
+  The card compares a revision with the ledger, by currency, service and
+  category, and a row opens the charges behind it.
 - **Simplified Chinese.** Every page, dialog, the menu bar panel, its tray
   menu and the system notifications are translated into 简体中文, and
   gpui-kit's own components follow along. The language follows the

@@ -386,7 +386,7 @@ impl Drop for StagingDir {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::cloud::raw::{PayloadFile, RawPart};
     use crate::cloud::BillingPeriod;
@@ -629,6 +629,29 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join(",")
+    }
+
+    /// Charges an AWS FOCUS CSV export normalizes to, one row per
+    /// `(service, category, billed cost)`.
+    pub(crate) fn charges_from_csv(rows: &[(&str, &str, &str)]) -> Vec<crate::model::Charge> {
+        let mut csv = format!("{CSV_HEADER}\n");
+        for (service, category, cost) in rows {
+            csv.push_str(&csv_line(&[
+                ("BilledCost", cost),
+                ("BillingAccountId", "123456789012"),
+                ("BillingCurrency", "USD"),
+                ("ChargeCategory", category),
+                ("ChargeDescription", service),
+                ("ChargePeriodEnd", "2026-08-02T00:00:00.000Z"),
+                ("ChargePeriodStart", "2026-08-01T00:00:00.000Z"),
+                ("EffectiveCost", cost),
+                ("ServiceName", service),
+            ]));
+            csv.push('\n');
+        }
+        let mut batch = batch_with(gzip(&csv));
+        batch.payload_files[0].name = "focus-0.csv.gz".to_string();
+        normalize(&batch).unwrap().charges
     }
 
     fn gzip(text: &str) -> Vec<u8> {

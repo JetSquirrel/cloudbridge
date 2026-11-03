@@ -108,6 +108,10 @@ pub fn clear_demo() -> Result<String> {
                 .borrow_mut()
                 .retain(|period| !period.batch_id.starts_with(DEMO_PREFIX));
             store
+                .snapshots
+                .borrow_mut()
+                .retain(|stored| !stored.snapshot.key.account_id.starts_with(DEMO_PREFIX));
+            store
                 .balances
                 .borrow_mut()
                 .retain(|snapshot| !snapshot.account_id.starts_with(DEMO_PREFIX));
