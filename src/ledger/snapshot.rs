@@ -61,6 +61,11 @@ pub fn current_lines(key: &PeriodKey) -> Result<Vec<SnapshotLine>> {
     with_connection_ref(|conn| read_current(conn, key))
 }
 
+/// Where the ledger's current rows for a period came from.
+pub fn current_source(key: &PeriodKey) -> Result<BatchSource> {
+    with_connection_ref(|conn| batch_source(conn, key))
+}
+
 /// The periods an account has rows or a snapshot for, newest first.
 pub fn periods_of(account_id: &str) -> Result<Vec<PeriodKey>> {
     with_connection_ref(|conn| periods_of_account(conn, account_id))
@@ -213,12 +218,7 @@ fn batch_source(conn: &Connection, key: &PeriodKey) -> Result<BatchSource> {
             source_ref,
             completed_at: completed_at.as_deref().map(parse_timestamp).transpose()?,
         }),
-        None => Ok(BatchSource {
-            batch_id: None,
-            channel: Channel::Api,
-            source_ref: None,
-            completed_at: None,
-        }),
+        None => Ok(BatchSource::unknown()),
     }
 }
 
@@ -452,7 +452,12 @@ mod tests {
         write(&mut conn, "b-1", &[usage("EC2", 10.0, "USD")], Channel::Api);
         let snapshot = frozen(freeze_of(&mut conn, &key(), after_month_end()).unwrap());
 
-        write(&mut conn, "b-2", &[usage("EC2", 11.0, "USD")], Channel::File);
+        write(
+            &mut conn,
+            "b-2",
+            &[usage("EC2", 11.0, "USD")],
+            Channel::File,
+        );
 
         let lines = stored_lines(&conn, &snapshot.snapshot_id).unwrap();
         assert!(snapshot::verify(&snapshot, &lines));

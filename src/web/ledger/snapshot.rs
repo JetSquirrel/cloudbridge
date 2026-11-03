@@ -3,7 +3,7 @@
 //! `replace_period` has nothing to reach. The arithmetic is shared, in
 //! [`crate::analytics::snapshot`].
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use chrono::Utc;
 
 use crate::analytics::snapshot::{self, BatchSource};
@@ -25,18 +25,7 @@ pub fn freeze_period(key: &PeriodKey) -> Result<FreezeOutcome> {
             }
         }
 
-        let source = store
-            .periods
-            .borrow()
-            .iter()
-            .find(|period| period.key == *key)
-            .map(|period| BatchSource {
-                batch_id: Some(period.batch_id.clone()),
-                channel: period.channel,
-                source_ref: None,
-                completed_at: Some(period.completed_at),
-            })
-            .ok_or_else(|| anyhow!("No period {} in the store", key.billing_period))?;
+        let source = source_of(store, key);
         let frozen = snapshot::build(
             key,
             latest.map_or(1, |latest| latest.revision + 1),
@@ -86,6 +75,11 @@ pub fn current_lines(key: &PeriodKey) -> Result<Vec<SnapshotLine>> {
     memory::with_store(|store| Ok(lines_of(store, key)))
 }
 
+/// Where the ledger's current rows for a period came from.
+pub fn current_source(key: &PeriodKey) -> Result<BatchSource> {
+    memory::with_store(|store| Ok(source_of(store, key)))
+}
+
 /// The periods an account has rows or a snapshot for, newest first.
 pub fn periods_of(account_id: &str) -> Result<Vec<PeriodKey>> {
     memory::with_store(|store| {
@@ -108,6 +102,20 @@ pub fn periods_of(account_id: &str) -> Result<Vec<PeriodKey>> {
         keys.dedup_by(|a, b| a.billing_period == b.billing_period);
         Ok(keys)
     })
+}
+
+fn source_of(store: &Store, key: &PeriodKey) -> BatchSource {
+    store
+        .periods
+        .borrow()
+        .iter()
+        .find(|period| period.key == *key)
+        .map_or_else(BatchSource::unknown, |period| BatchSource {
+            batch_id: Some(period.batch_id.clone()),
+            channel: period.channel,
+            source_ref: None,
+            completed_at: Some(period.completed_at),
+        })
 }
 
 fn latest_of(store: &Store, key: &PeriodKey) -> Option<BillingSnapshot> {

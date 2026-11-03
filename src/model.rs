@@ -340,6 +340,38 @@ pub struct AmountDelta {
     pub delta: f64,
 }
 
+/// How one charge differs between a frozen month and the ledger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineChangeKind {
+    New,
+    Removed,
+    Changed,
+}
+
+/// One charge that differs, with enough of it to find it in the source bill.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LineChange {
+    pub kind: LineChangeKind,
+    /// The group this charge counts under in `by_service` and `by_category`.
+    pub service: String,
+    pub category: String,
+    pub currency: String,
+    pub description: Option<String>,
+    pub resource_id: Option<String>,
+    pub region_id: Option<String>,
+    pub charge_period_start: DateTime<Utc>,
+    pub frozen: Option<f64>,
+    pub current: Option<f64>,
+    /// The FOCUS columns that differ on a changed charge, amounts included.
+    pub fields: Vec<&'static str>,
+}
+
+impl LineChange {
+    pub fn delta(&self) -> f64 {
+        self.current.unwrap_or(0.0) - self.frozen.unwrap_or(0.0)
+    }
+}
+
 /// How a frozen month differs from the ledger's current one.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SnapshotComparison {
@@ -350,6 +382,8 @@ pub struct SnapshotComparison {
     pub by_currency: Vec<CurrencyDelta>,
     pub by_service: Vec<AmountDelta>,
     pub by_category: Vec<AmountDelta>,
+    /// Every charge that differs, largest move first.
+    pub changes: Vec<LineChange>,
 }
 
 impl SnapshotComparison {

@@ -804,8 +804,8 @@ snapshots:
     en: "Could not freeze this period: %{error}"
     zh-CN: "无法冻结本期：%{error}"
   notice_frozen:
-    en: "Frozen as revision %{n}."
-    zh-CN: "已冻结为修订 %{n}。"
+    en: "Frozen as revision %{n}, snapshot %{id}, at %{at}."
+    zh-CN: "已冻结为修订 %{n}（快照 %{id}），时间 %{at}。"
   notice_unchanged:
     en: "Revision %{n} already holds this bill, so no new revision was added."
     zh-CN: "修订 %{n} 已包含这份账单，未新增修订。"
@@ -917,6 +917,66 @@ snapshots:
   warn_integrity:
     en: "The stored lines of this revision no longer match its checksum. Do not rely on it."
     zh-CN: "此修订保存的费用行与校验和不再一致，请勿依赖。"
+  confirm_title:
+    en: "Freeze %{period} of %{account}?"
+    zh-CN: "冻结 %{account} 的 %{period}？"
+  confirm_body:
+    en: "Keeps a permanent copy of %{rows} charges as they are now: %{totals}. A later refresh or import will not change it. Deleting this account's billing history removes it."
+    zh-CN: "为当前的 %{rows} 条费用保留一份永久副本：%{totals}。之后的刷新或导入不会改动它。删除此账户的账单历史时会一并删除。"
+  confirm_body_open:
+    en: "This month has not ended, so the copy of its %{rows} charges will be incomplete: %{totals}. A later refresh or import will not change it. Deleting this account's billing history removes it."
+    zh-CN: "本月尚未结束，因此这 %{rows} 条费用的副本并不完整：%{totals}。之后的刷新或导入不会改动它。删除此账户的账单历史时会一并删除。"
+  confirm_ok:
+    en: "Freeze %{period}"
+    zh-CN: "冻结 %{period}"
+  all_periods:
+    en: "All %{n} months"
+    zh-CN: "全部 %{n} 个月"
+  recent_periods:
+    en: "Recent months"
+    zh-CN: "最近几个月"
+  frozen_summary:
+    en: "Revision %{n}, frozen %{at}"
+    zh-CN: "修订 %{n}，冻结于 %{at}"
+  ledger_source:
+    en: "Ledger now: %{source}, batch %{batch}, updated %{at}"
+    zh-CN: "账本当前：%{source}，批次 %{batch}，更新于 %{at}"
+  fact_snapshot_id:
+    en: "Snapshot ID"
+    zh-CN: "快照 ID"
+  fact_batch_completed:
+    en: "Batch completed"
+    zh-CN: "批次完成时间"
+  open_charges:
+    en: "Show the charges behind %{label}"
+    zh-CN: "显示 %{label} 背后的费用"
+  changes_title:
+    en: "Charges behind %{label} (%{currency})"
+    zh-CN: "%{label} 背后的费用（%{currency}）"
+  changes_empty:
+    en: "No single charge differs here. The amounts moved only through rounding."
+    zh-CN: "这里没有单条费用发生变化，金额差异仅来自舍入。"
+  changes_truncated:
+    en: "Showing the %{shown} largest of %{total} charges."
+    zh-CN: "显示变化最大的 %{shown} 条，共 %{total} 条费用。"
+  col_charge:
+    en: "Charge"
+    zh-CN: "费用"
+  change_new:
+    en: "New"
+    zh-CN: "新增"
+  change_removed:
+    en: "Removed"
+    zh-CN: "已移除"
+  change_changed:
+    en: "Changed"
+    zh-CN: "已变更"
+  no_description:
+    en: "No description"
+    zh-CN: "无描述"
+  differing_fields:
+    en: "Differs in %{fields}"
+    zh-CN: "差异字段：%{fields}"
   category_usage:
     en: "Usage"
     zh-CN: "用量"

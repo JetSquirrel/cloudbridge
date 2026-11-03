@@ -9,7 +9,7 @@
 //! table. The rate a row converted at is recorded beside it, for the reporting
 //! figure the month showed on the day it was frozen.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -17,8 +17,8 @@ use sha2::{Digest, Sha256};
 
 use super::{midnight, period_of};
 use crate::model::{
-    AmountDelta, BillingSnapshot, Channel, Charge, CurrencyDelta, PeriodKey, SnapshotComparison,
-    SnapshotLine, SnapshotRate, SnapshotTotal,
+    AmountDelta, BillingSnapshot, Channel, Charge, CurrencyDelta, LineChange, LineChangeKind,
+    PeriodKey, SnapshotComparison, SnapshotLine, SnapshotRate, SnapshotTotal,
 };
 
 /// The format a charge's period takes in its identity.
@@ -36,11 +36,40 @@ pub struct BatchSource {
     pub completed_at: Option<DateTime<Utc>>,
 }
 
+impl BatchSource {
+    /// A period no complete batch accounts for.
+    pub fn unknown() -> Self {
+        Self {
+            batch_id: None,
+            channel: Channel::Api,
+            source_ref: None,
+            completed_at: None,
+        }
+    }
+}
+
+/// A column of a frozen-against-current table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeltaColumn {
+    Label,
+    Frozen,
+    Current,
+    Change,
+}
+
 /// A stable identity for each charge of a period.
 ///
-/// The natural key leaves the amounts out, so the same line of a corrected
-/// bill keeps its identity and can be recognized as changed. Rows sharing a
-/// natural key are told apart by the order they arrive in.
+/// The id is a hash of the row's natural key, so re-ingesting an unchanged
+/// bill produces the same `charge_id` for the same charge. That makes "run
+/// ingest twice, get identical results" checkable, and lets a later diff say
+/// which rows the provider actually changed: the key leaves the amounts out,
+/// so a corrected line keeps its identity.
+///
+/// Providers do emit rows whose natural keys collide (two charges for the
+/// same service, day and category, split by something we do not store). A
+/// collision gets an occurrence suffix rather than being folded into one row,
+/// so no money goes missing; the suffix follows the provider's own ordering
+/// of the payload.
 pub fn charge_ids(key: &PeriodKey, charges: &[Charge]) -> Vec<String> {
     let mut seen: HashMap<String, u32> = HashMap::new();
     let mut ids = Vec::with_capacity(charges.len());
@@ -87,68 +116,87 @@ pub fn charge_ids(key: &PeriodKey, charges: &[Charge]) -> Vec<String> {
     ids
 }
 
-/// Every billing field of a line, in a form two reads compare equal on.
+/// Every billing field of a line by its FOCUS column, in a form two reads
+/// compare equal on.
 ///
 /// Amounts are written as their bits, so a checksum cannot drift with how a
 /// float prints. The FX rate is left out on purpose: it describes the day of
 /// the freeze, not the bill, and changing the reporting currency does not
 /// make a month's bill different.
-fn canonical(line: &SnapshotLine) -> String {
+fn fields(line: &SnapshotLine) -> Vec<(&'static str, String)> {
+    fn text(value: Option<&str>) -> String {
+        value.map_or_else(|| "n".to_string(), |value| format!("s{value}"))
+    }
+    fn number(value: Option<f64>) -> String {
+        value.map_or_else(
+            || "n".to_string(),
+            |value| format!("f{:016x}", value.to_bits()),
+        )
+    }
     let charge = &line.charge;
-    let start = charge.charge_period_start.to_rfc3339();
-    let end = charge.charge_period_end.to_rfc3339();
-    let mut out = String::with_capacity(256);
-    for value in [
-        Some(line.charge_id.as_str()),
-        Some(start.as_str()),
-        Some(end.as_str()),
-        Some(charge.charge_category.as_str()),
-        Some(charge.cost_basis.as_str()),
-        Some(charge.billing_currency.as_str()),
-        charge.billing_account_id.as_deref(),
-        charge.sub_account_id.as_deref(),
-        charge.sub_account_name.as_deref(),
-        charge.charge_description.as_deref(),
-        charge.service_name.as_deref(),
-        charge.service_category.as_deref(),
-        charge.service_subcategory.as_deref(),
-        charge.x_service_code.as_deref(),
-        charge.x_model.as_deref(),
-        charge.resource_id.as_deref(),
-        charge.resource_name.as_deref(),
-        charge.region_id.as_deref(),
-        charge.pricing_unit.as_deref(),
-        charge.tags.as_deref(),
-        charge.consumed_unit.as_deref(),
-        charge.sku_meter.as_deref(),
-        charge.sku_price_details.as_deref(),
-        charge.principal_id.as_deref(),
-        charge.credential_id.as_deref(),
-        charge.requester_details.as_deref(),
-    ] {
-        match value {
-            Some(value) => {
-                out.push('s');
-                out.push_str(value);
-            }
-            None => out.push('n'),
-        }
-        out.push('\u{1f}');
-    }
-    for value in [
-        charge.billed_cost,
-        charge.effective_cost,
-        charge.list_cost,
-        charge.pricing_quantity,
-        charge.consumed_quantity,
-    ] {
-        match value {
-            Some(value) => out.push_str(&format!("f{:016x}", value.to_bits())),
-            None => out.push('n'),
-        }
-        out.push('\u{1f}');
-    }
-    out
+    vec![
+        ("ChargeId", text(Some(&line.charge_id))),
+        (
+            "ChargePeriodStart",
+            text(Some(&charge.charge_period_start.to_rfc3339())),
+        ),
+        (
+            "ChargePeriodEnd",
+            text(Some(&charge.charge_period_end.to_rfc3339())),
+        ),
+        (
+            "ChargeCategory",
+            text(Some(charge.charge_category.as_str())),
+        ),
+        ("x_CostBasis", text(Some(charge.cost_basis.as_str()))),
+        ("BillingCurrency", text(Some(&charge.billing_currency))),
+        (
+            "BillingAccountId",
+            text(charge.billing_account_id.as_deref()),
+        ),
+        ("SubAccountId", text(charge.sub_account_id.as_deref())),
+        ("SubAccountName", text(charge.sub_account_name.as_deref())),
+        (
+            "ChargeDescription",
+            text(charge.charge_description.as_deref()),
+        ),
+        ("ServiceName", text(charge.service_name.as_deref())),
+        ("ServiceCategory", text(charge.service_category.as_deref())),
+        (
+            "ServiceSubcategory",
+            text(charge.service_subcategory.as_deref()),
+        ),
+        ("x_ServiceCode", text(charge.x_service_code.as_deref())),
+        ("x_Model", text(charge.x_model.as_deref())),
+        ("ResourceId", text(charge.resource_id.as_deref())),
+        ("ResourceName", text(charge.resource_name.as_deref())),
+        ("RegionId", text(charge.region_id.as_deref())),
+        ("PricingUnit", text(charge.pricing_unit.as_deref())),
+        ("Tags", text(charge.tags.as_deref())),
+        ("ConsumedUnit", text(charge.consumed_unit.as_deref())),
+        ("SkuMeter", text(charge.sku_meter.as_deref())),
+        ("SkuPriceDetails", text(charge.sku_price_details.as_deref())),
+        ("x_PrincipalId", text(charge.principal_id.as_deref())),
+        ("x_CredentialId", text(charge.credential_id.as_deref())),
+        (
+            "x_RequesterDetails",
+            text(charge.requester_details.as_deref()),
+        ),
+        ("BilledCost", number(charge.billed_cost)),
+        ("EffectiveCost", number(charge.effective_cost)),
+        ("ListCost", number(charge.list_cost)),
+        ("PricingQuantity", number(charge.pricing_quantity)),
+        ("ConsumedQuantity", number(charge.consumed_quantity)),
+    ]
+}
+
+fn changed_fields(was: &SnapshotLine, now: &SnapshotLine) -> Vec<&'static str> {
+    fields(was)
+        .into_iter()
+        .zip(fields(now))
+        .filter(|((_, a), (_, b))| a != b)
+        .map(|((name, _), _)| name)
+        .collect()
 }
 
 fn sorted(lines: &[SnapshotLine]) -> Vec<&SnapshotLine> {
@@ -161,7 +209,10 @@ fn sorted(lines: &[SnapshotLine]) -> Vec<&SnapshotLine> {
 pub fn checksum(lines: &[SnapshotLine]) -> String {
     let mut hasher = Sha256::new();
     for line in sorted(lines) {
-        hasher.update(canonical(line).as_bytes());
+        for (_, value) in fields(line) {
+            hasher.update(value.as_bytes());
+            hasher.update(b"\x1f");
+        }
         hasher.update(b"\x1e");
     }
     hex::encode(hasher.finalize())
@@ -308,25 +359,63 @@ pub fn compare(frozen: &[SnapshotLine], current: &[SnapshotLine]) -> SnapshotCom
     let mut comparison = SnapshotComparison::default();
     for line in current {
         match frozen_by_id.get(line.charge_id.as_str()) {
-            None => comparison.new_lines += 1,
-            Some(was) if canonical(was) != canonical(line) => comparison.changed_lines += 1,
-            Some(_) => comparison.unchanged_lines += 1,
+            None => {
+                comparison.new_lines += 1;
+                comparison.changes.push(line_change(
+                    LineChangeKind::New,
+                    line,
+                    None,
+                    Some(line),
+                    Vec::new(),
+                ));
+            }
+            Some(was) => {
+                let differing = changed_fields(was, line);
+                if differing.is_empty() {
+                    comparison.unchanged_lines += 1;
+                } else {
+                    comparison.changed_lines += 1;
+                    comparison.changes.push(line_change(
+                        LineChangeKind::Changed,
+                        line,
+                        Some(was),
+                        Some(line),
+                        differing,
+                    ));
+                }
+            }
         }
     }
-    comparison.removed_lines = frozen
-        .iter()
-        .filter(|line| !current_by_id.contains_key(line.charge_id.as_str()))
-        .count();
+    for line in frozen {
+        if !current_by_id.contains_key(line.charge_id.as_str()) {
+            comparison.removed_lines += 1;
+            comparison.changes.push(line_change(
+                LineChangeKind::Removed,
+                line,
+                Some(line),
+                None,
+                Vec::new(),
+            ));
+        }
+    }
+    comparison
+        .changes
+        .sort_by(|a, b| b.delta().abs().total_cmp(&a.delta().abs()));
 
-    comparison.by_service = deltas(frozen, current, |charge| {
-        charge
-            .service_name
-            .clone()
-            .unwrap_or_else(|| "Other".to_string())
-    });
-    comparison.by_category = deltas(frozen, current, |charge| {
-        charge.charge_category.as_str().to_string()
-    });
+    comparison.by_service = deltas(
+        frozen,
+        current,
+        service_label,
+        |change| (change.service.clone(), change.currency.clone()),
+        &comparison.changes,
+    );
+    comparison.by_category = deltas(
+        frozen,
+        current,
+        |charge| charge.charge_category.as_str().to_string(),
+        |change| (change.category.clone(), change.currency.clone()),
+        &comparison.changes,
+    );
 
     let frozen_totals = currency_totals(&summarize(frozen));
     let current_totals = currency_totals(&summarize(current));
@@ -359,13 +448,47 @@ pub fn compare(frozen: &[SnapshotLine], current: &[SnapshotLine]) -> SnapshotCom
     comparison
 }
 
-/// Billed amount per `(group, currency)` on each side, keeping only what
-/// moved, largest move first.
+fn service_label(charge: &Charge) -> String {
+    charge
+        .service_name
+        .clone()
+        .unwrap_or_else(|| "Other".to_string())
+}
+
+fn line_change(
+    kind: LineChangeKind,
+    line: &SnapshotLine,
+    frozen: Option<&SnapshotLine>,
+    current: Option<&SnapshotLine>,
+    fields: Vec<&'static str>,
+) -> LineChange {
+    let charge = &line.charge;
+    LineChange {
+        kind,
+        service: service_label(charge),
+        category: charge.charge_category.as_str().to_string(),
+        currency: charge.billing_currency.clone(),
+        description: charge.charge_description.clone(),
+        resource_id: charge.resource_id.clone(),
+        region_id: charge.region_id.clone(),
+        charge_period_start: charge.charge_period_start,
+        frozen: frozen.and_then(|line| line.charge.billed_cost),
+        current: current.and_then(|line| line.charge.billed_cost),
+        fields,
+    }
+}
+
+/// Billed amount per `(group, currency)` on each side, keeping what moved and
+/// any group holding a changed charge, even one whose amounts net to nothing.
+/// Largest move first.
 fn deltas(
     frozen: &[SnapshotLine],
     current: &[SnapshotLine],
     group: impl Fn(&Charge) -> String,
+    group_of_change: impl Fn(&LineChange) -> (String, String),
+    changes: &[LineChange],
 ) -> Vec<AmountDelta> {
+    let changed: HashSet<(String, String)> = changes.iter().map(group_of_change).collect();
     let mut sums: BTreeMap<(String, String), (f64, f64)> = BTreeMap::new();
     for line in frozen {
         let sum = sums
@@ -381,7 +504,9 @@ fn deltas(
     }
     let mut moved: Vec<AmountDelta> = sums
         .into_iter()
-        .filter(|(_, (frozen, current))| (current - frozen).abs() > RESIDUE)
+        .filter(|(group, (frozen, current))| {
+            (current - frozen).abs() > RESIDUE || changed.contains(group)
+        })
         .map(|((label, currency), (frozen, current))| AmountDelta {
             label,
             currency,
@@ -390,8 +515,34 @@ fn deltas(
             delta: current - frozen,
         })
         .collect();
-    moved.sort_by(|a, b| b.delta.abs().total_cmp(&a.delta.abs()));
+    sort_deltas(&mut moved, None);
     moved
+}
+
+/// Order a table of deltas. `None` is the default, largest move either way
+/// first; a column sorts ascending or, with `true`, descending. Ties fall back
+/// to the label, so an order never depends on where the rows started.
+pub fn sort_deltas(deltas: &mut [AmountDelta], sort: Option<(DeltaColumn, bool)>) {
+    let by_identity =
+        |a: &AmountDelta, b: &AmountDelta| (&a.label, &a.currency).cmp(&(&b.label, &b.currency));
+    match sort {
+        None => deltas.sort_by(|a, b| {
+            b.delta
+                .abs()
+                .total_cmp(&a.delta.abs())
+                .then_with(|| by_identity(a, b))
+        }),
+        Some((column, descending)) => deltas.sort_by(|a, b| {
+            let order = match column {
+                DeltaColumn::Label => by_identity(a, b),
+                DeltaColumn::Frozen => a.frozen.total_cmp(&b.frozen),
+                DeltaColumn::Current => a.current.total_cmp(&b.current),
+                DeltaColumn::Change => a.delta.total_cmp(&b.delta),
+            };
+            let order = if descending { order.reverse() } else { order };
+            order.then_with(|| by_identity(a, b))
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -624,6 +775,79 @@ mod tests {
         assert!(diff.is_identical());
         assert!(diff.by_service.is_empty());
         assert_eq!(diff.by_currency[0].delta, 0.0);
+    }
+
+    #[test]
+    fn a_change_names_the_charge_its_amounts_and_the_columns_that_differ() {
+        let frozen = lines(
+            vec![
+                charge("EC2", "USD", Some(10.0)),
+                charge("Lambda", "USD", Some(1.0)),
+            ],
+            Some(1.0),
+        );
+        let current = lines(
+            vec![
+                charge("EC2", "USD", Some(12.5)),
+                charge("Glue", "USD", Some(3.0)),
+            ],
+            Some(1.0),
+        );
+        let diff = compare(&frozen, &current);
+        let summary: Vec<_> = diff
+            .changes
+            .iter()
+            .map(|c| (c.kind, c.service.as_str(), c.frozen, c.current))
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                (LineChangeKind::New, "Glue", None, Some(3.0)),
+                (LineChangeKind::Changed, "EC2", Some(10.0), Some(12.5)),
+                (LineChangeKind::Removed, "Lambda", Some(1.0), None),
+            ]
+        );
+        assert_eq!(diff.changes[1].fields, vec!["BilledCost", "EffectiveCost"]);
+    }
+
+    #[test]
+    fn a_change_with_no_money_still_has_a_row_to_open() {
+        let frozen = lines(vec![charge("EC2", "USD", Some(10.0))], Some(1.0));
+        let mut current = frozen.clone();
+        current[0].charge.tags = Some(r#"{"team":"a"}"#.to_string());
+        let diff = compare(&frozen, &current);
+        assert_eq!(diff.changed_lines, 1);
+        assert_eq!(diff.changes[0].fields, vec!["Tags"]);
+        assert_eq!(diff.by_service.len(), 1);
+        assert_eq!(diff.by_service[0].label, "EC2");
+        assert_eq!(diff.by_service[0].delta, 0.0);
+    }
+
+    #[test]
+    fn deltas_sort_by_each_column_and_default_to_the_largest_move() {
+        let delta = |label: &str, frozen: f64, current: f64| AmountDelta {
+            label: label.to_string(),
+            currency: "USD".to_string(),
+            frozen,
+            current,
+            delta: current - frozen,
+        };
+        let mut rows = vec![
+            delta("a", 10.0, 11.0),
+            delta("b", 50.0, 20.0),
+            delta("c", 1.0, 6.0),
+        ];
+        let order = |rows: &[AmountDelta]| rows.iter().map(|r| r.label.clone()).collect::<String>();
+        sort_deltas(&mut rows, None);
+        assert_eq!(order(&rows), "bca");
+        sort_deltas(&mut rows, Some((DeltaColumn::Label, false)));
+        assert_eq!(order(&rows), "abc");
+        sort_deltas(&mut rows, Some((DeltaColumn::Frozen, true)));
+        assert_eq!(order(&rows), "bac");
+        sort_deltas(&mut rows, Some((DeltaColumn::Current, false)));
+        assert_eq!(order(&rows), "cab");
+        sort_deltas(&mut rows, Some((DeltaColumn::Change, true)));
+        assert_eq!(order(&rows), "cab");
     }
 
     #[test]

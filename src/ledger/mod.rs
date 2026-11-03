@@ -24,8 +24,6 @@ pub mod snapshot;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use duckdb::{params, Connection};
-use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::config::get_ledger_database_path;

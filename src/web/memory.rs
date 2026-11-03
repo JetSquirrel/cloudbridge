@@ -18,8 +18,8 @@ use chrono::{DateTime, NaiveDate, Utc};
 
 use crate::alerts::{AlertEvent, AlertRule};
 use crate::model::{
-    BalanceSnapshot, BillingPeriod, BillingSnapshot, BudgetInfo, Channel, Charge, ChargeCategory, CloudAccount,
-    InventoryResource, InventoryScope, PeriodKey, SnapshotLine,
+    BalanceSnapshot, BillingPeriod, BillingSnapshot, BudgetInfo, Channel, Charge, ChargeCategory,
+    CloudAccount, InventoryResource, InventoryScope, PeriodKey, SnapshotLine,
 };
 
 /// Rates shipped with the build, as `(from, to, date, rate)`.
