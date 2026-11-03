@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   turquoise dots above it. It replaces the bar chart over an arc.
   `assets/icon.svg` is the source, and `scripts/generate-icon.py` writes the
   PNG, ICNS and ICO from it.
+- **The menu bar and notification-area icon matches.** It is now a solid arch
+  bridge with three dots instead of a cloud, redrawn to stay legible at this
+  size. While an alert is open, an exclamation mark replaces the dots.
 ### Added
 - **Security configuration on Insights.** A new read-only section flags AWS
   security groups that open SSH or RDP to the whole internet, with the rule it
