@@ -18,8 +18,8 @@ use chrono::{DateTime, NaiveDate, Utc};
 
 use crate::alerts::{AlertEvent, AlertRule};
 use crate::model::{
-    BalanceSnapshot, BillingPeriod, BudgetInfo, Channel, Charge, ChargeCategory, CloudAccount,
-    InventoryResource, InventoryScope, PeriodKey,
+    BalanceSnapshot, BillingPeriod, BillingSnapshot, BudgetInfo, Channel, Charge, ChargeCategory, CloudAccount,
+    InventoryResource, InventoryScope, PeriodKey, SnapshotLine,
 };
 
 /// Rates shipped with the build, as `(from, to, date, rate)`.
@@ -45,6 +45,12 @@ pub struct StoredPeriod {
     pub completed_at: DateTime<Utc>,
 }
 
+/// A frozen month: its header and its own copy of the lines.
+pub struct StoredSnapshot {
+    pub snapshot: BillingSnapshot,
+    pub lines: Vec<SnapshotLine>,
+}
+
 /// Everything the two desktop databases hold between them.
 ///
 /// Each field carries its own `RefCell` rather than the store carrying one:
@@ -62,6 +68,8 @@ pub struct Store {
     /// The desktop's `dim_resource` and `inventory_scan`.
     pub resources: RefCell<Vec<InventoryResource>>,
     pub inventory_scope: RefCell<Option<InventoryScope>>,
+    /// The desktop's `billing_snapshot` and its lines.
+    pub snapshots: RefCell<Vec<StoredSnapshot>>,
 }
 
 impl Store {
@@ -77,6 +85,7 @@ impl Store {
             reporting_currency: RefCell::new(crate::config::DEFAULT_REPORTING_CURRENCY.to_string()),
             resources: RefCell::new(Vec::new()),
             inventory_scope: RefCell::new(None),
+            snapshots: RefCell::new(Vec::new()),
         }
     }
 
@@ -196,7 +205,7 @@ pub fn normalized(store: &Store) -> Vec<NormalizedRow> {
 /// The view's ASOF join: a charge takes the newest rate dated on or before
 /// the charge itself, never a later one. A charge already in the reporting
 /// currency needs no rate at all.
-fn rate_for(charge: &Charge, reporting: &str) -> Option<f64> {
+pub(crate) fn rate_for(charge: &Charge, reporting: &str) -> Option<f64> {
     if charge.billing_currency == reporting {
         return Some(1.0);
     }

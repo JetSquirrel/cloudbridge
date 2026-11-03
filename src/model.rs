@@ -33,6 +33,18 @@ impl ChargeCategory {
             Self::Adjustment => "Adjustment",
         }
     }
+
+    /// The category a stored value names.
+    pub fn from_stored(value: &str) -> Option<Self> {
+        match value {
+            "Usage" => Some(Self::Usage),
+            "Purchase" => Some(Self::Purchase),
+            "Credit" => Some(Self::Credit),
+            "Tax" => Some(Self::Tax),
+            "Adjustment" => Some(Self::Adjustment),
+            _ => None,
+        }
+    }
 }
 
 /// How much weight the amount on a row carries.
@@ -59,6 +71,17 @@ impl CostBasis {
             Self::Derived => "derived",
             Self::Estimated => "estimated",
             Self::Absent => "absent",
+        }
+    }
+
+    /// The basis a stored value names.
+    pub fn from_stored(value: &str) -> Option<Self> {
+        match value {
+            "authoritative" => Some(Self::Authoritative),
+            "derived" => Some(Self::Derived),
+            "estimated" => Some(Self::Estimated),
+            "absent" => Some(Self::Absent),
+            _ => None,
         }
     }
 }
@@ -227,6 +250,111 @@ impl Charge {
             credential_id: None,
             requester_details: None,
         }
+    }
+}
+
+/// One charge of a period, with its identity and the rate it converted to
+/// the reporting currency at. `fx_rate` is `None` when no rate covered it.
+#[derive(Debug, Clone)]
+pub struct SnapshotLine {
+    pub charge_id: String,
+    pub charge: Charge,
+    pub fx_rate: Option<f64>,
+}
+
+/// One billing currency and charge category of a frozen month. Amounts are in
+/// `currency`, except `billed_cost_base`, which is in the snapshot's reporting
+/// currency at the rates of the freeze.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SnapshotTotal {
+    pub currency: String,
+    pub category: String,
+    pub billed_cost: f64,
+    pub effective_cost: f64,
+    pub billed_cost_base: f64,
+    pub rows: u64,
+    /// Rows with no amount, which are in no sum above.
+    pub rows_without_amount: u64,
+    /// Rows with an amount but no rate, which are not in `billed_cost_base`.
+    pub rows_unconverted: u64,
+}
+
+/// A rate a frozen month converted at. `rate: None` counts the rows no rate
+/// covered.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SnapshotRate {
+    pub currency: String,
+    pub rate: Option<f64>,
+    pub rows: u64,
+}
+
+/// An immutable copy of one period's bill, with where it came from.
+#[derive(Debug, Clone)]
+pub struct BillingSnapshot {
+    pub snapshot_id: String,
+    pub key: PeriodKey,
+    /// 1 for the first freeze of a period; a later freeze adds one.
+    pub revision: u32,
+    pub frozen_at: DateTime<Utc>,
+    pub batch_id: Option<String>,
+    pub channel: Channel,
+    pub source_ref: Option<String>,
+    pub batch_completed_at: Option<DateTime<Utc>>,
+    pub row_count: u64,
+    pub checksum: String,
+    pub reporting_currency: String,
+    /// The month had not ended when it was frozen.
+    pub period_open: bool,
+    pub totals: Vec<SnapshotTotal>,
+    pub rates: Vec<SnapshotRate>,
+}
+
+/// What asking to freeze a period did.
+#[derive(Debug, Clone)]
+pub enum FreezeOutcome {
+    /// A new revision was stored.
+    Frozen(BillingSnapshot),
+    /// The newest revision already holds exactly this bill.
+    Unchanged(BillingSnapshot),
+    /// The ledger has no rows for the period, so nothing was stored.
+    Empty,
+}
+
+/// One currency's billed total on both sides of a comparison. `None` means no
+/// row on that side carries an amount.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CurrencyDelta {
+    pub currency: String,
+    pub frozen: Option<f64>,
+    pub current: Option<f64>,
+    pub delta: f64,
+}
+
+/// What moved within one service or category, in one currency.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AmountDelta {
+    pub label: String,
+    pub currency: String,
+    pub frozen: f64,
+    pub current: f64,
+    pub delta: f64,
+}
+
+/// How a frozen month differs from the ledger's current one.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SnapshotComparison {
+    pub new_lines: usize,
+    pub removed_lines: usize,
+    pub changed_lines: usize,
+    pub unchanged_lines: usize,
+    pub by_currency: Vec<CurrencyDelta>,
+    pub by_service: Vec<AmountDelta>,
+    pub by_category: Vec<AmountDelta>,
+}
+
+impl SnapshotComparison {
+    pub fn is_identical(&self) -> bool {
+        self.new_lines == 0 && self.removed_lines == 0 && self.changed_lines == 0
     }
 }
 

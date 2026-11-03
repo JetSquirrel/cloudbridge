@@ -8,6 +8,7 @@
 pub mod demo;
 pub mod inventory;
 pub mod query;
+pub mod snapshot;
 
 use anyhow::Result;
 use chrono::Utc;
@@ -111,6 +112,10 @@ pub fn delete_account_history(account_id: &str) -> Result<usize> {
             .map(|period| period.charges.len())
             .sum();
         periods.retain(|period| period.key.account_id != account_id);
+        store
+            .snapshots
+            .borrow_mut()
+            .retain(|stored| stored.snapshot.key.account_id != account_id);
         store
             .balances
             .borrow_mut()

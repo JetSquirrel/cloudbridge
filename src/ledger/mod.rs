@@ -19,6 +19,7 @@ pub mod inventory;
 pub mod query;
 pub mod rollup;
 pub mod schema;
+pub mod snapshot;
 
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
@@ -121,7 +122,8 @@ pub(crate) fn confirm_period_of(conn: &mut Connection, key: &PeriodKey) -> Resul
 }
 
 /// Remove everything the ledger holds for one account — charges, ingest
-/// batches, balance snapshots and the day rollup — in one transaction.
+/// batches, balance snapshots, the day rollup and month-end snapshots — in
+/// one transaction.
 /// Returns how many charges went. The raw payloads are the caller's: see
 /// [`crate::ingest::delete_account_history`].
 pub fn delete_account_history(account_id: &str) -> Result<usize> {
@@ -134,7 +136,17 @@ pub(crate) fn delete_account_history_of(conn: &mut Connection, account_id: &str)
         "DELETE FROM fct_charge WHERE account_id = ?",
         params![account_id],
     )?;
-    for table in ["ingest_batch", "fct_balance_snapshot", "daily_cost_rollup"] {
+    tx.execute(
+        "DELETE FROM billing_snapshot_charge WHERE snapshot_id IN
+         (SELECT snapshot_id FROM billing_snapshot WHERE account_id = ?)",
+        params![account_id],
+    )?;
+    for table in [
+        "ingest_batch",
+        "fct_balance_snapshot",
+        "daily_cost_rollup",
+        "billing_snapshot",
+    ] {
         tx.execute(
             &format!("DELETE FROM {table} WHERE account_id = ?"),
             params![account_id],
@@ -286,7 +298,7 @@ pub(crate) fn write_period(
 ) -> Result<()> {
     let now = Utc::now().format(TIMESTAMP_FORMAT).to_string();
     let charges = &categorized(key, charges);
-    let ids = charge_ids(key, charges);
+    let ids = crate::analytics::snapshot::charge_ids(key, charges);
 
     let tx = conn.transaction()?;
 
@@ -422,64 +434,6 @@ pub(crate) fn write_balance(conn: &mut Connection, snapshot: &BalanceSnapshot) -
     )?;
 
     Ok(())
-}
-
-/// Deterministic ids for a batch of charges.
-///
-/// The id is a hash of the row's natural key, so re-ingesting an unchanged
-/// bill produces the same `charge_id` for the same charge — that is what
-/// makes "run ingest twice, get identical results" checkable, and what lets
-/// a later diff say which rows the provider actually changed.
-///
-/// Providers do emit rows whose natural keys collide (two charges for the
-/// same service, day and category, split by something we do not store). A
-/// collision gets an occurrence suffix rather than being folded into one
-/// row, so no money goes missing; the suffix follows the provider's own
-/// ordering of the payload.
-fn charge_ids(key: &PeriodKey, charges: &[Charge]) -> Vec<String> {
-    let mut seen: HashMap<String, u32> = HashMap::new();
-    let mut ids = Vec::with_capacity(charges.len());
-
-    for charge in charges {
-        let mut natural_key = [
-            key.provider.as_str(),
-            key.account_id.as_str(),
-            key.billing_period.as_str(),
-            &charge
-                .charge_period_start
-                .format(TIMESTAMP_FORMAT)
-                .to_string(),
-            &charge
-                .charge_period_end
-                .format(TIMESTAMP_FORMAT)
-                .to_string(),
-            charge.charge_category.as_str(),
-            charge.billing_account_id.as_deref().unwrap_or(""),
-            charge.service_name.as_deref().unwrap_or(""),
-            charge.resource_id.as_deref().unwrap_or(""),
-            charge.region_id.as_deref().unwrap_or(""),
-            charge.charge_description.as_deref().unwrap_or(""),
-            charge.pricing_unit.as_deref().unwrap_or(""),
-            charge.billing_currency.as_str(),
-        ]
-        .join("\u{1f}");
-        // Appended only when present, so a row without one keeps the id it
-        // had before the column existed.
-        if let Some(sub_account) = &charge.sub_account_id {
-            natural_key.push_str("\u{1f}sub_account=");
-            natural_key.push_str(sub_account);
-        }
-
-        let occurrence = seen.entry(natural_key.clone()).or_insert(0);
-        let mut hasher = Sha256::new();
-        hasher.update(natural_key.as_bytes());
-        hasher.update(format!("\u{1f}{}", occurrence).as_bytes());
-        *occurrence += 1;
-
-        ids.push(hex::encode(hasher.finalize())[..32].to_string());
-    }
-
-    ids
 }
 
 #[cfg(test)]

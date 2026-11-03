@@ -104,6 +104,15 @@ pub fn clear_demo() -> Result<String> {
         tx.execute("DELETE FROM fct_charge WHERE batch_id LIKE 'demo-%'", [])?;
         tx.execute("DELETE FROM ingest_batch WHERE batch_id LIKE 'demo-%'", [])?;
         tx.execute(
+            "DELETE FROM billing_snapshot_charge WHERE snapshot_id IN
+             (SELECT snapshot_id FROM billing_snapshot WHERE account_id LIKE 'demo-%')",
+            [],
+        )?;
+        tx.execute(
+            "DELETE FROM billing_snapshot WHERE account_id LIKE 'demo-%'",
+            [],
+        )?;
+        tx.execute(
             "DELETE FROM fct_balance_snapshot WHERE account_id LIKE 'demo-%'",
             [],
         )?;
