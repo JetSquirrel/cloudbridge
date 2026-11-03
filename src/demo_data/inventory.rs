@@ -94,6 +94,28 @@ const RESOURCES: &[DemoResource] = &[
         None,
         None,
     ),
+    // Owned, so neither is an unclaimed finding: one the Security card flags,
+    // one it reads and passes.
+    (
+        "arn:aws:ec2:us-east-1:123456789012:security-group/sg-0d3m0bastion",
+        "ec2:security-group",
+        REGION,
+        Some("bastion"),
+        Some(r#"{"owner":"platform"}"#),
+        Some(
+            r#"{"GroupName":"bastion","SecurityGroupIngress":[{"IpProtocol":"tcp","FromPort":22,"ToPort":22,"CidrIp":"0.0.0.0/0"}]}"#,
+        ),
+    ),
+    (
+        "arn:aws:ec2:us-east-1:123456789012:security-group/sg-0d3m0db",
+        "ec2:security-group",
+        REGION,
+        Some("database"),
+        Some(r#"{"owner":"platform"}"#),
+        Some(
+            r#"{"GroupName":"database","SecurityGroupIngress":[{"IpProtocol":"tcp","FromPort":5432,"ToPort":5432,"CidrIp":"10.0.0.0/16"}]}"#,
+        ),
+    ),
 ];
 
 /// (bill resource id, service, description, monthly USD).
@@ -220,6 +242,16 @@ mod tests {
     use chrono::TimeZone;
 
     /// The demo shows one of each finding: what the page is reviewed with.
+    #[test]
+    fn the_demo_security_groups_show_a_finding_a_pass_and_an_unknown() {
+        let (scope, resources) = inventory(chrono::Utc::now());
+        let report = crate::analytics::security::evaluate(&resources, Some(&scope));
+        assert_eq!(report.groups, 3);
+        assert_eq!(report.findings(), 1);
+        assert_eq!(report.evaluated, 2);
+        assert_eq!(report.not_evaluated, 1);
+    }
+
     #[test]
     fn the_demo_inventory_shows_every_kind_of_finding() {
         let now = Utc.with_ymd_and_hms(2026, 9, 30, 12, 0, 0).unwrap();

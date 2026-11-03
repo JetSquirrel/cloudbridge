@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `assets/icon.svg` is the source, and `scripts/generate-icon.py` writes the
   PNG, ICNS and ICO from it.
 ### Added
+- **Security configuration on Insights.** A new read-only section flags AWS
+  security groups that open SSH or RDP to the whole internet, with the rule it
+  saw and what to check by hand. A group whose inbound rules could not be read
+  shows as Not evaluated, and a partial scan says so. Cost findings are
+  unchanged, and security findings are never summed with them.
 - **Simplified Chinese.** Every page, dialog, the menu bar panel, its tray
   menu and the system notifications are translated into 简体中文, and
   gpui-kit's own components follow along. The language follows the

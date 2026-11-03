@@ -17,6 +17,7 @@ pub mod overview;
 pub mod palette;
 pub mod query;
 pub mod rules;
+mod security;
 pub mod settings;
 pub mod theme;
 
