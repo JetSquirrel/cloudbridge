@@ -47,6 +47,7 @@ pub mod requester;
 // The demo bill, as rows. Written into whichever ledger the target has, by
 // that ledger's own `demo` module.
 pub mod demo_data;
+pub mod report;
 
 // Billing sources. Native builds carry the registry, the provider clients
 // and the bill-file importers; the browser cannot sign a request or read a

@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   saw and what to check by hand. A group whose inbound rules could not be read
   shows as Not evaluated, and a partial scan says so. Cost findings are
   unchanged, and security findings are never summed with them.
+- **Monthly cost review.** Export report on Overview saves a chosen month as
+  one self-contained HTML file, ready to print or share: totals and the change
+  from last month, top services and regions, business lines, data health, top
+  Insights and where the data came from. It says what it leaves out, such as
+  missing exchange rates, usage with no amount or an inventory never scanned.
 - **Month-end snapshots.** Account detail can freeze a month's bill. A frozen
   copy keeps its charges, totals per billing currency, FX rates and source, and
   no later refresh or import changes it. Freezing a changed bill adds a new

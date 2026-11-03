@@ -89,17 +89,24 @@ pub struct InsightsData {
     pub security: crate::analytics::security::SecurityReport,
 }
 
-/// Read the inventory and the period's resource costs, and judge them.
-/// Blocking; wrap in `smol::unblock`.
-pub fn load_insights() -> Result<InsightsData> {
-    let period = BillingPeriod::containing(Utc::now()).label();
+/// The inventory judged against one period's resource costs.
+pub(super) struct JudgedPeriod {
+    pub report: InsightsReport,
+    pub scope: Option<InventoryScope>,
+    resources: Vec<InventoryResource>,
+    scripts: ScriptRun,
+}
+
+/// Judge the inventory against one period's resource costs, built-in kinds and
+/// script rules together, worst cost first. Blocking.
+pub(super) fn judge_period(period: &str) -> Result<JudgedPeriod> {
     let resources = query::inventory_resources()?;
     let scope = query::inventory_scope()?;
-    let costs = query::resource_usage_costs(&period)?;
+    let costs = query::resource_usage_costs(period)?;
     let currency = data::reporting_currency();
     let mut report = insights(&resources, &costs, scope.as_ref(), OWNER_TAG_KEYS);
     let scripts = crate::insight_scripts::run(
-        &period,
+        period,
         &currency,
         &resources,
         &costs,
@@ -108,6 +115,25 @@ pub fn load_insights() -> Result<InsightsData> {
     );
     report.findings.extend(scripts.findings.iter().cloned());
     sort_findings(&mut report.findings);
+    Ok(JudgedPeriod {
+        report,
+        scope,
+        resources,
+        scripts,
+    })
+}
+
+/// Read the inventory and the period's resource costs, and judge them.
+/// Blocking; wrap in `smol::unblock`.
+pub fn load_insights() -> Result<InsightsData> {
+    let period = BillingPeriod::containing(Utc::now()).label();
+    let currency = data::reporting_currency();
+    let JudgedPeriod {
+        report,
+        scope,
+        resources,
+        scripts,
+    } = judge_period(&period)?;
     let kinds = kinds(&scripts);
     let mut usage: HashMap<(String, String), Vec<ResourceUsage>> = HashMap::new();
     for row in query::resource_usage_quantities(&period)? {
