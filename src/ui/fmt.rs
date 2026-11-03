@@ -64,6 +64,46 @@ pub fn amount(value: f64, currency: &str) -> String {
     format!("{sign}{prefix}{grouped}")
 }
 
+/// An amount to the currency's full precision, e.g. `$12,345.67`. For figures
+/// that are checked against a bill, where [`amount`]'s rounding would hide the
+/// difference.
+pub fn exact_amount(value: f64, currency: &str) -> String {
+    let symbol = currency_symbol(currency);
+    let prefix = if symbol.is_empty() {
+        format!("{currency} ")
+    } else {
+        symbol.to_string()
+    };
+    let decimals = currency_decimals(currency);
+    let text = format!("{:.*}", decimals, value.abs());
+    let (whole, fraction) = text.split_once('.').unwrap_or((&text, ""));
+    let mut grouped = String::new();
+    for (i, c) in whole.chars().enumerate() {
+        if i > 0 && (whole.len() - i).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(c);
+    }
+    let zero = text.chars().all(|c| c == '0' || c == '.');
+    let sign = if value < 0.0 && !zero { "-" } else { "" };
+    if fraction.is_empty() {
+        format!("{sign}{prefix}{grouped}")
+    } else {
+        format!("{sign}{prefix}{grouped}.{fraction}")
+    }
+}
+
+/// [`exact_amount`] with a `+` on a rise, for a change between two figures.
+pub fn signed_exact_amount(value: f64, currency: &str) -> String {
+    let text = exact_amount(value, currency);
+    let is_zero = !text.chars().any(|c| c.is_ascii_digit() && c != '0');
+    if value > 0.0 && !is_zero {
+        format!("+{text}")
+    } else {
+        text
+    }
+}
+
 /// A large count with an adaptive magnitude suffix: whole units under a
 /// thousand (`843`), one decimal with a k/M/B suffix above it (`12.4k`,
 /// `3.4M`, `5.6B`). Token counts are what this is for — a raw `84123841`
@@ -117,6 +157,18 @@ pub fn change_pct(pct: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exact_amounts_keep_the_minor_units_at_any_size() {
+        assert_eq!(exact_amount(12345.678, "USD"), "$12,345.68");
+        assert_eq!(exact_amount(-0.3, "USD"), "-$0.30");
+        assert_eq!(exact_amount(-0.001, "USD"), "$0.00");
+        assert_eq!(exact_amount(1500.4, "JPY"), exact_amount(1500.0, "JPY"));
+        assert_eq!(signed_exact_amount(2.5, "USD"), "+$2.50");
+        assert_eq!(signed_exact_amount(-2.5, "USD"), "-$2.50");
+        assert_eq!(signed_exact_amount(0.0, "USD"), "$0.00");
+        assert_eq!(signed_exact_amount(0.001, "USD"), "$0.00");
+    }
 
     #[test]
     fn small_amounts_keep_two_decimals() {

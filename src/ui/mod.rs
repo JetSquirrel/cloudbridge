@@ -18,6 +18,7 @@ pub mod palette;
 pub mod query;
 pub mod rules;
 pub mod settings;
+mod snapshots;
 pub mod theme;
 
 use std::rc::Rc;
