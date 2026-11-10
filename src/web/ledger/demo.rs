@@ -12,10 +12,10 @@
 use anyhow::Result;
 use chrono::Utc;
 
+use super::memory;
 use super::{record_balance, replace_period, with_connection, Channel, PeriodKey};
 use crate::db;
 use crate::demo_data::{self, DEMO_SOURCES};
-use crate::memory;
 
 pub use crate::demo_data::DEMO_PREFIX;
 

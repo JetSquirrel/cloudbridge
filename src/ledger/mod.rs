@@ -51,7 +51,37 @@ pub fn init_ledger(reporting_currency: &str) -> Result<()> {
     Ok(())
 }
 
-fn with_connection<T>(f: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T> {
+// A ledger of a test's own, in memory, for the thread that opened it. While
+// one is open, that thread's reads and writes go to it rather than to the
+// application's, so a test can call the functions the pages call. Tests run
+// a thread each, so one test's ledger is never another's.
+#[cfg(test)]
+thread_local! {
+    static TEST_LEDGER: std::cell::RefCell<Option<Connection>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Open this thread's test ledger, replacing any it already had.
+#[cfg(test)]
+pub(crate) fn open_test_ledger(reporting_currency: &str) -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    schema::apply(&conn)?;
+    schema::apply_reporting_currency(&conn, reporting_currency)?;
+    TEST_LEDGER.with(|ledger| *ledger.borrow_mut() = Some(conn));
+    Ok(())
+}
+
+#[cfg(test)]
+fn test_ledger_is_open() -> bool {
+    TEST_LEDGER.with(|ledger| ledger.borrow().is_some())
+}
+
+pub(crate) fn with_connection<T>(f: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T> {
+    #[cfg(test)]
+    if test_ledger_is_open() {
+        return TEST_LEDGER.with(|ledger| f(ledger.borrow_mut().as_mut().expect("open")));
+    }
+
     let mut guard = LEDGER_CONNECTION
         .lock()
         .map_err(|e| anyhow!("Failed to lock ledger connection: {}", e))?;
@@ -63,6 +93,11 @@ fn with_connection<T>(f: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T>
 
 /// Same, for the reads in [`query`], which need no transaction.
 pub(crate) fn with_connection_ref<T>(f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+    #[cfg(test)]
+    if test_ledger_is_open() {
+        return TEST_LEDGER.with(|ledger| f(ledger.borrow().as_ref().expect("open")));
+    }
+
     let guard = LEDGER_CONNECTION
         .lock()
         .map_err(|e| anyhow!("Failed to lock ledger connection: {}", e))?;

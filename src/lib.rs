@@ -116,6 +116,11 @@ pub mod crypto;
 #[cfg(not(target_family = "wasm"))]
 pub mod background;
 
+// The browser's ledger, compiled into the desktop's tests beside its own,
+// so the two can be asked the same questions about the same bill.
+#[cfg(all(test, not(target_family = "wasm")))]
+mod parity;
+
 // Everything the two targets genuinely share.
 pub mod alerts;
 pub mod app;

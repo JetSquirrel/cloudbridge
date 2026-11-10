@@ -225,6 +225,15 @@ there, not into a `query.rs`**; what belongs in a `query.rs` is the read that
 feeds it. The demo bill is the same arrangement: `src/demo_data.rs` builds the
 rows, each target's `ledger::demo` writes them.
 
+The two `ledger`s are held to the same answers by `src/parity.rs`, which
+compiles the browser's ledger (`src/web/ledger/`, `src/web/memory.rs`) into
+the desktop's tests, writes one demo bill into both and compares every read.
+So **a new read in a `query.rs` gets a line in `parity::compare`**, and a
+ranked read needs a total order — `ORDER BY amount DESC` alone leaves ties to
+DuckDB, where the browser breaks them by key. Those files are reached through
+`super::` rather than `crate::` so they compile in both places; the rest of
+`src/web/` is still browser-only. `cargo test parity` runs it.
+
 `.github/workflows/ci.yml` builds the web demo as a **required** job — it is
 the only thing that notices when the two backends' signatures drift apart, or
 when a page stops compiling for wasm. The MSRV check beside it stays advisory.

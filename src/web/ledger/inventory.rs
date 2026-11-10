@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use anyhow::{anyhow, Result};
 
-use crate::memory;
+use super::memory;
 use crate::model::{InventoryResource, InventoryScope};
 
 /// Refused: the web demo reads no files.

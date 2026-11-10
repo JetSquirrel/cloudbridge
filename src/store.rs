@@ -12,10 +12,5 @@
 #[cfg(not(target_family = "wasm"))]
 pub use duckdb::Connection;
 
-/// A handle on the in-memory store.
-///
-/// It carries nothing: the web backend keeps one store for both databases, so
-/// the handle is only the name a signature needs.
 #[cfg(target_family = "wasm")]
-#[derive(Debug, Clone, Copy)]
-pub struct Connection;
+pub use crate::memory::Connection;
