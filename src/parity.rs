@@ -28,16 +28,83 @@ use chrono::{DateTime, Duration, TimeZone, Utc};
 
 use crate::demo_data::{self, DEMO_SOURCES};
 use crate::ledger as native;
-use crate::model::{BillingPeriod, BreakdownDim, Channel, PeriodKey};
+use crate::model::{BillingPeriod, BreakdownDim, Channel, Charge, ChargeCategory, PeriodKey};
 use ledger as web;
 use memory::Connection as WebConnection;
 
 /// The tag the demo bill allocates by, and the pages read.
 const TAG: &str = "business_line";
 
+/// The account [`edge_charges`] are written under, beside the demo's own.
+const EDGE_ACCOUNT: (&str, &str) = ("AWS", "parity-edge");
+
+/// Rows the demo bill has few or none of, for one period: a charge with no
+/// service and one with an empty service name, an empty tag value, tags
+/// with no allocation key, a negative adjustment, a row with no amount,
+/// a credit larger than the usage it offsets, and exact ties in amount
+/// across services and resources.
+fn edge_charges(period: BillingPeriod, now: DateTime<Utc>) -> Vec<Charge> {
+    let start = Utc.from_utc_datetime(&period.start().and_hms_opt(0, 0, 0).unwrap());
+    let day = Duration::days(1);
+    let row = |offset: i64, service: Option<&str>, amount: Option<f64>, tags: Option<&str>| {
+        let from = start + day * offset as i32;
+        let mut charge = Charge::new(from, from + day, "USD");
+        charge.service_name = service.map(str::to_string);
+        charge.billed_cost = amount;
+        charge.effective_cost = amount;
+        charge.tags = tags.map(str::to_string);
+        charge
+    };
+
+    let mut charges = vec![
+        row(0, None, Some(12.5), Some(r#"{"business_line":"core"}"#)),
+        row(0, Some(""), Some(4.0), None),
+        row(0, Some("EC2"), Some(25.0), Some(r#"{"business_line":""}"#)),
+        row(
+            1,
+            Some("S3"),
+            Some(25.0),
+            Some(r#"{"business_line":"growth"}"#),
+        ),
+        row(
+            1,
+            Some("Lambda"),
+            None,
+            Some(r#"{"business_line":"growth"}"#),
+        ),
+        row(1, Some("RDS"), Some(6.0), Some(r#"{"team":"data"}"#)),
+        row(1, Some("RDS"), Some(3.0), Some("{}")),
+    ];
+
+    let mut adjustment = row(1, Some("EC2"), Some(-7.0), None);
+    adjustment.charge_category = ChargeCategory::Adjustment;
+    charges.push(adjustment);
+
+    for (name, region) in [("i-edge-a", Some("us-east-1")), ("i-edge-b", None)] {
+        let mut resource = row(
+            0,
+            Some("EC2"),
+            Some(9.0),
+            Some(r#"{"business_line":"core"}"#),
+        );
+        resource.resource_id = Some(name.to_string());
+        resource.region_id = region.map(str::to_string);
+        charges.push(resource);
+    }
+
+    // A refund that outweighs the period's usage.
+    let mut credit = row(0, None, Some(-500.0), None);
+    credit.charge_category = ChargeCategory::Credit;
+    credit.charge_description = Some("Refund".to_string());
+    charges.push(credit);
+
+    charges.retain(|charge| charge.charge_period_start <= now);
+    charges
+}
+
 /// Write the demo bill as of `now` into both ledgers, the way each target's
 /// `ledger::demo` does, less the accounts: those are application state.
-fn seed(now: DateTime<Utc>, reporting_currency: &str) -> Vec<BillingPeriod> {
+fn seed(now: DateTime<Utc>, reporting_currency: &str, edge: bool) -> Vec<BillingPeriod> {
     native::open_test_ledger(reporting_currency).expect("test ledger opens");
     web::init_ledger(reporting_currency).expect("memory ledger opens");
 
@@ -56,6 +123,20 @@ fn seed(now: DateTime<Utc>, reporting_currency: &str) -> Vec<BillingPeriod> {
                 .expect("native period written");
             web::replace_period(&key, &batch_id, &charges, None, Channel::Api)
                 .expect("memory period written");
+        }
+    }
+
+    if edge {
+        let (provider, account_id) = EDGE_ACCOUNT;
+        let current = *periods.last().expect("the demo has periods");
+        for period in [current.previous(), current] {
+            let key = PeriodKey::new(provider, account_id, period.label());
+            let batch_id = format!("edge-{}", period.label());
+            let charges = edge_charges(period, now);
+            native::replace_period(&key, &batch_id, &charges, None, Channel::Api)
+                .expect("native edge period written");
+            web::replace_period(&key, &batch_id, &charges, None, Channel::Api)
+                .expect("memory edge period written");
         }
     }
 
@@ -200,12 +281,20 @@ fn first_difference(native: &str, web: &str) -> Option<String> {
     ))
 }
 
-/// Ask both ledgers every read the pages make, as of `now`.
-fn compare(now: DateTime<Utc>, reporting_currency: &str) {
+/// Ask both ledgers every read the pages make, as of `now`, over the demo
+/// bill and, with `edge`, [`edge_charges`] beside it.
+fn compare(now: DateTime<Utc>, reporting_currency: &str, edge: bool) {
     use native::query as n;
     use web::query as w;
 
-    let periods = seed(now, reporting_currency);
+    let periods = seed(now, reporting_currency, edge);
+    let mut sources: Vec<(&str, &str)> = DEMO_SOURCES
+        .iter()
+        .map(|(provider, account_id, _, _)| (*provider, *account_id))
+        .collect();
+    if edge {
+        sources.push(EDGE_ACCOUNT);
+    }
     let mut report = Report {
         differences: Vec::new(),
     };
@@ -316,8 +405,8 @@ fn compare(now: DateTime<Utc>, reporting_currency: &str) {
             );
         }
 
-        for (provider, account_id, _, _) in DEMO_SOURCES {
-            let key = PeriodKey::new(*provider, *account_id, label.clone());
+        for &(provider, account_id) in &sources {
+            let key = PeriodKey::new(provider, account_id, label.clone());
             let read = |name: &str| format!("{name}({account_id}, {label})");
 
             report.same(
@@ -442,7 +531,7 @@ fn compare(now: DateTime<Utc>, reporting_currency: &str) {
             w::daily_totals_by_service_of(&WebConnection, since),
         );
 
-        for (provider, account_id, _, _) in DEMO_SOURCES {
+        for &(provider, account_id) in &sources {
             let read = |name: &str| format!("{name}({account_id}, last {days} days)");
 
             report.same(
@@ -486,7 +575,7 @@ fn compare(now: DateTime<Utc>, reporting_currency: &str) {
         );
     }
 
-    for (provider, account_id, _, _) in DEMO_SOURCES {
+    for &(provider, account_id) in &sources {
         report.same(
             &format!("latest_balance({account_id})"),
             n::latest_balance(provider, account_id),
@@ -497,7 +586,22 @@ fn compare(now: DateTime<Utc>, reporting_currency: &str) {
             native::snapshot::periods_of(account_id),
             web::snapshot::periods_of(account_id),
         );
+        for days in [7, 30, 400] {
+            report.same(
+                &format!("balance_burn({account_id}, {days} days)"),
+                native::with_connection_ref(|conn| {
+                    n::balance_burn_at(conn, provider, account_id, days, now)
+                }),
+                w::balance_burn_at(provider, account_id, days, now),
+            );
+        }
     }
+
+    report.same(
+        "api_fetches_this_month",
+        native::with_connection_ref(|conn| n::api_fetches_in_month_of(conn, now)),
+        w::api_fetches_in_month_at(now),
+    );
 
     report.same(
         "inventory_resources",
@@ -530,33 +634,46 @@ fn at(year: i32, month: u32, day: u32, hour: u32) -> DateTime<Utc> {
 
 #[test]
 fn the_ledgers_agree_mid_month() {
-    compare(at(2026, 10, 17, 12), "USD");
+    compare(at(2026, 10, 17, 12), "USD", false);
 }
 
 /// The first hours of a period: month to date is almost nothing, and the
 /// previous period is the one with the figures.
 #[test]
 fn the_ledgers_agree_on_the_first_of_a_month() {
-    compare(at(2026, 11, 1, 0), "USD");
+    compare(at(2026, 11, 1, 0), "USD", false);
 }
 
 /// A 31st, after a February: the same days of last month run out early.
 #[test]
 fn the_ledgers_agree_on_the_last_of_a_long_month() {
-    compare(at(2027, 3, 31, 23), "USD");
+    compare(at(2027, 3, 31, 23), "USD", false);
 }
 
 /// Converting the other way, so the dollar accounts need the rate.
 #[test]
 fn the_ledgers_agree_in_another_reporting_currency() {
-    compare(at(2026, 10, 17, 12), "CNY");
+    compare(at(2026, 10, 17, 12), "CNY", false);
 }
 
 /// A reporting currency no built-in rate reaches: every charge is
 /// unconverted, and no total may count one at par.
 #[test]
 fn the_ledgers_agree_when_nothing_converts() {
-    compare(at(2026, 10, 17, 12), "EUR");
+    compare(at(2026, 10, 17, 12), "EUR", false);
+}
+
+/// Rows the demo bill lacks, beside it: see [`edge_charges`].
+#[test]
+fn the_ledgers_agree_on_an_awkward_bill() {
+    compare(at(2026, 10, 17, 12), "USD", true);
+}
+
+/// The same rows on the first of a month, where only the refund and the
+/// first day's charges are in the current period yet.
+#[test]
+fn the_ledgers_agree_on_an_awkward_bill_converted() {
+    compare(at(2026, 11, 1, 0), "CNY", true);
 }
 
 #[test]
