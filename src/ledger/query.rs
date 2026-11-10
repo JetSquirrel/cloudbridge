@@ -3,6 +3,11 @@
 //! Everything the UI shows comes through [`schema::NORMALIZED_VIEW`], so
 //! amounts arrive already expressed in the reporting currency. Nothing in
 //! here adds up two currencies.
+//!
+//! Rankings order by the amount to a millionth, not the raw sum: this side
+//! adds up daily rollups and the browser adds up charges, so two equal
+//! totals can come out one ulp apart and swap places. Rounded, they tie
+//! and the name after it decides, on both sides.
 
 use anyhow::Result;
 use chrono::{DateTime, NaiveDate, Utc};
@@ -267,7 +272,7 @@ fn untagged_totals_by_account_of(
            AND coalesce(nullif(json_extract_string(tags, ?), ''), '') = ''
            AND billed_cost_base > 0
          GROUP BY account_id
-         ORDER BY amount DESC, account_id"
+         ORDER BY round(amount * 1e6) DESC, account_id"
     ))?;
     let rows = stmt
         .query_map(params![billing_period, tag_key], |row| {
@@ -508,7 +513,7 @@ fn sum_by_bucket(conn: &Connection, scope: &Scope, bucket: &str) -> Result<Vec<(
          WHERE {}
          GROUP BY bucket
          HAVING amount > 0
-         ORDER BY amount DESC, bucket",
+         ORDER BY round(amount * 1e6) DESC, bucket",
         scope.where_sql()
     ))?;
 
@@ -531,7 +536,7 @@ fn sum_by_provider_service(conn: &Connection, scope: &Scope) -> Result<Vec<(Stri
          WHERE {}
          GROUP BY provider, service
          HAVING amount > 0
-         ORDER BY amount DESC, provider, service",
+         ORDER BY round(amount * 1e6) DESC, provider, service",
         scope.where_sql()
     ))?;
 
@@ -587,7 +592,7 @@ fn tag_breakdown_query(
          WHERE {}
          GROUP BY tag_value
          HAVING amount > 0
-         ORDER BY amount DESC, tag_value",
+         ORDER BY round(amount * 1e6) DESC, tag_value",
         scope.where_sql()
     ))?;
 
@@ -615,7 +620,7 @@ fn untagged_totals_by_provider_of(
            AND coalesce(nullif(json_extract_string(tags, ?), ''), '') = ''
            AND billed_cost_base > 0
          GROUP BY provider
-         ORDER BY amount DESC, provider"
+         ORDER BY round(amount * 1e6) DESC, provider"
     ))?;
 
     let rows = stmt
@@ -915,7 +920,7 @@ fn untagged_usage_by_service_of(
            AND coalesce(nullif(json_extract_string(tags, ?), ''), '') = ''
          GROUP BY provider, service_name
          HAVING amount > 0
-         ORDER BY amount DESC, provider, service_name NULLS FIRST
+         ORDER BY round(amount * 1e6) DESC, provider, service_name NULLS FIRST
          LIMIT ?"
     ))?;
 
@@ -1507,7 +1512,7 @@ fn data_quality_issues_in(
            AND region_id IS NULL
          GROUP BY service
          HAVING amount > 0
-         ORDER BY amount DESC, service"
+         ORDER BY round(amount * 1e6) DESC, service"
     ))?;
     let regionless = stmt
         .query_map(params![billing_period], |row| {
@@ -1529,7 +1534,7 @@ fn data_quality_issues_in(
            AND service_category IS NULL
          GROUP BY product
          HAVING amount > 0
-         ORDER BY amount DESC, product"
+         ORDER BY round(amount * 1e6) DESC, product"
     ))?;
     let uncategorized = stmt
         .query_map(params![billing_period], |row| {
@@ -1625,7 +1630,7 @@ fn breakdown_within_of(
          WHERE {}
          GROUP BY outer_bucket, inner_bucket
          HAVING amount <> 0
-         ORDER BY amount DESC, outer_bucket, inner_bucket",
+         ORDER BY round(amount * 1e6) DESC, outer_bucket, inner_bucket",
         outer.bucket_sql(),
         inner_sql,
         scope.where_sql()
@@ -1684,7 +1689,7 @@ fn top_resources_of(conn: &Connection, key: &PeriodKey, limit: usize) -> Result<
            AND resource_id IS NOT NULL
          GROUP BY resource_id
          HAVING amount > 0
-         ORDER BY amount DESC, resource_id
+         ORDER BY round(amount * 1e6) DESC, resource_id
          LIMIT ?"
     ))?;
 
@@ -1931,7 +1936,7 @@ fn tag_usage_breakdown_by_service_of(
            AND charge_category = 'Usage'
          GROUP BY provider, service, tag_value
          HAVING amount > 0
-         ORDER BY amount DESC, provider, service, tag_value"
+         ORDER BY round(amount * 1e6) DESC, provider, service, tag_value"
     ))?;
 
     let rows = stmt
@@ -2071,7 +2076,7 @@ pub(crate) fn model_token_summary_of(
          GROUP BY provider, model
          HAVING bool_or(token_class <> 'other')
              OR provider IN ('OpenAI', 'Anthropic', 'DeepSeek')
-         ORDER BY usage_cost DESC, provider, model"
+         ORDER BY round(usage_cost * 1e6) DESC, provider, model"
     ))?;
 
     let rows = stmt

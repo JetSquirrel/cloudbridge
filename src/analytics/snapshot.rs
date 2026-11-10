@@ -15,7 +15,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 
-use super::{midnight, period_of};
+use super::{larger_first, midnight, period_of};
 use crate::model::{
     AmountDelta, BillingSnapshot, Channel, Charge, CurrencyDelta, LineChange, LineChangeKind,
     PeriodKey, SnapshotComparison, SnapshotLine, SnapshotRate, SnapshotTotal,
@@ -400,7 +400,7 @@ pub fn compare(frozen: &[SnapshotLine], current: &[SnapshotLine]) -> SnapshotCom
     }
     comparison
         .changes
-        .sort_by(|a, b| b.delta().abs().total_cmp(&a.delta().abs()));
+        .sort_by(|a, b| larger_first(a.delta().abs(), b.delta().abs()));
 
     comparison.by_service = deltas(
         frozen,
@@ -527,10 +527,7 @@ pub fn sort_deltas(deltas: &mut [AmountDelta], sort: Option<(DeltaColumn, bool)>
         |a: &AmountDelta, b: &AmountDelta| (&a.label, &a.currency).cmp(&(&b.label, &b.currency));
     match sort {
         None => deltas.sort_by(|a, b| {
-            b.delta
-                .abs()
-                .total_cmp(&a.delta.abs())
-                .then_with(|| by_identity(a, b))
+            larger_first(a.delta.abs(), b.delta.abs()).then_with(|| by_identity(a, b))
         }),
         Some((column, descending)) => deltas.sort_by(|a, b| {
             let order = match column {

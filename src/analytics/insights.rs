@@ -15,6 +15,8 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde_json::Value;
 
+use super::larger_first;
+
 use crate::model::{
     InsightFinding, InsightKind, InsightsReport, InventoryResource, InventoryScope, ResourceCost,
 };
@@ -99,7 +101,7 @@ pub fn findings_by_type(findings: &[InsightFinding], kind: InsightKind) -> Vec<F
     let mut groups: Vec<FindingGroup> = by_type
         .into_iter()
         .map(|(resource_type, mut members)| {
-            members.sort_by(|&a, &b| findings[b].cost.total_cmp(&findings[a].cost));
+            members.sort_by(|&a, &b| larger_first(findings[a].cost, findings[b].cost));
             FindingGroup {
                 resource_type: resource_type.to_string(),
                 count: members.len(),
@@ -109,8 +111,7 @@ pub fn findings_by_type(findings: &[InsightFinding], kind: InsightKind) -> Vec<F
         })
         .collect();
     groups.sort_by(|a, b| {
-        b.cost
-            .total_cmp(&a.cost)
+        larger_first(a.cost, b.cost)
             .then(b.count.cmp(&a.count))
             .then_with(|| a.resource_type.cmp(&b.resource_type))
     });
@@ -363,7 +364,7 @@ pub fn sort_findings(findings: &mut [InsightFinding]) {
     findings.sort_by(|a, b| {
         a.kind
             .cmp(&b.kind)
-            .then(b.cost.total_cmp(&a.cost))
+            .then(larger_first(a.cost, b.cost))
             .then_with(|| a.resource_id.cmp(&b.resource_id))
     });
 }
