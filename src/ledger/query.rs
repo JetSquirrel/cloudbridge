@@ -1025,7 +1025,12 @@ pub fn api_fetches_this_month() -> Result<i64> {
 }
 
 fn api_fetches_this_month_of(conn: &Connection) -> Result<i64> {
-    let period = crate::cloud::BillingPeriod::containing(Utc::now()).label();
+    api_fetches_in_month_of(conn, Utc::now())
+}
+
+/// [`api_fetches_this_month`] in the period holding `now`.
+pub(crate) fn api_fetches_in_month_of(conn: &Connection, now: DateTime<Utc>) -> Result<i64> {
+    let period = crate::cloud::BillingPeriod::containing(now).label();
     conn.query_row(
         "SELECT count(*) FROM ingest_batch
          WHERE billing_period = ? AND coalesce(channel, 'api') = 'api'",
@@ -1048,6 +1053,17 @@ pub(crate) fn balance_burn_of(
     account_id: &str,
     days: i64,
 ) -> Result<Option<f64>> {
+    balance_burn_at(conn, provider, account_id, days, Utc::now())
+}
+
+/// [`balance_burn_of`] as of `now`.
+pub(crate) fn balance_burn_at(
+    conn: &Connection,
+    provider: &str,
+    account_id: &str,
+    days: i64,
+    now: DateTime<Utc>,
+) -> Result<Option<f64>> {
     let mut stmt = conn.prepare(
         "SELECT CAST(observed_at AS VARCHAR), balance, currency
          FROM fct_balance_snapshot
@@ -1068,7 +1084,7 @@ pub(crate) fn balance_burn_of(
         .map(|(stamp, balance, currency)| Ok((super::parse_timestamp(&stamp)?, balance, currency)))
         .collect::<Result<Vec<_>>>()?;
 
-    Ok(analytics::burn(&observations, days, Utc::now()))
+    Ok(analytics::burn(&observations, days, now))
 }
 
 fn period_total_of(conn: &Connection, key: &PeriodKey) -> Result<f64> {

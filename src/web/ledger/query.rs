@@ -1164,7 +1164,12 @@ pub fn channel_of(key: &PeriodKey) -> Result<Channel> {
 /// call — but the number the demo shows is then the number the desktop shows
 /// for the same seeded ledger, which is the point of seeding it at all.
 pub fn api_fetches_this_month() -> Result<i64> {
-    let current = BillingPeriod::containing(Utc::now()).label();
+    api_fetches_in_month_at(Utc::now())
+}
+
+/// [`api_fetches_this_month`] in the period holding `now`.
+pub(crate) fn api_fetches_in_month_at(now: DateTime<Utc>) -> Result<i64> {
+    let current = BillingPeriod::containing(now).label();
 
     memory::with_store(|store| {
         let periods = store.periods.borrow();
@@ -1183,10 +1188,16 @@ pub(crate) fn balance_burn_of(
     account_id: &str,
     days: i64,
 ) -> Result<Option<f64>> {
-    burn_of(provider, account_id, days)
+    balance_burn_at(provider, account_id, days, Utc::now())
 }
 
-fn burn_of(provider: &str, account_id: &str, days: i64) -> Result<Option<f64>> {
+/// [`balance_burn_of`] as of `now`.
+pub(crate) fn balance_burn_at(
+    provider: &str,
+    account_id: &str,
+    days: i64,
+    now: DateTime<Utc>,
+) -> Result<Option<f64>> {
     memory::with_store(|store| {
         let snapshots = store.balances.borrow();
         let mut observations: Vec<_> = snapshots
@@ -1202,7 +1213,7 @@ fn burn_of(provider: &str, account_id: &str, days: i64) -> Result<Option<f64>> {
             .collect();
         observations.sort_by(|a, b| a.2.cmp(&b.2).then(a.0.cmp(&b.0)));
 
-        Ok(analytics::burn(&observations, days, Utc::now()))
+        Ok(analytics::burn(&observations, days, now))
     })
 }
 
