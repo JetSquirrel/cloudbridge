@@ -992,7 +992,8 @@ fn last_ingests_of(conn: &Connection) -> Result<Vec<(String, String, DateTime<Ut
         "SELECT provider, account_id, CAST(max(completed_at) AS VARCHAR)
          FROM ingest_batch
          WHERE status = 'complete'
-         GROUP BY provider, account_id",
+         GROUP BY provider, account_id
+         ORDER BY provider, account_id",
     )?;
 
     let rows = stmt

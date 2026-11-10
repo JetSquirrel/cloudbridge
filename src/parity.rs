@@ -164,12 +164,26 @@ fn seed(now: DateTime<Utc>, reporting_currency: &str, edge: bool) -> Vec<Billing
 /// The differences found, so one run names every read that disagrees.
 struct Report {
     differences: Vec<String>,
+    /// From the first write to the last, once the reads that carry write
+    /// stamps start: see [`unstamped`].
+    written: Option<(DateTime<Utc>, DateTime<Utc>)>,
 }
 
 impl Report {
+    fn written(&mut self, window: (DateTime<Utc>, DateTime<Utc>)) {
+        self.written = Some(window);
+    }
+
     fn same<T: Debug>(&mut self, read: &str, native: Result<T>, web: Result<T>) {
+        let show = |value: &T| {
+            let text = format!("{value:?}");
+            match self.written {
+                Some(window) => unstamped(&text, window),
+                None => text,
+            }
+        };
         let difference = match (native, web) {
-            (Ok(native), Ok(web)) => first_difference(&format!("{native:?}"), &format!("{web:?}")),
+            (Ok(native), Ok(web)) => first_difference(&show(&native), &show(&web)),
             (Err(_), Err(_)) => None,
             (Ok(_), Err(e)) => Some(format!("only the browser failed: {e:#}")),
             (Err(e), Ok(_)) => Some(format!("only the desktop failed: {e:#}")),
@@ -178,6 +192,55 @@ impl Report {
             self.differences.push(format!("{read}: {difference}"));
         }
     }
+}
+
+/// `Debug` output with the instants inside `window` written as `<written>`
+/// and every uuid as `<id>`: each store stamps a write when it makes it, to
+/// its own precision, and draws its own ids. An instant outside the window
+/// — a charge's date, a rate's — is left to be compared.
+fn unstamped(text: &str, (from, to): (DateTime<Utc>, DateTime<Utc>)) -> String {
+    // Stored stamps may be cut to the second.
+    let (from, to) = (from - Duration::seconds(1), to + Duration::seconds(1));
+    let bytes = text.as_bytes();
+    let shape = |at: usize, pattern: &[u8]| {
+        bytes.len() >= at + pattern.len()
+            && pattern.iter().enumerate().all(|(i, &p)| match p {
+                b'd' => bytes[at + i].is_ascii_digit(),
+                b'h' => bytes[at + i].is_ascii_hexdigit(),
+                p => bytes[at + i] == p,
+            })
+    };
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if shape(i, b"hhhhhhhh-hhhh-hhhh-hhhh-hhhhhhhhhhhh") {
+            out.push_str("<id>");
+            i += 36;
+            continue;
+        }
+        if shape(i, b"dddd-dd-ddTdd:dd:dd") {
+            let mut end = i + 19;
+            if bytes.get(end) == Some(&b'.') {
+                end += 1;
+                while end < bytes.len() && bytes[end].is_ascii_digit() {
+                    end += 1;
+                }
+            }
+            if bytes.get(end) == Some(&b'Z') {
+                end += 1;
+                let instant = DateTime::parse_from_rfc3339(&text[i..end]).map(|t| t.to_utc());
+                if instant.is_ok_and(|t| from <= t && t <= to) {
+                    out.push_str("<written>");
+                    i = end;
+                    continue;
+                }
+            }
+        }
+        let c = text[i..].chars().next().expect("on a char boundary");
+        out.push(c);
+        i += c.len_utf8();
+    }
+    out
 }
 
 /// A piece of `Debug` output: a number, or the text between two numbers.
@@ -287,6 +350,7 @@ fn compare(now: DateTime<Utc>, reporting_currency: &str, edge: bool) {
     use native::query as n;
     use web::query as w;
 
+    let written_from = Utc::now();
     let periods = seed(now, reporting_currency, edge);
     let mut sources: Vec<(&str, &str)> = DEMO_SOURCES
         .iter()
@@ -297,6 +361,7 @@ fn compare(now: DateTime<Utc>, reporting_currency: &str, edge: bool) {
     }
     let mut report = Report {
         differences: Vec::new(),
+        written: None,
     };
 
     // The current and previous periods, and the oldest: on a bill a year
@@ -619,6 +684,82 @@ fn compare(now: DateTime<Utc>, reporting_currency: &str, edge: bool) {
         web::invoice::all_invoices(),
     );
 
+    // Reads that carry the wall-clock instant of a write, or an id drawn
+    // for it: last of all, since freezing adds snapshots. The two stores
+    // stamp each write a moment apart, and draw their own ids.
+    let frozen: Vec<PeriodKey> = sources
+        .iter()
+        .flat_map(|&(provider, account_id)| {
+            [current, current.previous()]
+                .map(|period| PeriodKey::new(provider, account_id, period.label()))
+        })
+        .collect();
+    // Held as text until the last write is in, so its stamp is masked too.
+    fn shown<T: Debug>(read: Result<T>) -> Result<String> {
+        read.map(|value| format!("{value:?}"))
+    }
+    let mut writes = Vec::new();
+    for key in &frozen {
+        let read = |name: &str| format!("{name}({}, {})", key.account_id, key.billing_period);
+        writes.push((
+            read("current_source"),
+            shown(native::snapshot::current_source(key)),
+            shown(web::snapshot::current_source(key)),
+        ));
+        // A second freeze of the same rows stores nothing.
+        for attempt in ["freeze_period", "freeze_period again"] {
+            writes.push((
+                read(attempt),
+                shown(native::snapshot::freeze_period(key)),
+                shown(web::snapshot::freeze_period(key)),
+            ));
+        }
+    }
+    report.written((written_from, Utc::now()));
+    for (read, native, web) in writes {
+        report.same(&read, native, web);
+    }
+
+    report.same("last_ingests", n::last_ingests(), w::last_ingests());
+    report.same(
+        "ledger_accounts",
+        n::ledger_accounts(),
+        w::ledger_accounts(),
+    );
+    for &(provider, account_id) in &sources {
+        report.same(
+            &format!("snapshot::periods_of({account_id})"),
+            native::snapshot::periods_of(account_id),
+            web::snapshot::periods_of(account_id),
+        );
+        for label in &labels {
+            let key = PeriodKey::new(provider, account_id, label.clone());
+            report.same(
+                &format!("last_ingest({account_id}, {label})"),
+                n::last_ingest(&key),
+                w::last_ingest(&key),
+            );
+        }
+    }
+    for key in &frozen {
+        let read = |name: &str| format!("{name}({}, {})", key.account_id, key.billing_period);
+        let (native_snapshots, web_snapshots) = (
+            native::snapshot::snapshots_of(key),
+            web::snapshot::snapshots_of(key),
+        );
+        // Each store's lines under its own id for the same revision.
+        if let (Ok(native_snapshots), Ok(web_snapshots)) = (&native_snapshots, &web_snapshots) {
+            for (a, b) in native_snapshots.iter().zip(web_snapshots) {
+                report.same(
+                    &read(&format!("snapshot_lines(revision {})", a.revision)),
+                    native::snapshot::snapshot_lines(&a.snapshot_id),
+                    web::snapshot::snapshot_lines(&b.snapshot_id),
+                );
+            }
+        }
+        report.same(&read("snapshots_of"), native_snapshots, web_snapshots);
+    }
+
     assert!(
         report.differences.is_empty(),
         "the desktop and browser ledgers disagree on {} read(s), as of {now} in \
@@ -674,6 +815,19 @@ fn the_ledgers_agree_on_an_awkward_bill() {
 #[test]
 fn the_ledgers_agree_on_an_awkward_bill_converted() {
     compare(at(2026, 11, 1, 0), "CNY", true);
+}
+
+#[test]
+fn a_write_stamp_and_an_id_are_masked_and_other_instants_kept() {
+    let window = (at(2026, 11, 10, 7), at(2026, 11, 10, 8));
+    assert_eq!(
+        unstamped(
+            "Snap { id: \"0b5e3f1a-9c2d-4e8f-a1b2-c3d4e5f60718\", at: 2026-11-10T07:45:01.123456789Z, \
+             charged: 2026-10-17T12:30:00Z }",
+            window
+        ),
+        "Snap { id: \"<id>\", at: <written>, charged: 2026-10-17T12:30:00Z }"
+    );
 }
 
 #[test]
