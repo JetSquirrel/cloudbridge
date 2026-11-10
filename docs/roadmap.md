@@ -16,11 +16,12 @@ very small teams. Credentials are stored in the OS keyring and used to
 authenticate requests to the configured providers. The desktop app has no
 CloudBridge sync service or telemetry. Billing databases and raw payload
 files stay local, but are not encrypted by the app; protect the device,
-its backups and exported files accordingly.
+its backups and exported files accordingly. Checking a provider's invoice
+against the ledger is in scope (Reconciliation, 0.9.0).
 
-**Out of scope:** multi-user or shared deployments, invoice reconciliation,
-a general chargeback/showback rule engine, a separate collector daemon,
-and team collaboration features.
+**Out of scope:** multi-user or shared deployments, a general
+chargeback/showback rule engine, a separate collector daemon, and team
+collaboration features.
 
 **FOCUS.** We use [FOCUS](https://focus.finops.org/) terminology to give
 API responses and bill exports a common ledger representation. We do
