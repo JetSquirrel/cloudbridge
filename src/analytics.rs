@@ -227,6 +227,17 @@ pub fn compare_periods(
 /// One period's `(bucket, amount)` pairs, largest first, with a net-negative
 /// bucket dropped.
 ///
+/// The larger amount first, compared to a millionth. The desktop adds up
+/// daily rollups where the browser adds up charges, so equal totals can come
+/// out an ulp apart; a raw compare would swap them between the two. Equal
+/// here leaves the order to the caller's tiebreak, as the desktop's
+/// `ORDER BY round(amount * 1e6) DESC` does.
+pub fn larger_first(a: f64, b: f64) -> std::cmp::Ordering {
+    // `+ 0.0` folds -0 into 0, which `total_cmp` would otherwise split.
+    let ranked = |amount: f64| (amount * 1e6).round() + 0.0;
+    ranked(b).total_cmp(&ranked(a))
+}
+
 /// The sort is over a map, so buckets of equal amount keep their key order
 /// and two reads of the same data order them the same way.
 fn ranked(totals: BTreeMap<String, f64>) -> Vec<(String, f64)> {
@@ -234,7 +245,7 @@ fn ranked(totals: BTreeMap<String, f64>) -> Vec<(String, f64)> {
         .into_iter()
         .filter(|(_, amount)| *amount > 0.0)
         .collect();
-    rows.sort_by(|a, b| b.1.total_cmp(&a.1));
+    rows.sort_by(|a, b| larger_first(a.1, b.1));
 
     rows
 }
@@ -283,7 +294,7 @@ pub fn decompose(
             delta: current - previous,
         })
         .collect();
-    by_category.sort_by(|a, b| b.delta.abs().total_cmp(&a.delta.abs()));
+    by_category.sort_by(|a, b| larger_first(a.delta.abs(), b.delta.abs()));
 
     let mut by_service: Vec<ServiceMovement> = services
         .into_iter()
@@ -310,7 +321,7 @@ pub fn decompose(
             })
         })
         .collect();
-    by_service.sort_by(|a, b| b.delta.abs().total_cmp(&a.delta.abs()));
+    by_service.sort_by(|a, b| larger_first(a.delta.abs(), b.delta.abs()));
 
     let total_delta = current_total - previous_total;
     let explained: f64 = by_category.iter().map(|component| component.delta).sum();
@@ -832,6 +843,18 @@ mod tests {
         days.iter()
             .map(|(day, amount)| ((*day).to_string(), *amount))
             .collect()
+    }
+
+    #[test]
+    fn amounts_an_ulp_apart_rank_as_a_tie() {
+        use std::cmp::Ordering;
+
+        let summed = (0.1 + 0.2) + 2.3;
+        assert_ne!(summed, 2.6);
+        assert_eq!(larger_first(summed, 2.6), Ordering::Equal);
+        assert_eq!(larger_first(-0.0, 0.0), Ordering::Equal);
+        assert_eq!(larger_first(2.61, 2.6), Ordering::Less);
+        assert_eq!(larger_first(2.6, 2.61), Ordering::Greater);
     }
 
     #[test]

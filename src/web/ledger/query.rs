@@ -20,7 +20,7 @@ use chrono::{DateTime, Utc};
 use super::memory::{self, NormalizedRow};
 use super::Connection;
 use super::{Channel, ChargeCategory, PeriodKey};
-use crate::analytics::{self, QualityCounts, TwoPeriodBuckets};
+use crate::analytics::{self, larger_first, QualityCounts, TwoPeriodBuckets};
 use crate::model::{BillingPeriod, BreakdownPart, TokenClass};
 use crate::token_meter::{self, TokenDetails};
 
@@ -163,7 +163,7 @@ fn totals_by_bucket<K: Ord>(
         .into_iter()
         .filter(|(_, amount)| *amount > 0.0)
         .collect();
-    totals.sort_by(|a, b| b.1.total_cmp(&a.1));
+    totals.sort_by(|a, b| larger_first(a.1, b.1));
 
     totals
 }
@@ -326,8 +326,7 @@ pub fn breakdown_within(
             .filter(|part| part.amount != 0.0)
             .collect();
         parts.sort_by(|a, b| {
-            b.amount
-                .total_cmp(&a.amount)
+            larger_first(a.amount, b.amount)
                 .then_with(|| a.outer.cmp(&b.outer))
                 .then_with(|| a.inner.cmp(&b.inner))
         });
@@ -374,7 +373,7 @@ pub fn top_resources(key: &PeriodKey, limit: usize) -> Result<Vec<TopResource>> 
                 },
             )
             .collect();
-        resources.sort_by(|a, b| b.amount.total_cmp(&a.amount));
+        resources.sort_by(|a, b| larger_first(a.amount, b.amount));
         resources.truncate(limit);
 
         resources
@@ -1013,7 +1012,7 @@ pub fn untagged_usage_by_service(
                 amount,
             })
             .collect();
-        rows.sort_by(|a, b| b.amount.total_cmp(&a.amount));
+        rows.sort_by(|a, b| larger_first(a.amount, b.amount));
         rows.truncate(limit);
 
         rows
@@ -1597,7 +1596,7 @@ pub fn model_token_summary(
                 }
             })
             .collect();
-        summaries.sort_by(|a, b| b.usage_cost.total_cmp(&a.usage_cost));
+        summaries.sort_by(|a, b| larger_first(a.usage_cost, b.usage_cost));
 
         summaries
     })
@@ -1711,7 +1710,7 @@ fn data_quality_issues_in(
             .filter(|(_, (amount, _))| *amount > 0.0)
             .map(|(service, (amount, charges))| (service, amount, charges))
             .collect();
-        regionless.sort_by(|a, b| b.1.total_cmp(&a.1));
+        regionless.sort_by(|a, b| larger_first(a.1, b.1));
 
         // Usage no service-category mapping placed, per product — the
         // desktop's grouping and order: largest first, then by name.
@@ -1737,7 +1736,7 @@ fn data_quality_issues_in(
             .map(|(product, (amount, charges))| (product, amount, charges))
             .collect();
         // Stable over the map's name order, so equal amounts stay by name.
-        uncategorized.sort_by(|a, b| b.1.total_cmp(&a.1));
+        uncategorized.sort_by(|a, b| larger_first(a.1, b.1));
 
         analytics::data_quality(QualityCounts {
             tag_key,

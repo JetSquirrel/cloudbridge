@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use super::larger_first;
 use crate::model::{BreakdownDim, BreakdownPart};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -92,7 +93,7 @@ impl Breakdown {
             })
             .filter(|(_, amount)| *amount > 0.0)
             .collect();
-        rows.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        rows.sort_by(|a, b| larger_first(a.1, b.1).then_with(|| a.0.cmp(&b.0)));
         rows
     }
 
@@ -105,11 +106,7 @@ impl Breakdown {
             .filter(|row| row.amount != 0.0)
             .cloned()
             .collect();
-        rows.sort_by(|a, b| {
-            b.amount
-                .total_cmp(&a.amount)
-                .then_with(|| a.key.cmp(&b.key))
-        });
+        rows.sort_by(|a, b| larger_first(a.amount, b.amount).then_with(|| a.key.cmp(&b.key)));
         rows
     }
 }

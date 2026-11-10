@@ -92,6 +92,14 @@ fn edge_charges(period: BillingPeriod, now: DateTime<Utc>) -> Vec<Charge> {
         charges.push(resource);
     }
 
+    // Near-ties: Athena's three charges total 2.6 or one ulp under it,
+    // depending on whether they are summed as written or day by day.
+    // Batch costs exactly 2.6.
+    for (offset, amount) in [(1, 2.3), (0, 0.1), (0, 0.2)] {
+        charges.push(row(offset, Some("Athena"), Some(amount), None));
+    }
+    charges.push(row(1, Some("Batch"), Some(2.6), None));
+
     // A refund that outweighs the period's usage.
     let mut credit = row(0, None, Some(-500.0), None);
     credit.charge_category = ChargeCategory::Credit;
