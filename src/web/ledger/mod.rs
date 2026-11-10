@@ -5,6 +5,9 @@
 //! `crate::memory` holds the rows and does the currency conversion; this
 //! module is the API the pages were already written against.
 
+// Seeds accounts through `crate::db`, which is the browser's own only in
+// the browser. The parity tests write the same rows themselves.
+#[cfg(target_family = "wasm")]
 pub mod demo;
 pub mod inventory;
 pub mod invoice;
@@ -14,8 +17,9 @@ pub mod snapshot;
 use anyhow::Result;
 use chrono::Utc;
 
-use crate::memory::{self, StoredPeriod};
-use crate::store::Connection;
+// Reached through `super`, and by this module's children through here, so
+// the same files also compile under `crate::parity` in the desktop's tests.
+use super::memory::{self, Connection, StoredPeriod};
 
 pub use crate::model::{BalanceSnapshot, Channel, Charge, ChargeCategory, CostBasis, PeriodKey};
 

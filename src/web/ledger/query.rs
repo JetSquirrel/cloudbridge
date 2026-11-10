@@ -17,11 +17,11 @@ use std::collections::BTreeMap;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 
+use super::memory::{self, NormalizedRow};
+use super::Connection;
 use super::{Channel, ChargeCategory, PeriodKey};
 use crate::analytics::{self, QualityCounts, TwoPeriodBuckets};
-use crate::memory::{self, NormalizedRow};
 use crate::model::{BillingPeriod, BreakdownPart, TokenClass};
-use crate::store::Connection;
 use crate::token_meter::{self, TokenDetails};
 
 pub use crate::model::{
@@ -697,7 +697,7 @@ pub fn usage_and_credits(billing_period: &str) -> Result<(f64, f64)> {
 /// How many of a period's rows carry no amount: usage records, which are in no
 /// total and must not read as costing nothing.
 pub fn rows_without_amount(billing_period: &str) -> Result<i64> {
-    crate::memory::with_store(|store| {
+    memory::with_store(|store| {
         let count = store
             .periods
             .borrow()
@@ -1002,8 +1002,11 @@ pub fn untagged_usage_by_service(
                 .or_insert(0.0) += row.billed_cost_base.unwrap_or(0.0);
         }
 
+        // The desktop's `HAVING amount > 0`: a group no rate converts has
+        // nothing to rank by.
         let mut rows: Vec<UntaggedServiceUsage> = grouped
             .into_iter()
+            .filter(|(_, amount)| *amount > 0.0)
             .map(|((provider, service), amount)| UntaggedServiceUsage {
                 provider,
                 service,
@@ -1242,7 +1245,7 @@ pub(crate) fn account_forecast_of(
     })
 }
 
-fn forecast_at(billing_period: &str, now: DateTime<Utc>) -> Result<PeriodForecast> {
+pub(crate) fn forecast_at(billing_period: &str, now: DateTime<Utc>) -> Result<PeriodForecast> {
     let period = analytics::period_of(billing_period)?;
 
     read(|all| {
@@ -1372,7 +1375,7 @@ pub fn forecast_bands_for_period(billing_period: &str) -> Result<ForecastBands> 
     forecast_bands_at(billing_period, Utc::now())
 }
 
-fn forecast_bands_at(billing_period: &str, now: DateTime<Utc>) -> Result<ForecastBands> {
+pub(crate) fn forecast_bands_at(billing_period: &str, now: DateTime<Utc>) -> Result<ForecastBands> {
     let period = analytics::period_of(billing_period)?;
     let forecast = forecast_at(billing_period, now)?;
 
@@ -1410,7 +1413,7 @@ pub fn trailing_daily_average(day_count: i64, months: i64) -> Result<Vec<(String
     trailing_daily_average_at(day_count, months, Utc::now())
 }
 
-fn trailing_daily_average_at(
+pub(crate) fn trailing_daily_average_at(
     day_count: i64,
     months: i64,
     now: DateTime<Utc>,

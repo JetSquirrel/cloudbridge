@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 
-use crate::memory;
+use super::memory;
 use crate::model::{CostBasis, Invoice, PeriodKey};
 
 /// Store invoices. One carrying the same reference for the same month and

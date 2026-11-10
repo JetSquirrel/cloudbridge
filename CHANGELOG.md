@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Attribution, and the data-health check on Accounts, failed over untagged
+  usage with no exchange rate.** When every untagged charge of a service was
+  in a currency the rate table does not convert, the list of largest
+  untagged services stopped with "Invalid column type Null" and took the
+  page with it. Such a service is now left out of that list, as it has no
+  amount to rank by.
+- **Rows of equal amount could change places between loads.** Ranked lists
+  such as services, tags and resources were ordered by amount alone, which
+  left ties to the database. They are now ordered by name within a tie, the
+  same way in the app and the web demo.
+
 ## [0.9.0] - 2026-11-04
 
 Close the month with evidence: freeze a bill, check it against the provider's

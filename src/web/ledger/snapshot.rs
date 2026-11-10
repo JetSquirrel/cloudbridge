@@ -6,8 +6,8 @@
 use anyhow::Result;
 use chrono::Utc;
 
+use super::memory::{self, Store, StoredSnapshot};
 use crate::analytics::snapshot::{self, BatchSource};
-use crate::memory::{self, Store, StoredSnapshot};
 use crate::model::{BillingSnapshot, FreezeOutcome, PeriodKey, SnapshotLine};
 
 /// Freeze a period's current rows as a new revision.
@@ -136,7 +136,7 @@ fn lines_of(store: &Store, key: &PeriodKey) -> Vec<SnapshotLine> {
         .iter()
         .find(|period| period.key == *key)
         .map(|period| {
-            snapshot::charge_ids(key, &period.charges)
+            let mut lines: Vec<SnapshotLine> = snapshot::charge_ids(key, &period.charges)
                 .into_iter()
                 .zip(&period.charges)
                 .map(|(charge_id, charge)| SnapshotLine {
@@ -144,7 +144,11 @@ fn lines_of(store: &Store, key: &PeriodKey) -> Vec<SnapshotLine> {
                     fx_rate: memory::rate_for(charge, &reporting),
                     charge: charge.clone(),
                 })
-                .collect()
+                .collect();
+            // The desktop's `ORDER BY charge_id`.
+            lines.sort_by(|a, b| a.charge_id.cmp(&b.charge_id));
+
+            lines
         })
         .unwrap_or_default()
 }

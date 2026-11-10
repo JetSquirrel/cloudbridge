@@ -111,7 +111,7 @@ pub(crate) fn daily_totals_by_service_of(
          FROM {NORMALIZED_VIEW}
          WHERE charge_period_start >= CAST(? AS TIMESTAMP)
          GROUP BY provider, service, day
-         ORDER BY day"
+         ORDER BY day, provider, service"
     ))?;
 
     let rows = stmt
@@ -144,7 +144,7 @@ pub(crate) fn daily_totals_for_account_of(
          FROM {NORMALIZED_VIEW}
          WHERE account_id = ? AND charge_period_start >= CAST(? AS TIMESTAMP)
          GROUP BY provider, service, day
-         ORDER BY day"
+         ORDER BY day, provider, service"
     ))?;
 
     let rows = stmt
@@ -266,7 +266,8 @@ fn untagged_totals_by_account_of(
          WHERE billing_period = ?
            AND coalesce(nullif(json_extract_string(tags, ?), ''), '') = ''
            AND billed_cost_base > 0
-         GROUP BY account_id"
+         GROUP BY account_id
+         ORDER BY amount DESC, account_id"
     ))?;
     let rows = stmt
         .query_map(params![billing_period, tag_key], |row| {
@@ -507,7 +508,7 @@ fn sum_by_bucket(conn: &Connection, scope: &Scope, bucket: &str) -> Result<Vec<(
          WHERE {}
          GROUP BY bucket
          HAVING amount > 0
-         ORDER BY amount DESC",
+         ORDER BY amount DESC, bucket",
         scope.where_sql()
     ))?;
 
@@ -530,7 +531,7 @@ fn sum_by_provider_service(conn: &Connection, scope: &Scope) -> Result<Vec<(Stri
          WHERE {}
          GROUP BY provider, service
          HAVING amount > 0
-         ORDER BY amount DESC",
+         ORDER BY amount DESC, provider, service",
         scope.where_sql()
     ))?;
 
@@ -586,7 +587,7 @@ fn tag_breakdown_query(
          WHERE {}
          GROUP BY tag_value
          HAVING amount > 0
-         ORDER BY amount DESC",
+         ORDER BY amount DESC, tag_value",
         scope.where_sql()
     ))?;
 
@@ -614,7 +615,7 @@ fn untagged_totals_by_provider_of(
            AND coalesce(nullif(json_extract_string(tags, ?), ''), '') = ''
            AND billed_cost_base > 0
          GROUP BY provider
-         ORDER BY amount DESC"
+         ORDER BY amount DESC, provider"
     ))?;
 
     let rows = stmt
@@ -913,7 +914,8 @@ fn untagged_usage_by_service_of(
            AND charge_category = 'Usage'
            AND coalesce(nullif(json_extract_string(tags, ?), ''), '') = ''
          GROUP BY provider, service_name
-         ORDER BY amount DESC
+         HAVING amount > 0
+         ORDER BY amount DESC, provider, service_name NULLS FIRST
          LIMIT ?"
     ))?;
 
@@ -1158,7 +1160,7 @@ pub fn forecast_for_period(billing_period: &str) -> Result<PeriodForecast> {
     with_connection_ref(|conn| forecast_for_period_of(conn, billing_period, Utc::now()))
 }
 
-fn forecast_for_period_of(
+pub(crate) fn forecast_for_period_of(
     conn: &Connection,
     billing_period: &str,
     now: DateTime<Utc>,
@@ -1308,7 +1310,7 @@ pub fn forecast_bands_for_period(billing_period: &str) -> Result<ForecastBands> 
     with_connection_ref(|conn| forecast_bands_for_period_of(conn, billing_period, Utc::now()))
 }
 
-fn forecast_bands_for_period_of(
+pub(crate) fn forecast_bands_for_period_of(
     conn: &Connection,
     billing_period: &str,
     now: DateTime<Utc>,
@@ -1353,7 +1355,7 @@ pub fn trailing_daily_average(day_count: i64, months: i64) -> Result<Vec<(String
     with_connection_ref(|conn| trailing_daily_average_of(conn, day_count, months, Utc::now()))
 }
 
-fn trailing_daily_average_of(
+pub(crate) fn trailing_daily_average_of(
     conn: &Connection,
     day_count: i64,
     months: i64,
@@ -1488,7 +1490,7 @@ fn data_quality_issues_in(
            AND region_id IS NULL
          GROUP BY service
          HAVING amount > 0
-         ORDER BY amount DESC"
+         ORDER BY amount DESC, service"
     ))?;
     let regionless = stmt
         .query_map(params![billing_period], |row| {
@@ -1665,7 +1667,7 @@ fn top_resources_of(conn: &Connection, key: &PeriodKey, limit: usize) -> Result<
            AND resource_id IS NOT NULL
          GROUP BY resource_id
          HAVING amount > 0
-         ORDER BY amount DESC
+         ORDER BY amount DESC, resource_id
          LIMIT ?"
     ))?;
 
@@ -1912,7 +1914,7 @@ fn tag_usage_breakdown_by_service_of(
            AND charge_category = 'Usage'
          GROUP BY provider, service, tag_value
          HAVING amount > 0
-         ORDER BY amount DESC"
+         ORDER BY amount DESC, provider, service, tag_value"
     ))?;
 
     let rows = stmt
@@ -2052,7 +2054,7 @@ pub(crate) fn model_token_summary_of(
          GROUP BY provider, model
          HAVING bool_or(token_class <> 'other')
              OR provider IN ('OpenAI', 'Anthropic', 'DeepSeek')
-         ORDER BY usage_cost DESC"
+         ORDER BY usage_cost DESC, provider, model"
     ))?;
 
     let rows = stmt
@@ -2130,7 +2132,7 @@ pub(crate) fn daily_model_tokens_of(
            AND model IS NOT NULL
            AND token_class <> 'other'
          GROUP BY day, model
-         ORDER BY day"
+         ORDER BY day, model"
     ))?;
 
     let rows = stmt

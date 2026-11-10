@@ -97,6 +97,13 @@ impl Store {
     }
 }
 
+/// A handle on the store.
+///
+/// It carries nothing: one store holds both databases, so the handle is only
+/// the name a signature needs. `crate::store` re-exports it in the browser.
+#[derive(Debug, Clone, Copy)]
+pub struct Connection;
+
 thread_local! {
     static STORE: Store = Store::new();
 }
