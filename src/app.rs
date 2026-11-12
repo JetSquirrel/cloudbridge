@@ -18,6 +18,15 @@ use crate::ui::{
 };
 use crate::ui::{fmt, platform_key_binding, theme};
 
+/// The app's logo for the sidebar header: the app icon cropped to its
+/// rounded square. Built once, so every frame hands GPUI the same image.
+static LOGO: std::sync::LazyLock<std::sync::Arc<Image>> = std::sync::LazyLock::new(|| {
+    std::sync::Arc::new(Image::from_bytes(
+        ImageFormat::Svg,
+        include_bytes!("../assets/logo.svg").to_vec(),
+    ))
+});
+
 actions!(
     cloudbridge,
     [
@@ -562,21 +571,7 @@ impl CloudBridgeApp {
                     .gap_3()
                     .px_2()
                     .pb_5()
-                    .child(
-                        div()
-                            .size_9()
-                            .flex_shrink_0()
-                            .rounded(cx.theme().radius)
-                            .bg(theme::accent(cx))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                Icon::new(IconName::ChartPie)
-                                    .size_5()
-                                    .text_color(theme::on_accent(cx)),
-                            ),
-                    )
+                    .child(img(LOGO.clone()).size_9().flex_shrink_0())
                     .child(
                         div()
                             .text_lg()
