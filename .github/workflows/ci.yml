@@ -46,6 +46,13 @@ jobs:
             libxcb1-dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # A restored cache can hold `target/duckdb-sources/<hash>/` without its
+      # `.complete` marker. `libduckdb-sys` then unpacks again and cannot rename
+      # over the leftover, failing with "Directory not empty". It only shows
+      # when `Cargo.lock` changed, because an exact cache hit skips the rebuild.
+      - name: Drop cached DuckDB sources
+        shell: bash
+        run: rm -rf target/duckdb-sources
       - name: Check formatting
         run: cargo fmt --check
       - name: Clippy
@@ -129,6 +136,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: msrv
+      # A restored cache can hold `target/duckdb-sources/<hash>/` without its
+      # `.complete` marker. `libduckdb-sys` then unpacks again and cannot rename
+      # over the leftover, failing with "Directory not empty". It only shows
+      # when `Cargo.lock` changed, because an exact cache hit skips the rebuild.
+      - name: Drop cached DuckDB sources
+        shell: bash
+        run: rm -rf target/duckdb-sources
       - name: Check compilation on declared MSRV
         run: cargo check --locked
 
@@ -150,6 +164,13 @@ jobs:
             libxcb1-dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # A restored cache can hold `target/duckdb-sources/<hash>/` without its
+      # `.complete` marker. `libduckdb-sys` then unpacks again and cannot rename
+      # over the leftover, failing with "Directory not empty". It only shows
+      # when `Cargo.lock` changed, because an exact cache hit skips the rebuild.
+      - name: Drop cached DuckDB sources
+        shell: bash
+        run: rm -rf target/duckdb-sources
       
       # Audit dependencies for known vulnerabilities
       - name: Install cargo-audit
