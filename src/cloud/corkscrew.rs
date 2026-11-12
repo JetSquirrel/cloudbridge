@@ -38,7 +38,7 @@ use super::SourceContext;
 use crate::config::get_app_data_dir;
 
 /// The release CloudBridge installs.
-pub const RELEASE: &str = "cloudbridge-r4";
+pub const RELEASE: &str = "cloudbridge-r5";
 const DOWNLOAD_BASE: &str = "https://github.com/JetSquirrel/corkscrew/releases/download";
 
 /// (archive, SHA-256) for this platform's build, or `None` where there is
@@ -47,12 +47,12 @@ fn archive() -> Option<(&'static str, &'static str)> {
     if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
         Some((
             "corkscrew-cloudbridge_darwin_arm64.tar.gz",
-            "91fd927a2e1da4e4b94dedc9f75b957da46a979ab2132a2eab51b1d09f23d05a",
+            "7899487436efabe2e413b0c8d6ebfd30afdaf68979aacc6a6c167343409f5550",
         ))
     } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
         Some((
             "corkscrew-cloudbridge_windows_amd64.zip",
-            "82a8304a0ba4b63c695b520da49d402756760bcff5bf56f6a3bbb4c7bd57ca78",
+            "0fc605acfa45469b59d0b720fde2e2dfec4d6eaa07ce7c27d1cc58e49e8dea51",
         ))
     } else {
         None

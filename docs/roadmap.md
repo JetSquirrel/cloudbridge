@@ -99,6 +99,11 @@ Insights gains a read-only check for AWS security groups open to the internet,
 which says what it could not evaluate. Every page is translated into 简体中文,
 and the arch bridge replaces the old app and tray icons.
 
+0.10.0 is upkeep. Scans move to corkscrew `cloudbridge-r5`, which reads EC2
+key pairs and CloudWatch log groups instead of failing their region and
+retries a throttled CloudFormation read. The interface moves to GPUI Kit
+0.9.1, and the sidebar carries the arch bridge.
+
 A source is a `SourceDescriptor` registry entry rather than an enum
 variant. API-backed sources implement `BillingSource`; file-only sources
 provide a bill parser without an API client. The ingest pipeline persists

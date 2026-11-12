@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-13
+
+Scans that used to come back partial now finish: the scanner moves to corkscrew
+`cloudbridge-r5`. The interface is rebuilt on GPUI Kit 0.9.1, the sidebar
+carries the app's own icon, and two fixes steady Attribution and ranked lists.
+
+### Changed
+- **The sidebar shows the app's icon.** The arch bridge replaces the generic
+  pie chart beside the app's name, so the window matches the Dock and the
+  tray.
+- **Built on GPUI Kit 0.9.1.** The interface framework moves up from 0.8.1,
+  in the app and the web demo alike. DuckDB stays at 1.20000.1, which the
+  build now names exactly.
+
 ### Fixed
+- **AWS resource scans no longer come back partial on key pairs, log groups
+  and busy CloudFormation accounts.** The scanner is now corkscrew
+  `cloudbridge-r5`. A region holding an EC2 key pair or a CloudWatch log
+  group failed every time: the key pair was looked up by its id where AWS
+  wants its name, and every log group was refused over a trailing `:*` in
+  its ARN. Stacks that AWS throttled while being read are now retried
+  instead of failing the region.
 - **Attribution, and the data-health check on Accounts, failed over untagged
   usage with no exchange rate.** When every untagged charge of a service was
   in a currency the rate table does not convert, the list of largest

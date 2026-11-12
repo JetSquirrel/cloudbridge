@@ -74,6 +74,14 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      # A restored cache can hold `target/duckdb-sources/<hash>/` without its
+      # `.complete` marker. `libduckdb-sys` then unpacks again and cannot rename
+      # over the leftover, failing with "Directory not empty". It only shows
+      # when `Cargo.lock` changed, because an exact cache hit skips the rebuild.
+      - name: Drop cached DuckDB sources
+        shell: bash
+        run: rm -rf target/duckdb-sources
+
       - name: Setup Windows SDK (Windows only)
         if: runner.os == 'Windows'
         shell: pwsh
