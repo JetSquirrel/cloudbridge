@@ -23,7 +23,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             artifact_name: cloudbridge.exe
             asset_name: cloudbridge-windows-x64.exe
-          - os: macos-14
+          - os: macos-15
             target: aarch64-apple-darwin
             artifact_name: cloudbridge
             asset_name: cloudbridge-macos-arm64.dmg
