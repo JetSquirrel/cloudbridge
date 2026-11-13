@@ -259,12 +259,12 @@ Things that will bite you:
 - **Nightly is required for the wasm build only.** `gpui-pre-web` pulls Zed's
   `wasm_thread`, which uses a `stdarch_wasm_atomic_wait` feature stable does not
   have. The desktop stays on stable. The nightly is **pinned by date** —
-  `WEB_TOOLCHAIN` in `scripts/build-web.sh`, and the same date in the three
-  workflows that build it (`ci.yml`, `gh-pages.yml`, `web-demo.yml`) — because an unstable feature can be renamed overnight and a
-  floating `+nightly` turns that into a build that broke with nobody having
-  changed anything. To build against a nightly you already have:
+  `WEB_TOOLCHAIN` in `scripts/build-web.sh`, and the same date in the two
+  workflows that build it (`ci.yml`, `web-demo.yml`) — because an unstable
+  feature can be renamed overnight and a floating `+nightly` turns that into
+  a build that broke with nobody having changed anything. To build against a nightly you already have:
   `WEB_TOOLCHAIN=nightly ./scripts/build-web.sh`. Bumping the pin means
-  changing it in all four places.
+  changing it in all three places.
 - **`wasm-bindgen` CLI must match the `wasm-bindgen` crate version.**
   `scripts/locked-version.py <package>` prints what `Cargo.lock` resolved and
   fails when the answer is not a single version; the build script and the
@@ -291,9 +291,7 @@ Things that will bite you:
   and is built by Cloudflare, which cannot install the pinned nightly.
   `.github/workflows/web-demo.yml` runs a release web build on every push to
   `main` and uploads `web/site/` as `cloudbridge-web-demo.tar.gz` to a rolling
-  `web-demo` prerelease; the site's build downloads it into `/demo/`. Until
-  the domain moves to the new site, `gh-pages.yml` still publishes the old
-  `docs/` with the demo dropped into `docs/demo/`.
+  `web-demo` prerelease; the site's build downloads it into `/demo/`.
 - **`smol::unblock` is forwarded by `web/smol-bridge`.** Cargo refuses one
   dependency name with two sources, so the desktop's `smol` is reached through
   that crate instead of beside it. The pages call `smol::unblock` unchanged; on
