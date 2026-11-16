@@ -12,7 +12,7 @@ or import provider exports, compare costs across sources, and trace spending to
 services, models, and business lines. No CloudBridge account or hosted backend
 required.
 
-[Download](#installation) | [Live demo](https://cloudbridge.jetsquirrel.cloud/demo/) | [Quick start](#quick-start) | [Documentation](https://cloudbridge.jetsquirrel.cloud/docs.html) | [Contributing](CONTRIBUTING.md)
+[Website](https://cloudbridge.jetsquirrel.cloud/) | [Download](#installation) | [Live demo](https://cloudbridge.jetsquirrel.cloud/demo/) | [Quick start](#quick-start) | [Documentation](https://cloudbridge.jetsquirrel.cloud/docs/) | [Contributing](CONTRIBUTING.md)
 
 ![CloudBridge desktop dashboard with spending totals, trends, and a service breakdown](images/cloudbridge.png)
 
@@ -67,7 +67,7 @@ required.
 File imports need no provider credentials. DeepSeek's API reports a balance,
 not a spending breakdown. Google Cloud is read from the billing account's
 BigQuery export, which has to be turned on first; see
-[permissions](https://cloudbridge.jetsquirrel.cloud/policies.html#google-cloud).
+[permissions](https://cloudbridge.jetsquirrel.cloud/docs/permissions#google-cloud).
 
 AWS accounts can also read AWS Data Exports (FOCUS 1.2 with AWS columns) from
 an S3 bucket. This replaces Cost Explorer for accounts with an export URI,
@@ -110,7 +110,7 @@ refreshes. Clear the demo data from the same page when you are ready.
 
 1. Open **Accounts**, choose a source, and enter an account name.
 2. For API access, configure credentials using the
-   [account setup guide](https://cloudbridge.jetsquirrel.cloud/docs.html#configuration)
+   [account setup guide](https://cloudbridge.jetsquirrel.cloud/docs/getting-started#account)
    and [permission templates](docs/policies.md). Use least-privilege credentials.
 3. Save the account. For API data, click **Validate** on the account row,
    then **Refresh** on the Overview; for a downloaded export, click
@@ -130,9 +130,9 @@ refreshes. Clear the demo data from the same page when you are ready.
 - **Import DeepSeek's ZIP as downloaded.** CloudBridge reads `cost-*.csv`;
   `amount-*.csv` contains token counts, not money.
 
-The [import guide](https://cloudbridge.jetsquirrel.cloud/docs.html#import)
+The [import guide](https://cloudbridge.jetsquirrel.cloud/docs/bill-import)
 lists export locations and supported details; see
-[troubleshooting](https://cloudbridge.jetsquirrel.cloud/docs.html#troubleshooting)
+[troubleshooting](https://cloudbridge.jetsquirrel.cloud/docs/troubleshooting)
 if an import or a fetch does not do what you expect.
 
 Refresh uses a **24-hour freshness window** by default, configurable to
@@ -145,7 +145,7 @@ CloudBridge itself is free; provider API fees are separate.
 **⌘1…⌘0** (**Ctrl+1…0** on Windows) switch pages, and the
 search palette shows the key beside each one. **⌘R** reloads the current page, **⌘Enter** runs a query on the
 Query page, and **Esc** closes a dialog. The full list is in the
-[docs](https://cloudbridge.jetsquirrel.cloud/docs.html#shortcuts).
+[docs](https://cloudbridge.jetsquirrel.cloud/docs/shortcuts).
 
 ## How it works
 
@@ -177,17 +177,17 @@ rather than making their own billing API calls.
 - Bills can contain account identifiers, resource names, and tags. Redact these
   as well as credentials before sharing logs, screenshots, or sample exports.
 
-See [storage and backups](https://cloudbridge.jetsquirrel.cloud/docs.html#storage)
-and [security notes](https://cloudbridge.jetsquirrel.cloud/docs.html#security).
+See [storage and backups](https://cloudbridge.jetsquirrel.cloud/docs/settings-and-data#storage)
+and [security notes](https://cloudbridge.jetsquirrel.cloud/docs/settings-and-data#security).
 
 ## Documentation
 
 | I want to… | Read |
 | --- | --- |
-| Install and configure an account | [Setup guide](https://cloudbridge.jetsquirrel.cloud/docs.html#installation) |
-| Import a provider bill | [Bill file import](https://cloudbridge.jetsquirrel.cloud/docs.html#import) |
-| Understand totals, attribution, and currency conversion | [User guide](https://cloudbridge.jetsquirrel.cloud/docs.html#usage) |
-| Configure alerts | [Alerts and rules](https://cloudbridge.jetsquirrel.cloud/docs.html#alerts) |
+| Install and configure an account | [Setup guide](https://cloudbridge.jetsquirrel.cloud/docs/getting-started) |
+| Import a provider bill | [Bill file import](https://cloudbridge.jetsquirrel.cloud/docs/bill-import) |
+| Understand totals, attribution, and currency conversion | [User guide](https://cloudbridge.jetsquirrel.cloud/docs/overview) |
+| Configure alerts | [Alerts and rules](https://cloudbridge.jetsquirrel.cloud/docs/alerts) |
 | Set up provider permissions | [IAM and API access](docs/policies.md) |
 | See what changed or what is planned | [Changelog](CHANGELOG.md), [Roadmap](docs/roadmap.md) |
 | Build the app or add a billing source | [Contributing guide](CONTRIBUTING.md) |
