@@ -17,6 +17,10 @@ jobs:
   build:
     strategy:
       fail-fast: false
+      # The asset names are a contract: installed copies update themselves
+      # by finding their platform's asset by name in the latest release
+      # (`ASSET` in src/updater/release.rs). Renaming one strands every
+      # install that looks for the old name.
       matrix:
         include:
           - os: windows-2022

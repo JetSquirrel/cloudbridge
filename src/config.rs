@@ -76,6 +76,14 @@ pub struct AppConfig {
     /// follows the system. See [`crate::i18n`].
     #[serde(default)]
     pub language: Option<String>,
+    /// Check for a new version once a day, download it, and install it at
+    /// the next quit or restart. Off, nothing asks GitHub until someone
+    /// presses Check now. See `crate::updater`.
+    #[serde(default = "default_true")]
+    pub auto_update: bool,
+    /// The update a notification last announced, so each is announced once.
+    #[serde(default)]
+    pub announced_update: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -102,6 +110,8 @@ impl Default for AppConfig {
             alert_notifications: true,
             keep_in_menu_bar: true,
             language: None,
+            auto_update: true,
+            announced_update: None,
         }
     }
 }

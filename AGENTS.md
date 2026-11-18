@@ -137,6 +137,32 @@ stays where it is.
 | `ar: ... libduckdb.a` failing with no message | Disk full |
 | Notarization `In Progress` for hours | Apple's queue, not a configuration problem. Verified by `notarytool history` showing sibling submissions Accepted |
 
+## Updating itself
+
+`src/updater/` checks `releases/latest` once a day (Settings → Updates →
+Update automatically), downloads this platform's asset into the data
+directory's `updates/<version>/`, and swaps it in for the running copy when
+the app quits or someone presses Restart to update. What it relies on from a
+release:
+
+- **The asset names in `release.yml`.** `release::ASSET` looks the download
+  up by name; renaming one strands every install looking for the old name.
+- **GitHub's `digest` on each asset.** The download is checked against it,
+  and an asset without one is not offered — the user is sent to the release
+  page instead. GitHub records it on upload, so nothing in CI produces it.
+- **On macOS, the signing team.** The unpacked app must pass `codesign` with
+  this team's Developer ID (`TEAM_ID` in `install.rs`), `spctl`, and carry
+  the release's version in `Info.plist`. A new team ID means a release that
+  every older install refuses; ship one built with both before switching.
+- **A prerelease is never offered.** `releases/latest` skips them, which is
+  also why the rolling `insight-rules` and `web-demo` releases must stay
+  prereleases.
+
+A debug build never checks on its own, and only a release build run from
+where it was installed replaces itself (an unbundled macOS binary or a copy
+in a folder it cannot write is pointed at the release page). The Windows
+executable is unsigned, so there the checksum over TLS is the whole check.
+
 ## Insights rules
 
 Insights findings come from two places. The built-in kinds are Rust in

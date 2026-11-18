@@ -124,6 +124,17 @@ impl SettingsView {
                 this.set_theme(name, cx);
             }
         });
+        #[allow(unused_mut)]
+        let mut subscriptions = vec![subscription];
+        // The Updates section shows the updater's state, which changes
+        // under the page as a check or download runs.
+        #[cfg(not(target_family = "wasm"))]
+        if let Some(updater) = cx
+            .try_global::<crate::updater::GlobalUpdater>()
+            .map(|global| global.0.clone())
+        {
+            subscriptions.push(cx.observe(&updater, |_, _, cx| cx.notify()));
+        }
 
         Self {
             config,
@@ -143,7 +154,7 @@ impl SettingsView {
             exporting: false,
             #[cfg(not(target_family = "wasm"))]
             insight_rules: cx.new(super::insight_rules::InsightRulesView::new),
-            _subscriptions: vec![subscription],
+            _subscriptions: subscriptions,
         }
     }
 
@@ -286,6 +297,151 @@ impl SettingsView {
                     })),
                 cx,
             ))
+    }
+
+    /// Turn updating automatically on or off. Turned on, a check that is
+    /// due runs at the schedule's next tick.
+    #[cfg(not(target_family = "wasm"))]
+    fn set_auto_update(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.save_status = None;
+        self.status_generation += 1;
+        self.config.auto_update = enabled;
+        self.save_config(cx);
+    }
+
+    /// The Updates section: whether the app updates itself, where updating
+    /// stands, and the one next step. Desktop only — the web demo is always
+    /// the version the site serves.
+    #[cfg(not(target_family = "wasm"))]
+    fn render_updates(&self, cx: &Context<Self>) -> impl IntoElement {
+        use crate::updater::{self, UpdateState, CURRENT};
+
+        let (state, last_checked, can_install) = cx
+            .try_global::<updater::GlobalUpdater>()
+            .map(|global| {
+                let updater = global.0.read(cx);
+                (
+                    updater.state.clone(),
+                    updater.last_checked,
+                    updater.can_install(),
+                )
+            })
+            .unwrap_or((UpdateState::Idle, None, false));
+
+        let outline = |button: Button| button.custom(theme::outline_variant(cx)).card_outline(cx);
+        let check = |checking: bool| {
+            outline(Button::new("check-for-updates"))
+                .label(tr!("settings.check_updates"))
+                .loading(checking)
+                .disabled(checking)
+                .on_click(|_, _, cx| updater::check_now(cx))
+        };
+        let notes = |version: &str| {
+            let page = updater::release_page(version);
+            outline(Button::new("release-notes"))
+                .label(tr!("settings.release_notes"))
+                .on_click(move |_, _, cx| cx.open_url(&page))
+        };
+        let current_title = tr!("settings.update_current", version = CURRENT);
+
+        let (title, detail, controls): (SharedString, SharedString, Div) = match &state {
+            UpdateState::Idle => (
+                current_title,
+                tr!("settings.update_not_checked"),
+                div().child(check(false)),
+            ),
+            UpdateState::Checking => (
+                current_title,
+                tr!("settings.update_checking"),
+                div().child(check(true)),
+            ),
+            UpdateState::UpToDate => (
+                current_title,
+                match last_checked {
+                    Some(at) => tr!(
+                        "settings.update_up_to_date",
+                        when = crate::ui::fmt::relative_time(at)
+                    ),
+                    None => tr!("settings.update_up_to_date_now"),
+                },
+                div().child(check(false)),
+            ),
+            UpdateState::Available(release) => {
+                let installable = can_install && release.asset.is_some();
+                (
+                    tr!("settings.update_available", version = release.version),
+                    if installable {
+                        tr!("settings.update_available_hint", current = CURRENT)
+                    } else {
+                        tr!("settings.update_manual_hint", current = CURRENT)
+                    },
+                    div()
+                        .h_flex()
+                        .gap_2()
+                        .child(notes(&release.version))
+                        .when(installable, |el| {
+                            el.child(
+                                Button::new("download-update")
+                                    .label(tr!("settings.download_update"))
+                                    .primary()
+                                    .on_click(|_, _, cx| updater::download_update(cx)),
+                            )
+                        }),
+                )
+            }
+            UpdateState::Downloading(release) => (
+                tr!("settings.update_downloading", version = release.version),
+                tr!("settings.update_downloading_hint"),
+                div().child(
+                    outline(Button::new("download-update"))
+                        .label(tr!("settings.download_update"))
+                        .loading(true)
+                        .disabled(true),
+                ),
+            ),
+            UpdateState::Ready(staged) | UpdateState::Installing(staged) => {
+                let installing = matches!(state, UpdateState::Installing(_));
+                (
+                    tr!("settings.update_ready", version = staged.version),
+                    tr!("settings.update_ready_hint"),
+                    div().h_flex().gap_2().child(notes(&staged.version)).child(
+                        Button::new("restart-to-update")
+                            .label(tr!("settings.restart_to_update"))
+                            .primary()
+                            .loading(installing)
+                            .disabled(installing)
+                            .on_click(|_, _, cx| updater::restart_to_update(cx)),
+                    ),
+                )
+            }
+            UpdateState::Failed { error, release } => (
+                tr!("settings.update_failed"),
+                error.clone().into(),
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .when_some(release.as_ref(), |el, release| {
+                        el.child(notes(&release.version))
+                    })
+                    .child(check(false)),
+            ),
+        };
+
+        div()
+            .v_flex()
+            .gap_4()
+            .child(Self::setting_row(
+                tr!("settings.auto_update"),
+                tr!("settings.auto_update_hint"),
+                Switch::new("auto-update")
+                    .checked(self.config.auto_update)
+                    .disabled(self.saving)
+                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                        this.set_auto_update(*checked, cx);
+                    })),
+                cx,
+            ))
+            .child(Self::setting_row(title, detail, controls.flex_shrink_0(), cx).gap_4())
     }
 
     /// The language buttons: System, then each translation by its own
@@ -808,6 +964,11 @@ impl Render for SettingsView {
                         self.render_background(cx),
                         cx,
                     ))
+                    .child(self.render_section(
+                        tr!("settings.updates"),
+                        self.render_updates(cx),
+                        cx,
+                    ))
                     .child(self.render_section(tr!("settings.data"), self.render_data(cx), cx))
                     .child(self.render_section(
                         tr!("settings.insights_rules"),
@@ -958,6 +1119,10 @@ fn system_info(config: &AppConfig) -> String {
             } else {
                 "off"
             }
+        ),
+        format!(
+            "Automatic updates: {}",
+            if config.auto_update { "on" } else { "off" }
         ),
     ];
     match crate::db::get_all_accounts() {

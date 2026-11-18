@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **CloudBridge updates itself.** Once a day it checks GitHub for a new
+  release, downloads it in the background, and installs it the next time it
+  quits — or at once, with Restart to update in Settings → Updates. Every
+  download is checked against the checksum GitHub recorded for the release;
+  on macOS the app must also carry CloudBridge's Developer ID signature and
+  pass Gatekeeper before it is installed. Turn off Update automatically and
+  CloudBridge asks GitHub nothing until you press Check now. A copy that
+  cannot replace itself (one run from the disk image, say) says a new
+  version is out and links to its release page.
+
+### Changed
+- **Built on GPUI Kit 0.10.0.** The interface framework moves up from 0.9.1,
+  in the app and the web demo alike; gpui-pre stays at 0.3.12. It brings
+  fixes to text input, tables, tooltips and accessibility.
+
 ## [0.10.0] - 2026-11-13
 
 Scans that used to come back partial now finish: the scanner moves to corkscrew
