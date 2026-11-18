@@ -116,6 +116,11 @@ pub mod crypto;
 #[cfg(not(target_family = "wasm"))]
 pub mod background;
 
+// Updating the app itself from its GitHub releases. A browser tab is
+// always the version the site serves.
+#[cfg(not(target_family = "wasm"))]
+pub mod updater;
+
 // The browser's ledger, compiled into the desktop's tests beside its own,
 // so the two can be asked the same questions about the same bill.
 #[cfg(all(test, not(target_family = "wasm")))]

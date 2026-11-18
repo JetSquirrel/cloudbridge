@@ -458,6 +458,66 @@ settings:
   saved:
     en: Settings saved
     zh-CN: 设置已保存
+  updates:
+    en: Updates
+    zh-CN: 更新
+  auto_update:
+    en: Update automatically
+    zh-CN: 自动更新
+  auto_update_hint:
+    en: Checks for a new version once a day and downloads it. It installs the next time CloudBridge quits or restarts.
+    zh-CN: 每天检查一次新版本并自动下载，在 CloudBridge 下次退出或重启时安装。
+  update_current:
+    en: "CloudBridge %{version}"
+    zh-CN: "CloudBridge %{version}"
+  update_not_checked:
+    en: Not checked since CloudBridge started
+    zh-CN: 本次启动后尚未检查
+  update_checking:
+    en: Checking for updates…
+    zh-CN: 正在检查更新…
+  update_up_to_date:
+    en: "Up to date, checked %{when}"
+    zh-CN: "已是最新版本（%{when}检查）"
+  update_up_to_date_now:
+    en: Up to date
+    zh-CN: 已是最新版本
+  update_available:
+    en: "CloudBridge %{version} is available"
+    zh-CN: "CloudBridge %{version} 已发布"
+  update_available_hint:
+    en: "You have %{current}."
+    zh-CN: "当前版本为 %{current}。"
+  update_manual_hint:
+    en: "You have %{current}. This copy cannot update itself; download the new version from its release page."
+    zh-CN: "当前版本为 %{current}。此副本无法自行更新，请从发布页面下载新版本。"
+  update_downloading:
+    en: "Downloading CloudBridge %{version}…"
+    zh-CN: "正在下载 CloudBridge %{version}…"
+  update_downloading_hint:
+    en: You can keep working while it downloads.
+    zh-CN: 下载期间可以继续使用。
+  update_ready:
+    en: "CloudBridge %{version} is ready to install"
+    zh-CN: "CloudBridge %{version} 已准备好安装"
+  update_ready_hint:
+    en: It installs the next time CloudBridge quits or restarts.
+    zh-CN: 将在 CloudBridge 下次退出或重启时安装。
+  update_failed:
+    en: Could not update
+    zh-CN: 更新失败
+  check_updates:
+    en: Check now
+    zh-CN: 立即检查
+  download_update:
+    en: Download and install
+    zh-CN: 下载并安装
+  restart_to_update:
+    en: Restart to update
+    zh-CN: 重启以更新
+  release_notes:
+    en: Release notes
+    zh-CN: 发布说明
 
 palette:
   pages:
@@ -2641,6 +2701,12 @@ notify:
   refresh_failed:
     en: "CloudBridge could not refresh %{account}"
     zh-CN: "CloudBridge 无法刷新 %{account}"
+  update_ready:
+    en: "CloudBridge %{version} is ready to install"
+    zh-CN: "CloudBridge %{version} 已准备好安装"
+  update_ready_body:
+    en: It installs the next time CloudBridge quits or restarts. To restart now, open Settings.
+    zh-CN: 将在 CloudBridge 下次退出或重启时安装。如需立即重启，请打开“设置”。
 
 tray:
   tooltip:

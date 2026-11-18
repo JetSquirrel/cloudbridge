@@ -69,6 +69,19 @@ pub fn post_refresh_failure(account: &str, error: &str) {
     }
 }
 
+/// Tell someone an update has downloaded and installs at the next quit or
+/// restart. Posted once per version; see `crate::updater`.
+pub fn post_update_ready(version: &str) {
+    let result = notify_rust::Notification::new()
+        .appname("CloudBridge")
+        .summary(&tr!("notify.update_ready", version = version))
+        .body(&tr!("notify.update_ready_body"))
+        .show();
+    if let Err(e) = result {
+        tracing::warn!("Could not post the update notification: {}", e);
+    }
+}
+
 /// Tell the notification centre which app is speaking, so the banner
 /// carries CloudBridge's name and icon. Only a bundled build has an
 /// identity to give; an unbundled one keeps the default.

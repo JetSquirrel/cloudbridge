@@ -168,6 +168,9 @@ pub fn run() {
             tracing::error!("Failed to watch themes directory: {}", e);
         }
 
+        // Before the window, so Settings finds the update state to show.
+        crate::updater::start(cx);
+
         cx.set_global(MainWindow {
             handle: None,
             stores_ready: false,
