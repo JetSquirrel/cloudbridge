@@ -117,8 +117,7 @@ pub fn start(cx: &mut App) {
         let updater = updater.clone();
         move |cx| {
             let updater = updater.read(cx);
-            if let (UpdateState::Ready(staged), Some(target)) = (&updater.state, &updater.target)
-            {
+            if let (UpdateState::Ready(staged), Some(target)) = (&updater.state, &updater.target) {
                 if let Err(e) = install::apply(staged, target) {
                     tracing::error!("Could not install CloudBridge {}: {e:#}", staged.version);
                 }
@@ -207,7 +206,9 @@ fn check(manual: bool, cx: &mut App) {
                 match previous {
                     // What is already downloaded stands unless something
                     // newer came out since.
-                    UpdateState::Ready(staged) if !release::is_newer(&release.version, &staged.version) => {
+                    UpdateState::Ready(staged)
+                        if !release::is_newer(&release.version, &staged.version) =>
+                    {
                         updater.state = UpdateState::Ready(staged);
                         false
                     }
@@ -268,7 +269,10 @@ fn download(automatic: bool, cx: &mut App) {
                 updater.state = match result {
                     Ok(staged) => UpdateState::Ready(staged),
                     Err(e) => {
-                        tracing::error!("Could not download CloudBridge {}: {e:#}", release.version);
+                        tracing::error!(
+                            "Could not download CloudBridge {}: {e:#}",
+                            release.version
+                        );
                         UpdateState::Failed {
                             error: format!("{e:#}"),
                             release: Some(release.clone()),

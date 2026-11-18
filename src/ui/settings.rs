@@ -404,18 +404,14 @@ impl SettingsView {
                 (
                     tr!("settings.update_ready", version = staged.version),
                     tr!("settings.update_ready_hint"),
-                    div()
-                        .h_flex()
-                        .gap_2()
-                        .child(notes(&staged.version))
-                        .child(
-                            Button::new("restart-to-update")
-                                .label(tr!("settings.restart_to_update"))
-                                .primary()
-                                .loading(installing)
-                                .disabled(installing)
-                                .on_click(|_, _, cx| updater::restart_to_update(cx)),
-                        ),
+                    div().h_flex().gap_2().child(notes(&staged.version)).child(
+                        Button::new("restart-to-update")
+                            .label(tr!("settings.restart_to_update"))
+                            .primary()
+                            .loading(installing)
+                            .disabled(installing)
+                            .on_click(|_, _, cx| updater::restart_to_update(cx)),
+                    ),
                 )
             }
             UpdateState::Failed { error, release } => (

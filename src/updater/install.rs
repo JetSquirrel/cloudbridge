@@ -121,7 +121,11 @@ fn tidy_in(dir: &Path, current: &str) -> Option<Staged> {
             .is_ok_and(|marked| marked.trim() == version)
             && path.join(STAGED_NAME).exists();
         let keep = finished && is_newer(&version, current);
-        if keep && newest.as_ref().is_none_or(|n| is_newer(&version, &n.version)) {
+        if keep
+            && newest
+                .as_ref()
+                .is_none_or(|n| is_newer(&version, &n.version))
+        {
             if let Some(older) = newest.replace(Staged {
                 version,
                 path: path.join(STAGED_NAME),
@@ -138,10 +142,12 @@ fn tidy_in(dir: &Path, current: &str) -> Option<Staged> {
 /// Download `release` for this platform, check it, and stage it for
 /// [`apply`] over `target`. Blocking.
 pub fn stage(release: &Release, target: &Path) -> Result<Staged> {
-    let asset = release
-        .asset
-        .as_ref()
-        .ok_or_else(|| anyhow!("CloudBridge {} has no download for this platform", release.version))?;
+    let asset = release.asset.as_ref().ok_or_else(|| {
+        anyhow!(
+            "CloudBridge {} has no download for this platform",
+            release.version
+        )
+    })?;
     ensure_replaceable(target)?;
 
     let dir = updates_dir()?.join(&release.version);
@@ -154,7 +160,11 @@ pub fn stage(release: &Release, target: &Path) -> Result<Staged> {
     let staged = dir.join(STAGED_NAME);
     unpack(&bytes, &dir, &staged, &release.version)?;
     std::fs::write(dir.join(READY), &release.version)?;
-    tracing::info!("CloudBridge {} staged at {}", release.version, staged.display());
+    tracing::info!(
+        "CloudBridge {} staged at {}",
+        release.version,
+        staged.display()
+    );
     Ok(Staged {
         version: release.version.clone(),
         path: staged,
@@ -181,7 +191,9 @@ fn check_download(bytes: &[u8], asset: &Asset) -> Result<()> {
 /// copy is somewhere it cannot be replaced from.
 fn ensure_replaceable(target: &Path) -> Result<()> {
     let text = target.to_string_lossy();
-    if cfg!(target_os = "macos") && (text.contains("/AppTranslocation/") || text.starts_with("/Volumes/")) {
+    if cfg!(target_os = "macos")
+        && (text.contains("/AppTranslocation/") || text.starts_with("/Volumes/"))
+    {
         bail!(
             "CloudBridge is running from the disk image or a quarantined copy. Move it to the \
              Applications folder, open it from there, and update again."
@@ -221,7 +233,10 @@ fn download(asset: &Asset) -> Result<Vec<u8>> {
 fn download_once(agent: &ureq::Agent, url: &str) -> std::result::Result<Vec<u8>, ureq::Error> {
     agent
         .get(url)
-        .header("User-Agent", concat!("CloudBridge/", env!("CARGO_PKG_VERSION")))
+        .header(
+            "User-Agent",
+            concat!("CloudBridge/", env!("CARGO_PKG_VERSION")),
+        )
         .call()?
         .body_mut()
         .with_config()
@@ -258,7 +273,11 @@ pub fn apply(staged: &Staged, target: &Path) -> Result<()> {
     if let Some(dir) = staged.path.parent() {
         let _ = std::fs::remove_dir_all(dir);
     }
-    tracing::info!("CloudBridge {} installed at {}", staged.version, target.display());
+    tracing::info!(
+        "CloudBridge {} installed at {}",
+        staged.version,
+        target.display()
+    );
     Ok(())
 }
 
@@ -336,7 +355,13 @@ mod macos {
         let mount = dir.join("mount");
         std::fs::create_dir_all(&mount)?;
         run(Command::new("hdiutil")
-            .args(["attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint"])
+            .args([
+                "attach",
+                "-nobrowse",
+                "-readonly",
+                "-noautoopen",
+                "-mountpoint",
+            ])
             .arg(&mount)
             .arg(&dmg))?;
         let copied = run(Command::new("ditto")
@@ -371,7 +396,10 @@ mod macos {
             .args(["-c", "Print :CFBundleShortVersionString"])
             .arg(app.join("Contents/Info.plist")))?;
         if found.trim() != version {
-            bail!("The update says it is version {} rather than {version}", found.trim());
+            bail!(
+                "The update says it is version {} rather than {version}",
+                found.trim()
+            );
         }
         Ok(())
     }
@@ -410,11 +438,16 @@ mod tests {
     #[test]
     fn a_bundle_is_found_from_its_executable() {
         assert_eq!(
-            bundle_of(Path::new("/Applications/CloudBridge.app/Contents/MacOS/CloudBridge")),
+            bundle_of(Path::new(
+                "/Applications/CloudBridge.app/Contents/MacOS/CloudBridge"
+            )),
             Some(PathBuf::from("/Applications/CloudBridge.app"))
         );
         // `cargo run` is not a bundle, and must not be replaced as one.
-        assert_eq!(bundle_of(Path::new("/src/target/release/cloudbridge")), None);
+        assert_eq!(
+            bundle_of(Path::new("/src/target/release/cloudbridge")),
+            None
+        );
     }
 
     #[test]

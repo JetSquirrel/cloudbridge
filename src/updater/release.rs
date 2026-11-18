@@ -124,7 +124,10 @@ pub fn parse_release(json: &[u8], asset_name: Option<&str>) -> Result<Release> {
     let release: GitHubRelease =
         serde_json::from_slice(json).context("GitHub's answer is not a release")?;
     if release.draft || release.prerelease {
-        bail!("GitHub's latest release, {}, is not published", release.tag_name);
+        bail!(
+            "GitHub's latest release, {}, is not published",
+            release.tag_name
+        );
     }
     let version = release
         .tag_name
@@ -132,7 +135,10 @@ pub fn parse_release(json: &[u8], asset_name: Option<&str>) -> Result<Release> {
         .unwrap_or(&release.tag_name)
         .to_string();
     if !matches!(order(&version), Some((_, true))) {
-        bail!("GitHub's latest release has a tag this app cannot read: {}", release.tag_name);
+        bail!(
+            "GitHub's latest release has a tag this app cannot read: {}",
+            release.tag_name
+        );
     }
     let asset = asset_name
         .and_then(|name| release.assets.iter().find(|asset| asset.name == name))
@@ -167,7 +173,10 @@ pub fn fetch_latest() -> Result<Release> {
         .get(LATEST_URL)
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
-        .header("User-Agent", concat!("CloudBridge/", env!("CARGO_PKG_VERSION")))
+        .header(
+            "User-Agent",
+            concat!("CloudBridge/", env!("CARGO_PKG_VERSION")),
+        )
         .call()
         .map_err(|e| anyhow!("Could not reach GitHub: {e}"))?;
     let status = response.status().as_u16();
