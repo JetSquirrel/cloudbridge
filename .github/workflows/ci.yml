@@ -155,7 +155,23 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit
       - name: Security audit
-        run: cargo audit
+        # Fetching the advisory database is a network round-trip to GitHub
+        # that intermittently fails on the runner (TLS/TCP handshake errors,
+        # "deadline has elapsed") and fails the job without auditing
+        # anything. Retry a few times before treating it as a failure: a
+        # real finding fails every attempt, so nothing is masked.
+        run: |
+          attempts=3
+          for attempt in $(seq 1 "$attempts"); do
+            if cargo audit; then
+              exit 0
+            fi
+            echo "cargo audit failed (attempt $attempt/$attempts)"
+            if [ "$attempt" -lt "$attempts" ]; then
+              sleep 30
+            fi
+          done
+          exit 1
       
       # Check for outdated dependencies
       - name: Install cargo-outdated
