@@ -30,7 +30,7 @@ crate-type = ["rlib"]
 # do not, and it costs a few megabytes rather than tens. It carries its own
 # `cfg(target_family = "wasm")` dependency on `gpui-pre-web`, which is what
 # lets the whole UI compile for the browser.
-gpui-kit = { version = "0.9.1", features = ["syntect"] }
+gpui-kit = { version = "0.10.0", features = ["syntect"] }
 
 # Run blocking operations in GPUI async context. A local forwarding crate,
 # so that the pages calling `smol::unblock` need no target-specific code —

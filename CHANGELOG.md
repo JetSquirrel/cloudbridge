@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cannot replace itself (one run from the disk image, say) says a new
   version is out and links to its release page.
 
+### Changed
+- **Built on GPUI Kit 0.10.0.** The interface framework moves up from 0.9.1,
+  in the app and the web demo alike; gpui-pre stays at 0.3.12. It brings
+  fixes to text input, tables, tooltips and accessibility.
+
 ## [0.10.0] - 2026-11-13
 
 Scans that used to come back partial now finish: the scanner moves to corkscrew
