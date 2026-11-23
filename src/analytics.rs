@@ -266,6 +266,13 @@ pub fn reconcile(total_delta: f64, explained: f64) -> (f64, bool) {
     (residual, residual.abs() <= tolerance)
 }
 
+/// Below half a cent an amount rounds to zero wherever it is shown.
+const DUST: f64 = 0.005;
+
+fn is_dust(amount: f64) -> bool {
+    amount.abs() < DUST
+}
+
 /// One bucket's `(current, previous)` amounts across two adjacent periods.
 pub type TwoPeriodBuckets = BTreeMap<String, (f64, f64)>;
 
@@ -300,12 +307,14 @@ pub fn decompose(
         .into_iter()
         .filter_map(|(service, (current, previous))| {
             let delta = current - previous;
-            if delta == 0.0 {
+            // A service whose credits cancel its usage nets to a float
+            // residue, not zero; below half a cent it moved nothing.
+            if is_dust(delta) {
                 return None;
             }
-            let kind = if previous == 0.0 {
+            let kind = if is_dust(previous) {
                 MovementKind::Appeared
-            } else if current == 0.0 {
+            } else if is_dust(current) {
                 MovementKind::Vanished
             } else if delta > 0.0 {
                 MovementKind::Grown
@@ -1050,6 +1059,27 @@ mod tests {
         assert_eq!(decomposition.by_service[0].service, "EC2");
         assert_eq!(decomposition.by_service[0].kind, MovementKind::Grown);
         assert_eq!(decomposition.by_service[1].kind, MovementKind::Shrunk);
+    }
+
+    #[test]
+    fn a_service_whose_credits_cancel_its_usage_did_not_move() {
+        // A fully credited AWS service nets to float residue each month,
+        // which once read as "grown +¥0".
+        let services = TwoPeriodBuckets::from([
+            ("AWS Data Transfer".to_string(), (3.0e-15, -1.0e-15)),
+            ("Amazon S3".to_string(), (0.0, 0.001)),
+            ("Bedrock".to_string(), (12.0, 1.0e-15)),
+        ]);
+        let decomposition = decompose(
+            "2026-11",
+            "2026-10".to_string(),
+            TwoPeriodBuckets::from([("Usage".to_string(), (12.0, 0.0))]),
+            services,
+        );
+
+        assert_eq!(decomposition.by_service.len(), 1);
+        assert_eq!(decomposition.by_service[0].service, "Bedrock");
+        assert_eq!(decomposition.by_service[0].kind, MovementKind::Appeared);
     }
 
     #[test]

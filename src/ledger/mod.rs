@@ -280,6 +280,9 @@ fn derive_top_ups(conn: &Connection, key: &PeriodKey) -> Result<Vec<Charge>> {
         charges.push(Charge {
             charge_category: ChargeCategory::Purchase,
             charge_description: Some("Top-up".to_string()),
+            // The balance belongs to the provider as a whole; without a
+            // service the top-up lands in "Other" beside its own usage.
+            service_name: Some(key.provider.clone()),
             billed_cost: Some(added),
             ..Charge::new(observed_at, observed_at, currency)
         });
@@ -833,6 +836,8 @@ mod tests {
             .all(|charge| charge.charge_category == ChargeCategory::Purchase));
         assert_eq!(charges[0].billing_currency, "CNY");
         assert_eq!(charges[0].charge_period_start, at(2));
+        // Grouped with the provider's own usage, not under "Other".
+        assert_eq!(charges[0].service_name.as_deref(), Some("DeepSeek"));
     }
 
     #[test]

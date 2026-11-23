@@ -579,9 +579,14 @@ fn charge_category(record_type: &str) -> ChargeCategory {
         "Usage" | "DiscountedUsage" | "SavingsPlanCoveredUsage" => ChargeCategory::Usage,
         "Credit" => ChargeCategory::Credit,
         "Tax" => ChargeCategory::Tax,
-        "Fee" | "RIFee" | "SavingsPlanUpfrontFee" | "SavingsPlanRecurringFee" | "Support" => {
-            ChargeCategory::Purchase
-        }
+        // FlatRateSubscription is a monthly plan such as Kiro's: bought, not
+        // metered, like the other recurring fees.
+        "Fee"
+        | "RIFee"
+        | "SavingsPlanUpfrontFee"
+        | "SavingsPlanRecurringFee"
+        | "Support"
+        | "FlatRateSubscription" => ChargeCategory::Purchase,
         "Refund"
         | "SavingsPlanNegation"
         | "BundledDiscount"
@@ -1220,6 +1225,11 @@ mod tests {
         assert_eq!(category("Tax", "Tax"), ChargeCategory::Tax);
         assert_eq!(
             category("AWS Support (Developer)", "Fee"),
+            ChargeCategory::Purchase
+        );
+        // Kiro's monthly plan, which AWS's console lists as a service cost.
+        assert_eq!(
+            charge_category("FlatRateSubscription"),
             ChargeCategory::Purchase
         );
         // A record type this build has never seen still moved money, so it
