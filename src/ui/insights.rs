@@ -1400,8 +1400,10 @@ fn render_row(finding: &InsightFinding, priced: bool, currency: &str, cx: &App) 
                         tr!("insights.in_account", account = account),
                     ))
                 })
-                // The Query page is desktop only.
-                .when(cfg!(not(target_family = "wasm")), |el| {
+                // The Query page is desktop only. Without a resource-level
+                // bill no charge carries a resource id, so the query could
+                // only come back empty; the card above says what to connect.
+                .when(cfg!(not(target_family = "wasm")) && priced, |el| {
                     el.child(
                         div().flex().child(
                             Button::new(SharedString::from(format!("trace-{row_id}")))

@@ -103,6 +103,28 @@ fn month_over_month_unions_both_months() {
 }
 
 #[test]
+fn month_over_month_leaves_out_services_credited_to_nothing() {
+    // Fully credited AWS services net to residue in both months.
+    let mom = month_over_month(
+        query::PeriodOverPeriod {
+            current_total: 50.62,
+            previous_total: 3.17,
+            current_by_service: vec![
+                ("DeepSeek".to_string(), 50.62),
+                ("EC2 - Other".to_string(), 1.0e-15),
+            ],
+            previous_by_service: vec![
+                ("DeepSeek".to_string(), 3.17),
+                ("Amazon Simple Storage Service".to_string(), -2.0e-15),
+            ],
+        },
+        None,
+    );
+    assert_eq!(mom.services.len(), 1);
+    assert_eq!(mom.services[0].service, "DeepSeek");
+}
+
+#[test]
 fn month_over_month_skips_delta_on_a_dust_base() {
     let mom = month_over_month(
         query::PeriodOverPeriod {

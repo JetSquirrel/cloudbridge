@@ -845,6 +845,11 @@ pub(super) fn month_over_month(
     for (service, current) in pop.current_by_service {
         let before = previous.get(&service).copied().unwrap_or(0.0);
         seen.insert(service.clone());
+        // Credits that cancel a service's usage leave ¥0 in both months:
+        // nothing to compare, and it would push a real row off the top five.
+        if current.abs() < fmt::DUST_THRESHOLD && before.abs() < fmt::DUST_THRESHOLD {
+            continue;
+        }
         services.push(ServiceMonthComparison {
             change_pct: (before >= fmt::DUST_THRESHOLD)
                 .then(|| (current - before) / before * 100.0),
@@ -856,7 +861,7 @@ pub(super) fn month_over_month(
     // A service that vanished this month still earned its row: it is a
     // −100% mover.
     for (service, before) in &previous {
-        if seen.contains(service) {
+        if seen.contains(service) || before.abs() < fmt::DUST_THRESHOLD {
             continue;
         }
         services.push(ServiceMonthComparison {
