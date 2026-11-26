@@ -1,0 +1,21 @@
+Tool: built-in image_gen
+References: two user-provided artisan signage photographs (mood only)
+Transparent background: false
+
+Design a logo mark for CloudBridge, an independent desktop app that gathers bills from many cloud and AI providers into one private ledger on your own computer.
+
+Style: the quiet, crafted look of an independent studio or small artisan brand, not a tech startup. It should look like a shape cut by hand from a single sheet of paper, or a stencil cut through a metal sign that could be backlit at night. The two attached images are mood references ONLY: use their quiet crafted independent-shop sign aesthetic, do not copy their shapes, trees, typography or layout. Do not render an actual sign photograph.
+
+Composition: one solid square filled edge to edge, with the symbol cut out of it as negative space rendered warm off-white. Square corners and no margin outside the square. The symbol fills about 65% of the square.
+
+Symbol: 3 or 4 soft, irregular shapes like river pebbles, each slightly different in size and outline. They sit close together with narrow, even gaps, and together they suggest a cloud. Below or through them runs one low, simple arc that hints at a bridge. The idea should be felt, not illustrated: at first glance it is an abstract, memorable mark, and only then do you notice the cloud and the bridge.
+
+Edges: smooth but slightly imperfect, as if cut by a confident hand. Avoid perfect circles, mechanical symmetry and uniform rounded rectangles.
+
+Color: exactly two flat colors, ink black #141414 for the square and warm off-white #F2EFE6 for the symbol. Omit the optional orange accent for this version.
+
+Must stay recognizable at 32 pixels: no thin lines and no small details.
+
+Avoid: gradients, glow, shadows, 3D, gloss, textures, turquoise or neon colors, circuit lines or nodes, bar charts, coins or currency symbols, a literal cartoon cloud, a literal bridge with piers, letters, text, a mockup, or a presentation sheet.
+
+Output: only the flat logo, straight on, 1024 x 1024, a single image. Entire square opaque, black background reaches all four image edges.

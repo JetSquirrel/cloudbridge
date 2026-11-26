@@ -401,6 +401,12 @@ fn usage_charge(
         // For the model providers the service is the model; the row names it
         // as its model the way the usage exports do.
         charge.x_model = Some(service.to_string());
+        // The providers report a list price and a discount off it, and the
+        // exports name the key and the user behind the call. All three are
+        // what the Bills page's price strip and by-key view read.
+        charge.list_cost = Some(amount * 1.25);
+        charge.credential_id = Some(pick(&DEMO_KEYS, service).to_string());
+        charge.principal_id = Some(pick(&DEMO_USERS, service).to_string());
     }
     charge.x_service_code = service_code(provider, service).map(str::to_string);
     charge.charge_description = Some(format!("{provider} {service} usage"));
@@ -431,6 +437,10 @@ fn token_charge(
     charge.pricing_quantity = Some(quantity);
     charge.pricing_unit = Some(unit.to_string());
     charge.tags = line.map(|line| format!("{{\"business_line\":\"{line}\"}}"));
+    // The same key and user as the model's cost rows, so a filter on one
+    // lists its token rows beside them.
+    charge.credential_id = Some(pick(&DEMO_KEYS, service).to_string());
+    charge.principal_id = Some(pick(&DEMO_USERS, service).to_string());
     charge
 }
 
@@ -449,6 +459,20 @@ fn jitter(key: impl std::hash::Hash, day: NaiveDate) -> f64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     (key, day).hash(&mut hasher);
     (hasher.finish() % 1000) as f64 / 1000.0 * 0.24 - 0.12
+}
+
+/// The demo's API keys and users. A cloud bill names no key; a model
+/// provider's usage export does, so only the model rows carry these.
+const DEMO_KEYS: [&str; 4] = ["key-prod", "key-batch", "key-playground", "key-evals"];
+const DEMO_USERS: [&str; 3] = ["ml@example.com", "data@example.com", "qa@example.com"];
+
+/// One of `options`, chosen by a hash of `key` — the same choice on every
+/// seed, as [`jitter`] is.
+fn pick<'a>(options: &'a [&'a str], key: impl std::hash::Hash) -> &'a str {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (key, "pick").hash(&mut hasher);
+    options[(hasher.finish() % options.len() as u64) as usize]
 }
 
 #[cfg(test)]
@@ -654,6 +678,40 @@ mod tests {
             .filter_map(|charge| charge.pricing_unit.as_deref())
             .collect();
         assert!(units.contains("Cached Input Tokens"));
+    }
+
+    /// The Bills page's price strip and by-key view read three things a real
+    /// export has: a list price, the key that spent the money and the user
+    /// behind it. A cloud bill names none of them.
+    #[test]
+    fn model_rows_carry_a_list_price_and_the_key_and_user_behind_them() {
+        let periods = periods(now());
+
+        let openai = period_charges(
+            "OpenAI",
+            services_of("OpenAI"),
+            "USD",
+            periods[11],
+            11,
+            now(),
+        );
+        let priced: Vec<&Charge> = openai
+            .iter()
+            .filter(|charge| charge.billed_cost.is_some())
+            .collect();
+        assert!(!priced.is_empty());
+        // Billed at a discount off a list price, as a provider reports it.
+        assert!(priced.iter().all(|charge| charge
+            .list_cost
+            .is_some_and(|list| list > charge.billed_cost.unwrap())));
+        assert!(openai
+            .iter()
+            .all(|charge| charge.credential_id.is_some() && charge.principal_id.is_some()));
+
+        let aws = period_charges("AWS", services_of("AWS"), "USD", periods[11], 11, now());
+        assert!(aws
+            .iter()
+            .all(|charge| charge.credential_id.is_none() && charge.principal_id.is_none()));
     }
 
     #[test]

@@ -232,6 +232,9 @@ nav:
   attribution:
     en: Attribution
     zh-CN: 成本归属
+  bills:
+    en: Bills
+    zh-CN: 账单
   models:
     en: Models
     zh-CN: 模型
@@ -761,6 +764,18 @@ overview:
   unreconciled:
     en: "This breakdown leaves %{amount} unexplained — the components don't fully reconcile."
     zh-CN: "此分解仍有 %{amount} 无法解释——各组成部分未能完全对账。"
+  heatmap:
+    en: "Daily spend"
+    zh-CN: "每日花费"
+  heatmap_caption:
+    en: "The last %{days} days. A deeper square cost more that day; an empty one records no charges."
+    zh-CN: "最近 %{days} 天。颜色越深，当天花得越多；空白表示当天没有账单。"
+  heatmap_a11y:
+    en: "Daily spend calendar, %{total} in all"
+    zh-CN: "每日花费日历，合计 %{total}"
+  heat_day:
+    en: "%{day}: %{amount}"
+    zh-CN: "%{day}：%{amount}"
 
 range:
   mtd:
@@ -971,6 +986,170 @@ models:
   and_separator:
     en: ", and "
     zh-CN: "，以及 "
+
+bills:
+  billed:
+    en: Billed
+    zh-CN: 计费金额
+  billed_caption:
+    en: Net of credits
+    zh-CN: 已扣除抵扣
+  list_price:
+    en: List price
+    zh-CN: 目录价
+  list_caption:
+    en: "%{n} lines reported one"
+    zh-CN: "%{n} 条账单提供了目录价"
+  no_priced:
+    en: No line reported one
+    zh-CN: 没有账单提供目录价
+  effective:
+    en: Amortized
+    zh-CN: 摊销成本
+  effective_caption:
+    en: Where the provider reports it
+    zh-CN: 供应商提供时
+  lines:
+    en: Charges
+    zh-CN: 账单行
+  lines_caption:
+    en: In this range
+    zh-CN: 本区间内
+  discount:
+    en: "Amortized cost is %{pct} of list, on the lines that reported one"
+    zh-CN: "有目录价的账单中，摊销成本为目录价的 %{pct}"
+  unpriced:
+    en: "%{n} lines carry no amount and are in no total here"
+    zh-CN: "%{n} 条账单没有金额，未计入此处任何合计"
+  unconverted:
+    en: "%{n} lines have no exchange rate to %{currency} and are in no total here"
+    zh-CN: "%{n} 条账单没有到 %{currency} 的汇率，未计入此处任何合计"
+  breakdown:
+    en: Where it went
+    zh-CN: 钱花在哪
+  tab_account:
+    en: By account
+    zh-CN: 按账号
+  tab_credential:
+    en: By API key
+    zh-CN: 按 API Key
+  tab_principal:
+    en: By user
+    zh-CN: 按用户
+  col_amount:
+    en: Spend
+    zh-CN: 花费
+  col_lines:
+    en: Lines
+    zh-CN: 行数
+  col_share:
+    en: Share
+    zh-CN: 占比
+  group_lines:
+    en: "%{n} lines"
+    zh-CN: "%{n} 行"
+  group_a11y:
+    en: "%{name}, %{amount}. Show its charges."
+    zh-CN: "%{name}，%{amount}。显示它的账单。"
+  no_groups:
+    en: Nothing in this range names one.
+    zh-CN: 本区间没有账单标明这一项。
+  no_credential:
+    en: No API key
+    zh-CN: 未标明 API Key
+  no_principal:
+    en: No user
+    zh-CN: 未标明用户
+  charges:
+    en: Charges
+    zh-CN: 账单明细
+  charges_caption:
+    en: "%{n} lines, page %{page} of %{pages}"
+    zh-CN: "共 %{n} 行，第 %{page} / %{pages} 页"
+  col_day:
+    en: Day
+    zh-CN: 日期
+  col_account:
+    en: Account
+    zh-CN: 账号
+  col_service:
+    en: Service
+    zh-CN: 服务
+  col_description:
+    en: Description
+    zh-CN: 说明
+  col_category:
+    en: Category
+    zh-CN: 类别
+  col_quantity:
+    en: Quantity
+    zh-CN: 用量
+  col_billed:
+    en: Billed
+    zh-CN: 计费
+  col_list:
+    en: List
+    zh-CN: 目录价
+  no_rows:
+    en: No charge matches this filter.
+    zh-CN: 没有符合此筛选的账单。
+  filter_account:
+    en: "Account: %{name}"
+    zh-CN: "账号：%{name}"
+  filter_credential:
+    en: "API key: %{name}"
+    zh-CN: "API Key：%{name}"
+  filter_principal:
+    en: "User: %{name}"
+    zh-CN: "用户：%{name}"
+  clear_filter:
+    en: Clear
+    zh-CN: 清除
+  prev:
+    en: Previous
+    zh-CN: 上一页
+  next:
+    en: Next
+    zh-CN: 下一页
+  page_of:
+    en: "Page %{page} of %{pages}"
+    zh-CN: "第 %{page} / %{pages} 页"
+  export:
+    en: Export CSV
+    zh-CN: 导出 CSV
+  export_hint:
+    en: Every charge this filter selects, not just this page
+    zh-CN: 导出此筛选下的全部账单，而不只是当前这一页
+  exported:
+    en: "Wrote %{rows} charges to %{path}"
+    zh-CN: "已把 %{rows} 条账单写入 %{path}"
+  export_failed:
+    en: "Couldn't write the file: %{error}"
+    zh-CN: "无法写入文件：%{error}"
+  save_dialog_failed:
+    en: "Couldn't open the save dialog: %{error}"
+    zh-CN: "无法打开保存对话框：%{error}"
+  empty:
+    en: No charges in this range
+    zh-CN: 本区间没有账单
+  empty_hint:
+    en: Refresh an account, or import its bill file, and every line it reports is listed here.
+    zh-CN: 刷新账户或导入账单文件后，供应商报的每一条账单都会列在这里。
+  category_usage:
+    en: Usage
+    zh-CN: 用量
+  category_purchase:
+    en: Purchase
+    zh-CN: 购买
+  category_credit:
+    en: Credit
+    zh-CN: 抵扣
+  category_tax:
+    en: Tax
+    zh-CN: 税费
+  category_adjustment:
+    en: Adjustment
+    zh-CN: 调整
 
 snapshots:
   title:

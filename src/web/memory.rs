@@ -19,7 +19,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use crate::alerts::{AlertEvent, AlertRule};
 use crate::model::{
     BalanceSnapshot, BillingPeriod, BillingSnapshot, BudgetInfo, Channel, Charge, ChargeCategory,
-    CloudAccount, InventoryResource, InventoryScope, PeriodKey, SnapshotLine,
+    CloudAccount, CostBasis, InventoryResource, InventoryScope, PeriodKey, SnapshotLine,
 };
 
 /// Rates shipped with the build, as `(from, to, date, rate)`.
@@ -137,6 +137,9 @@ pub struct NormalizedRow {
     pub consumed_unit: Option<String>,
     pub sku_price_details: Option<String>,
     pub charge_category: ChargeCategory,
+    /// How much weight the amount carries: the provider's bill, a unit
+    /// price, an estimate, or no amount at all.
+    pub cost_basis: CostBasis,
     pub tags: Option<String>,
     pub billing_currency: String,
     pub charge_period_start: DateTime<Utc>,
@@ -147,6 +150,13 @@ pub struct NormalizedRow {
     pub billed_cost: Option<f64>,
     pub billed_cost_base: Option<f64>,
     pub effective_cost_base: Option<f64>,
+    /// The provider's list price, converted at `fx_rate` when this row is
+    /// read for the Bills page — `None` when it reported none or no rate
+    /// covers it.
+    pub list_cost_base: Option<f64>,
+    /// FOCUS 1.5 requester attribution, as the usage exports name it.
+    pub credential_id: Option<String>,
+    pub principal_id: Option<String>,
 }
 
 /// Every charge in the store, converted — the web build's
@@ -186,6 +196,7 @@ pub fn normalized(store: &Store) -> Vec<NormalizedRow> {
                 consumed_unit: charge.consumed_unit.clone(),
                 sku_price_details: charge.sku_price_details.clone(),
                 charge_category: charge.charge_category,
+                cost_basis: charge.cost_basis,
                 tags: charge.tags.clone(),
                 billing_currency: charge.billing_currency.clone(),
                 charge_period_start: charge.charge_period_start,
@@ -193,6 +204,9 @@ pub fn normalized(store: &Store) -> Vec<NormalizedRow> {
                 billed_cost: charge.billed_cost,
                 billed_cost_base: charge.billed_cost.zip(fx_rate).map(|(v, r)| v * r),
                 effective_cost_base: charge.effective_cost.zip(fx_rate).map(|(v, r)| v * r),
+                list_cost_base: charge.list_cost.zip(fx_rate).map(|(v, r)| v * r),
+                credential_id: charge.credential_id.clone(),
+                principal_id: charge.principal_id.clone(),
             });
         }
     }

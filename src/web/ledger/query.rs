@@ -25,9 +25,10 @@ use crate::store::Connection;
 use crate::token_meter::{self, TokenDetails};
 
 pub use crate::model::{
-    AdhocResult, Balance, BreakdownDim, CategoryDelta, CostChangeDecomposition, DailyModelTokens,
-    DailyTotal, DataQualityIssue, DataQualityKind, ForecastBands, InventoryResource,
-    InventoryScope, IssueSeverity, LedgerAccount, ModelTokenSummary, MovementKind, PeriodForecast,
+    AdhocResult, Balance, BillDim, BillFilter, BillGroup, BillKey, BillLine, BillProvenance,
+    BreakdownDim, CategoryDelta, CostChangeDecomposition, DailyModelTokens, DailyTotal,
+    DataQualityIssue, DataQualityKind, ForecastBands, InventoryResource, InventoryScope,
+    IssueSeverity, LedgerAccount, ModelTokenSummary, MovementKind, PeriodForecast,
     PeriodOverPeriod, ResourceCost, ResourceUsage, ServiceDailyTotal, ServiceMovement,
     ServiceTagUsage, TopResource, UntaggedServiceUsage,
 };
@@ -1741,6 +1742,198 @@ fn data_quality_issues_in(
             unreconciled: None,
             uncategorized,
         })
+    })
+}
+
+// ==================== Bills ====================
+
+/// Whether `filter` narrows `row` to the same rows the desktop's SQL
+/// selects: an open axis matches everything, a named key its value, and the
+/// unnamed key the rows that name none.
+fn bill_selected(row: &NormalizedRow, filter: &BillFilter) -> bool {
+    let open = |expected: Option<&str>, actual: Option<&str>| match expected {
+        Some(expected) => actual == Some(expected),
+        None => true,
+    };
+    let key = |expected: Option<&BillKey>, actual: Option<&String>| match expected {
+        None => true,
+        Some(BillKey::Named(value)) => actual == Some(value),
+        Some(BillKey::Unnamed) => actual.is_none(),
+    };
+
+    open(filter.provider.as_deref(), Some(row.provider.as_str()))
+        && open(filter.account_id.as_deref(), Some(row.account_id.as_str()))
+        && key(filter.credential.as_ref(), row.credential_id.as_ref())
+        && key(filter.principal.as_ref(), row.principal_id.as_ref())
+}
+
+/// The `dim` value a row groups under: an account id, a credential id, a
+/// principal id.
+fn bill_key(row: &NormalizedRow, dim: BillDim) -> Option<String> {
+    match dim {
+        BillDim::Account => Some(row.account_id.clone()),
+        BillDim::Credential => row.credential_id.clone(),
+        BillDim::Principal => row.principal_id.clone(),
+    }
+}
+
+/// What a window's charges are worth, and how much of them can be trusted
+/// as money — the desktop's `bill_provenance_between`.
+pub fn bill_provenance_between(
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    filter: &BillFilter,
+) -> Result<BillProvenance> {
+    read(|all| {
+        let mut provenance = BillProvenance::default();
+        for row in all {
+            if row.charge_period_start < since
+                || row.charge_period_start >= until
+                || !bill_selected(row, filter)
+            {
+                continue;
+            }
+            provenance.lines += 1;
+            provenance.billed += row.billed_cost_base.unwrap_or(0.0);
+            provenance.list += row.list_cost_base.unwrap_or(0.0);
+            provenance.effective += row
+                .effective_cost_base
+                .or(row.billed_cost_base)
+                .unwrap_or(0.0);
+            if row.list_cost_base.is_some() {
+                provenance.priced += 1;
+            }
+            if row.billed_cost.is_none() {
+                provenance.unpriced += 1;
+            } else if row.billed_cost_base.is_none() {
+                provenance.unconverted += 1;
+            }
+        }
+        provenance
+    })
+}
+
+/// A window's spend grouped by `dim`, largest first — the desktop's
+/// `bill_groups_between`: `filter` less `dim`'s own axis, credits kept in.
+pub fn bill_groups_between(
+    dim: BillDim,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    filter: &BillFilter,
+) -> Result<Vec<BillGroup>> {
+    read(|all| {
+        let mut narrowed = filter.clone();
+        match dim {
+            BillDim::Account => {
+                narrowed.provider = None;
+                narrowed.account_id = None;
+            }
+            BillDim::Credential => narrowed.credential = None,
+            BillDim::Principal => narrowed.principal = None,
+        }
+
+        // The account dimension is scoped to a provider; a key and a
+        // principal are not, so one key used from two providers is one row.
+        let mut groups: BTreeMap<(Option<String>, Option<String>), (f64, i64)> = BTreeMap::new();
+        for row in all {
+            if row.charge_period_start < since
+                || row.charge_period_start >= until
+                || !bill_selected(row, &narrowed)
+            {
+                continue;
+            }
+            let provider = match dim {
+                BillDim::Account => Some(row.provider.clone()),
+                _ => None,
+            };
+            let entry = groups
+                .entry((provider, bill_key(row, dim)))
+                .or_insert((0.0, 0));
+            entry.0 += row.billed_cost_base.unwrap_or(0.0);
+            entry.1 += 1;
+        }
+
+        let mut groups: Vec<BillGroup> = groups
+            .into_iter()
+            .map(|((provider, key), (amount, lines))| BillGroup {
+                provider,
+                key,
+                amount,
+                lines,
+            })
+            .collect();
+        groups.sort_by(|a, b| b.amount.total_cmp(&a.amount));
+        groups
+    })
+}
+
+/// How many charges `filter` selects in a window.
+pub fn bill_line_count_between(
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    filter: &BillFilter,
+) -> Result<i64> {
+    read(|all| {
+        let count = all
+            .iter()
+            .filter(|row| row.charge_period_start >= since && row.charge_period_start < until)
+            .filter(|row| bill_selected(row, filter))
+            .count();
+        i64::try_from(count).unwrap_or(i64::MAX)
+    })
+}
+
+/// One page of a window's charges, newest first then largest — the
+/// desktop's `bill_lines_between`.
+pub fn bill_lines_between(
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    filter: &BillFilter,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<BillLine>> {
+    read(|all| {
+        let mut rows: Vec<&NormalizedRow> = all
+            .iter()
+            .filter(|row| row.charge_period_start >= since && row.charge_period_start < until)
+            .filter(|row| bill_selected(row, filter))
+            .collect();
+
+        // `ORDER BY charge_period_start DESC, billed_cost_base DESC NULLS
+        // LAST`: a line with no amount sinks below the priced ones of its
+        // day rather than sorting as zero.
+        rows.sort_by(|a, b| {
+            b.charge_period_start
+                .cmp(&a.charge_period_start)
+                .then_with(|| match (a.billed_cost_base, b.billed_cost_base) {
+                    (Some(a), Some(b)) => b.total_cmp(&a),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => std::cmp::Ordering::Equal,
+                })
+        });
+
+        rows.into_iter()
+            .skip(offset)
+            .take(limit)
+            .map(|row| BillLine {
+                day: memory::day_of(row.charge_period_start),
+                provider: row.provider.clone(),
+                account_id: row.account_id.clone(),
+                service: service_of(row).to_string(),
+                description: row.charge_description.clone(),
+                model: row.x_model.clone(),
+                category: row.charge_category,
+                quantity: row.pricing_quantity,
+                unit: row.pricing_unit.clone(),
+                billed: row.billed_cost_base,
+                list: row.list_cost_base,
+                effective: row.effective_cost_base,
+                basis: row.cost_basis,
+                credential: row.credential_id.clone(),
+                principal: row.principal_id.clone(),
+            })
+            .collect()
     })
 }
 

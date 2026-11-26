@@ -380,7 +380,15 @@ pub struct OverviewData {
     /// state tells "no accounts" from "nothing fetched yet", and demo rows
     /// get a notice that they are not a real bill.
     pub accounts: AccountCounts,
+    /// Daily usage for the last [`HEATMAP_DAYS`] days, oldest first — the
+    /// spend calendar. Its own window on purpose: a calendar of the selected
+    /// range would be one row in the 30-day range and unreadable over 12
+    /// months.
+    pub heatmap: Vec<ChartPoint>,
 }
+
+/// How many days the Overview heatmap covers: twelve weeks.
+pub const HEATMAP_DAYS: i64 = 84;
 
 /// How many accounts are configured, real and demo.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -416,7 +424,23 @@ pub fn load_overview(range: Range) -> Result<OverviewData> {
         _ => load_overview_window(range, now),
     }?;
     data.accounts = AccountCounts::load()?;
+    data.heatmap = load_heatmap(now);
     Ok(data)
+}
+
+/// The spend calendar's daily series. Additive decoration, like the forecast
+/// band: a failed read leaves the card off the page rather than taking the
+/// dashboard down.
+fn load_heatmap(now: DateTime<Utc>) -> Vec<ChartPoint> {
+    let since = midnight_of(now.date_naive() - chrono::Duration::days(HEATMAP_DAYS - 1));
+    query::daily_usage_all(since)
+        .unwrap_or_else(|e| {
+            tracing::warn!("Could not read the daily series for the heatmap: {}", e);
+            Vec::new()
+        })
+        .into_iter()
+        .map(|(day, amount)| ChartPoint { label: day, amount })
+        .collect()
 }
 
 /// Load or clear the demo ledger, then re-evaluate the alert rules so the
@@ -585,6 +609,7 @@ fn load_overview_mtd(now: DateTime<Utc>) -> Result<OverviewData> {
         movers,
         month_over_month: Some(month_over_month),
         accounts: AccountCounts::default(),
+        heatmap: Vec::new(),
     })
 }
 
@@ -694,6 +719,7 @@ fn load_overview_window(range: Range, now: DateTime<Utc>) -> Result<OverviewData
         movers,
         month_over_month: None,
         accounts: AccountCounts::default(),
+        heatmap: Vec::new(),
     })
 }
 
@@ -2414,6 +2440,158 @@ pub fn load_models(range: Range) -> ModelsData {
         findings,
         currency: reporting_currency(),
     }
+}
+
+// ==================== Bills ====================
+
+/// How many charges the Bills page lists at a time.
+pub const BILLS_PAGE_SIZE: usize = 50;
+
+/// One row of the Bills page's breakdown table: a party the range's spend
+/// is split between, and the filter that lists its charges.
+pub struct BillRowData {
+    /// The name shown: an account's, a credential id, a principal id.
+    pub label: String,
+    /// The provider, for an account; `None` for a key or a principal, which
+    /// a provider does not scope.
+    pub provider: Option<SharedString>,
+    /// Window spend in the reporting currency, credits included.
+    pub amount: f64,
+    /// Share of the range's positive spend, 0.0–1.0.
+    pub share: f64,
+    /// How many charge rows the group holds.
+    pub lines: i64,
+    /// What clicking the row narrows the list to.
+    pub filter: crate::model::BillFilter,
+}
+
+/// Everything the Bills page renders: the range's price picture, one
+/// breakdown, and the current page of charges.
+pub struct BillsData {
+    pub currency: String,
+    pub range: Range,
+    pub window_caption: String,
+    pub dim: crate::model::BillDim,
+    /// The breakdown for `dim`, largest first.
+    pub groups: Vec<BillRowData>,
+    /// What the listed charges are worth, and what they leave out.
+    pub provenance: crate::model::BillProvenance,
+    /// The page of charges; `page` is 0-based.
+    pub lines: Vec<crate::model::BillLine>,
+    pub page: usize,
+    pub pages: usize,
+    /// Charges in the window under the filter.
+    pub total: i64,
+    /// The filter the lines were read with, so the caption can name it.
+    pub filter: crate::model::BillFilter,
+    /// Account id → the name the user gave it, for the line table.
+    pub account_names: BTreeMap<String, String>,
+}
+
+/// Load the Bills page. Blocking; wrap in `smol::unblock`.
+///
+/// `page` is clamped to the last page the filter has, so narrowing the
+/// filter while on a late page lands on real rows rather than an empty one.
+pub fn load_bills(
+    range: Range,
+    dim: crate::model::BillDim,
+    filter: crate::model::BillFilter,
+    page: usize,
+) -> Result<BillsData> {
+    use crate::model::{BillDim, BillFilter};
+
+    let now = Utc::now();
+    let (since, until) = range.windows(now).0;
+
+    let groups = query::bill_groups_between(dim, since, until, &filter)?;
+    let provenance = query::bill_provenance_between(since, until, &filter)?;
+    let total = query::bill_line_count_between(since, until, &filter)?;
+
+    let rows = i64::try_from(BILLS_PAGE_SIZE).unwrap_or(i64::MAX);
+    // `div_ceil` on i64 is newer than the crate's MSRV allows.
+    let pages = usize::try_from(if total <= 0 {
+        1
+    } else {
+        (total + rows - 1) / rows
+    })
+    .unwrap_or(1)
+    .max(1);
+    let page = page.min(pages - 1);
+    let lines = query::bill_lines_between(
+        since,
+        until,
+        &filter,
+        BILLS_PAGE_SIZE,
+        page * BILLS_PAGE_SIZE,
+    )?;
+
+    // An account group shows the name the user gave it; a key or a
+    // principal has no row of its own to look up.
+    let names: BTreeMap<String, String> = db::get_all_accounts()
+        .unwrap_or_else(|e| {
+            tracing::warn!("Could not list accounts for the bill breakdown: {}", e);
+            Vec::new()
+        })
+        .into_iter()
+        .map(|account| (account.id, account.name))
+        .collect();
+
+    let positive: f64 = groups.iter().map(|group| group.amount.max(0.0)).sum();
+    let groups = groups
+        .into_iter()
+        .map(|group| {
+            let label = match (dim, &group.key) {
+                (BillDim::Account, Some(id)) => {
+                    names.get(id).cloned().unwrap_or_else(|| id.clone())
+                }
+                (_, Some(key)) => key.clone(),
+                (_, None) => match dim {
+                    BillDim::Credential => tr!("bills.no_credential").into(),
+                    _ => tr!("bills.no_principal").into(),
+                },
+            };
+            BillRowData {
+                label,
+                provider: group
+                    .provider
+                    .as_deref()
+                    .map(|provider| SharedString::from(provider.to_string())),
+                amount: group.amount,
+                share: if positive > 0.0 {
+                    (group.amount / positive).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                },
+                lines: group.lines,
+                filter: BillFilter::of_group(dim, &group),
+            }
+        })
+        .collect();
+
+    Ok(BillsData {
+        currency: reporting_currency(),
+        range,
+        window_caption: range.header_caption(now),
+        dim,
+        groups,
+        provenance,
+        lines,
+        page,
+        pages,
+        total,
+        filter,
+        account_names: names,
+    })
+}
+
+/// Every charge the filter selects in the range, for the CSV export — not
+/// just the page on screen. Blocking; wrap in `smol::unblock`.
+pub fn bill_export_lines(
+    range: Range,
+    filter: &crate::model::BillFilter,
+) -> Result<Vec<crate::model::BillLine>> {
+    let (since, until) = range.windows(Utc::now()).0;
+    query::bill_lines_between(since, until, filter, usize::MAX, 0)
 }
 
 // ==================== Sidebar ====================

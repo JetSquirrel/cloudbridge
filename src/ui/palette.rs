@@ -72,6 +72,13 @@ fn pages() -> Vec<Page> {
             keywords: &["sankey", "treemap", "business line", "tag"],
         },
         Page {
+            label: "Bills",
+            key: "nav.bills",
+            icon: IconName::FileText,
+            action: || Box::new(app::SwitchToBills),
+            keywords: &["charges", "line items", "ledger", "api key"],
+        },
+        Page {
             label: "Models",
             key: "nav.models",
             icon: IconName::Cpu,
@@ -275,6 +282,7 @@ fn page_views() -> Vec<app::CurrentView> {
         CurrentView::Overview,
         CurrentView::Alerts,
         CurrentView::Attribution,
+        CurrentView::Bills,
         CurrentView::Models,
         CurrentView::Insights,
     ];

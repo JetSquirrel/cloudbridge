@@ -13,6 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `assets/icon.svg` is the source, and `scripts/generate-icon.py` writes the
   PNG, ICNS and ICO from it.
 ### Added
+- **Bills.** A line-item page for the range: every charge with its day,
+  account, service or model, description, category, quantity, billed amount
+  and list price, oldest paged fifty at a time. The charges are split by
+  account, by the API key that spent the money (`credential_id`, as OpenAI's
+  and Anthropic's exports name it) or by the user behind it (`principal_id`),
+  and clicking a row narrows the list to it. Above the list, the range's
+  amounts by how much they can be trusted: billed, list price, amortized
+  cost, the discount against list, and how many lines carry no amount or no
+  exchange rate — counted, never added to a total as zero. Export CSV writes
+  every charge the filter selects, not the page on screen.
+- **Spend calendar.** Overview shows the last twelve weeks as one square a
+  day, deeper as the day cost more, with the day and amount on hover.
 - **Monthly cost review.** Export report on Overview saves a chosen month as
   one self-contained HTML file, ready to print or share: totals and the change
   from last month, top services and regions, business lines, data health, top

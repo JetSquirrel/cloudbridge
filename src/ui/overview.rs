@@ -1,6 +1,8 @@
 //! Overview View
 
-use gpui_kit::component::{button::*, scroll::ScrollableElement, skeleton::Skeleton, *};
+use gpui_kit::component::{
+    button::*, scroll::ScrollableElement, skeleton::Skeleton, tooltip::Tooltip, *,
+};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
@@ -484,6 +486,111 @@ impl OverviewView {
             )
     }
 
+    /// The last twelve weeks as a calendar: one square per day, deeper in the
+    /// accent as it cost more, with the day and amount on hover. Its own
+    /// window, not the selected range's — a calendar of 30 days is one row,
+    /// and of 12 months, unreadable.
+    fn render_heatmap(cx: &App, d: &data::OverviewData) -> Div {
+        use chrono::Datelike as _;
+
+        let currency = d.currency.as_str();
+        let by_day: std::collections::BTreeMap<&str, f64> = d
+            .heatmap
+            .iter()
+            .map(|point| (point.label.as_str(), point.amount))
+            .collect();
+        let max = d
+            .heatmap
+            .iter()
+            .map(|point| point.amount)
+            .fold(0.0_f64, f64::max);
+
+        let today = chrono::Utc::now().date_naive();
+        let mut day = today - chrono::Duration::days(data::HEATMAP_DAYS - 1);
+        // Weeks run Monday to Sunday, so the seven rows read as weekdays.
+        day -= chrono::Duration::days(i64::from(day.weekday().num_days_from_monday()));
+
+        let mut columns: Vec<Vec<AnyElement>> = Vec::new();
+        let mut column: Vec<AnyElement> = Vec::new();
+        while day <= today {
+            let label = day.format("%Y-%m-%d").to_string();
+            let amount = by_day.get(label.as_str()).copied().unwrap_or(0.0);
+            // Four steps of one color: a share, not a scale with a zero of
+            // its own — a day with nothing on it reads as the empty track.
+            let level = if max > 0.0 {
+                ((amount / max) * 4.0).ceil().clamp(0.0, 4.0) as u8
+            } else {
+                0
+            };
+            let color = match level {
+                0 => theme::sidebar_bg(cx),
+                1 => theme::accent(cx).opacity(0.25),
+                2 => theme::accent(cx).opacity(0.50),
+                3 => theme::accent(cx).opacity(0.75),
+                _ => theme::accent(cx),
+            };
+            let note = tr!(
+                "overview.heat_day",
+                day = label.clone(),
+                amount = fmt::amount(amount, currency)
+            );
+
+            column.push(
+                div()
+                    .id(SharedString::from(format!("heat-{label}")))
+                    .size_3()
+                    .rounded(px(2.))
+                    .bg(color)
+                    .tooltip(move |window, cx| Tooltip::new(note.clone()).build(window, cx))
+                    .into_any_element(),
+            );
+            if day.weekday() == chrono::Weekday::Sun {
+                columns.push(std::mem::take(&mut column));
+            }
+            day += chrono::Duration::days(1);
+        }
+        // Pad the current week so its column keeps the grid's height.
+        if !column.is_empty() {
+            while column.len() < 7 {
+                column.push(div().size_3().into_any_element());
+            }
+            columns.push(column);
+        }
+
+        theme::card(cx)
+            .w_full()
+            .p_5()
+            .v_flex()
+            .gap_4()
+            .child(
+                div()
+                    .v_flex()
+                    .gap_1()
+                    .child(theme::section_title(cx, tr!("overview.heatmap")))
+                    .child(theme::caption(
+                        cx,
+                        tr!("overview.heatmap_caption", days = data::HEATMAP_DAYS),
+                    )),
+            )
+            .child(
+                div()
+                    .id("spend-heatmap")
+                    .role(Role::Image)
+                    .aria_label(tr!(
+                        "overview.heatmap_a11y",
+                        total = fmt::amount(d.heatmap.iter().map(|p| p.amount).sum(), currency)
+                    ))
+                    .h_flex()
+                    .items_start()
+                    .gap(rems(0.2))
+                    .children(
+                        columns
+                            .into_iter()
+                            .map(|cells| div().v_flex().gap(rems(0.2)).children(cells)),
+                    ),
+            )
+    }
+
     /// Currency ticks use exactly the same range as the canvas and benchmark.
     fn render_chart_with_axis(
         &self,
@@ -773,6 +880,9 @@ impl Render for OverviewView {
                 .gap_4()
                 .child(render_stats(cx, d, columns))
                 .child(self.render_middle(d, window, cx))
+                .when(d.heatmap.iter().any(|p| p.amount > 0.0), |el| {
+                    el.child(Self::render_heatmap(cx, d))
+                })
                 .child(render_movers(cx, d, columns < 4))
                 // MTD only; the rolling ranges carry no month-over-month.
                 .when_some(d.month_over_month.as_ref(), |el, mom| {

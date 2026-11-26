@@ -24,6 +24,11 @@ required.
   credits. Token-only exports remain usage records, not estimated bills.
 - **Explain where costs go.** Follow a Sankey from source to service or model
   to business line; unallocated usage stays visible.
+- **Open the bill itself.** Bills lists every charge in the range with its
+  day, service or model, quantity, billed amount and list price, split by
+  account, by the API key that spent the money or by the user behind it.
+  Lines with no amount or no exchange rate are counted beside the totals, not
+  added to them as zero, and the filtered list exports to CSV.
 - **Review changes that matter.** Configurable rules flag unusual daily spend,
   low prepaid balances, and unallocated costs. Rules run when the app opens
   and after each refresh; opening the Alerts page re-checks whether open

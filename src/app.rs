@@ -12,7 +12,7 @@ use gpui_kit::*;
 use crate::ui::data::SyncStatus;
 use crate::ui::{
     account_detail::AccountDetailView, accounts::AccountsView, alerts::AlertsView,
-    attribution::AttributionView, insights::InsightsView, models::ModelsView,
+    attribution::AttributionView, bills::BillsView, insights::InsightsView, models::ModelsView,
     overview::OverviewView, query::QueryView, rules::RulesView, settings::SettingsView,
 };
 use crate::ui::{fmt, platform_key_binding, theme};
@@ -23,6 +23,7 @@ actions!(
         SwitchToOverview,
         SwitchToAlerts,
         SwitchToAttribution,
+        SwitchToBills,
         SwitchToModels,
         SwitchToInsights,
         SwitchToQuery,
@@ -194,6 +195,8 @@ pub struct CloudBridgeApp {
     alerts_view: Entity<AlertsView>,
     /// Attribution view
     attribution_view: Entity<AttributionView>,
+    /// Bills view
+    bills_view: Entity<BillsView>,
     /// Models view
     models_view: Entity<ModelsView>,
     /// Insights view
@@ -233,6 +236,7 @@ pub enum CurrentView {
     Overview,
     Alerts,
     Attribution,
+    Bills,
     Models,
     Insights,
     Query,
@@ -253,6 +257,7 @@ impl CloudBridgeApp {
         let overview_view = cx.new(|cx| OverviewView::new(window, cx));
         let alerts_view = cx.new(|cx| AlertsView::new(window, cx));
         let attribution_view = cx.new(|cx| AttributionView::new(window, cx));
+        let bills_view = cx.new(|cx| BillsView::new(window, cx));
         let models_view = cx.new(|cx| ModelsView::new(window, cx));
         let insights_view = cx.new(|cx| InsightsView::new(window, cx));
         let query_view = cx.new(|cx| QueryView::new(window, cx));
@@ -265,8 +270,9 @@ impl CloudBridgeApp {
         // (⌘8 opens the Account drill-down with the account it last
         // showed), ⌘9 the Models page and ⌘0 Insights — each added after
         // the first eight were handed out, so they take the free digits
-        // rather than renumbering shortcuts a release already taught — and
-        // ⌘R reloads the page on screen. ⌘K opens the command palette, which
+        // rather than renumbering shortcuts a release already taught. ⌘B
+        // opens Bills, which landed after every digit was taken, and ⌘R
+        // reloads the page on screen. ⌘K opens the command palette, which
         // lists every one of these beside its shortcut.
         // `secondary` is ⌘ on macOS and Ctrl elsewhere — `cmd` would be the
         // Windows key there, whose digit and R chords the OS keeps for
@@ -284,6 +290,7 @@ impl CloudBridgeApp {
             platform_key_binding("secondary-8", SwitchToAccountDetail, None, cx),
             platform_key_binding("secondary-9", SwitchToModels, None, cx),
             platform_key_binding("secondary-0", SwitchToInsights, None, cx),
+            platform_key_binding("secondary-b", SwitchToBills, None, cx),
             platform_key_binding("secondary-r", ReloadCurrentView, None, cx),
             platform_key_binding("secondary-k", OpenCommandPalette, None, cx),
         ];
@@ -351,6 +358,7 @@ impl CloudBridgeApp {
             overview_view,
             alerts_view,
             attribution_view,
+            bills_view,
             models_view,
             insights_view,
             query_view,
@@ -405,6 +413,13 @@ impl CloudBridgeApp {
                 }
             }),
             CurrentView::Attribution => self.attribution_view.update(cx, |v, cx| {
+                if first_visit {
+                    v.ensure_loaded(cx);
+                } else {
+                    v.reload(cx);
+                }
+            }),
+            CurrentView::Bills => self.bills_view.update(cx, |v, cx| {
                 if first_visit {
                     v.ensure_loaded(cx);
                 } else {
@@ -622,6 +637,16 @@ impl CloudBridgeApp {
                 IconName::ChartPie,
                 CurrentView::Attribution,
                 current == CurrentView::Attribution,
+                None,
+                cx,
+            ))
+            // The line-item ledger, beside the summaries that explain it.
+            // Shared with the demo, whose seeded bill has charges to list.
+            .child(self.nav_item(
+                tr!("nav.bills"),
+                IconName::FileText,
+                CurrentView::Bills,
+                current == CurrentView::Bills,
                 None,
                 cx,
             ))
@@ -879,6 +904,7 @@ impl CloudBridgeApp {
             CurrentView::Overview => div().size_full().child(self.overview_view.clone()),
             CurrentView::Alerts => div().size_full().child(self.alerts_view.clone()),
             CurrentView::Attribution => div().size_full().child(self.attribution_view.clone()),
+            CurrentView::Bills => div().size_full().child(self.bills_view.clone()),
             CurrentView::Models => div().size_full().child(self.models_view.clone()),
             CurrentView::Insights => div().size_full().child(self.insights_view.clone()),
             CurrentView::Query => div().size_full().child(self.query_view.clone()),
@@ -906,6 +932,9 @@ impl Render for CloudBridgeApp {
             }))
             .on_action(cx.listener(|this, _: &SwitchToAttribution, _, cx| {
                 this.switch_to(CurrentView::Attribution, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SwitchToBills, _, cx| {
+                this.switch_to(CurrentView::Bills, cx);
             }))
             .on_action(cx.listener(|this, _: &SwitchToModels, _, cx| {
                 this.switch_to(CurrentView::Models, cx);

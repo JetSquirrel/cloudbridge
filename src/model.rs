@@ -1199,6 +1199,160 @@ pub struct AdhocResult {
     pub elapsed_ms: u64,
 }
 
+// ==================== Bills ====================
+//
+// The Bills page's reads: the three parties a bill can be split between,
+// the line items themselves, and what the range's amounts are worth —
+// magpie's "by account and by upstream key", with the cost basis beside it
+// so an estimate never reads as money spent.
+
+/// Which party the Bills page groups a range's spend by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum BillDim {
+    /// The billing account, `(provider, account_id)`.
+    #[default]
+    Account,
+    /// `credential_id`: the API key that spent the money, as OpenAI's and
+    /// Anthropic's usage exports name it.
+    Credential,
+    /// `principal_id`: the user or service principal behind the charge.
+    Principal,
+}
+
+impl BillDim {
+    pub const ALL: [BillDim; 3] = [BillDim::Account, BillDim::Credential, BillDim::Principal];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Account => "account",
+            Self::Credential => "credential",
+            Self::Principal => "principal",
+        }
+    }
+}
+
+/// One group of a [`BillDim`] breakdown, largest spend first.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BillGroup {
+    /// The provider the group's charges came from. `Some` for accounts
+    /// only: a key or a principal can span providers, and grouping it by
+    /// provider would split one key into several rows.
+    pub provider: Option<String>,
+    /// The grouping value: an account id, a credential id, a principal id.
+    /// `None` for the group of charges that name none — not the same as a
+    /// group with no spend.
+    pub key: Option<String>,
+    /// Window usage in the reporting currency; negative (`Credit`,
+    /// `Adjustment`) rows are in it, as they are in every net total.
+    pub amount: f64,
+    /// How many charge rows the group holds.
+    pub lines: i64,
+}
+
+/// A window's amounts by trustworthiness: what was billed, what the
+/// provider's list price was, and what the lines that carry an amount but
+/// no rate into the reporting currency leave out.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct BillProvenance {
+    /// Net billed in the reporting currency.
+    pub billed: f64,
+    /// The list price of the lines that reported one, converted at the
+    /// line's own rate. Not comparable with `billed` when only some lines
+    /// have one: `priced` says how many do.
+    pub list: f64,
+    /// Amortized cost where the provider reports it, billed otherwise.
+    pub effective: f64,
+    /// Lines that carry a list price, so `list` can be read against
+    /// `billed`.
+    pub priced: i64,
+    /// Lines with no amount at all — a token count, say. In no total, and
+    /// not free.
+    pub unpriced: i64,
+    /// Lines with an amount but no rate into the reporting currency. In no
+    /// converted total.
+    pub unconverted: i64,
+    /// Every line in the window.
+    pub lines: i64,
+}
+
+/// A group of a [`BillDim`] the line list is narrowed to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BillKey {
+    /// The group a value names.
+    Named(String),
+    /// The group whose charges name no value — the "No API key" row.
+    Unnamed,
+}
+
+/// The axes the Bills line list is narrowed on. `None` is unfiltered, so
+/// the unfiltered list is the same read with every axis left open.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BillFilter {
+    pub provider: Option<String>,
+    pub account_id: Option<String>,
+    pub credential: Option<BillKey>,
+    pub principal: Option<BillKey>,
+}
+
+impl BillFilter {
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+
+    /// Narrow to one row of `dim`'s breakdown, as clicking it does.
+    pub fn of_group(dim: BillDim, group: &BillGroup) -> Self {
+        let key = match group.key.clone() {
+            Some(key) => BillKey::Named(key),
+            None => BillKey::Unnamed,
+        };
+        match dim {
+            BillDim::Account => Self {
+                provider: group.provider.clone(),
+                account_id: group.key.clone(),
+                ..Default::default()
+            },
+            BillDim::Credential => Self {
+                credential: Some(key),
+                ..Default::default()
+            },
+            BillDim::Principal => Self {
+                principal: Some(key),
+                ..Default::default()
+            },
+        }
+    }
+}
+
+/// One charge as the Bills page lists it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BillLine {
+    /// The day the charge falls on, `YYYY-MM-DD`.
+    pub day: String,
+    pub provider: String,
+    pub account_id: String,
+    /// `coalesce(service_name, 'Other')`, as every service grouping has it.
+    pub service: String,
+    pub description: Option<String>,
+    pub model: Option<String>,
+    pub category: ChargeCategory,
+    /// The priced quantity and its unit (`Hrs`, `GB-Mo`, `Tokens`), when the
+    /// provider reports one.
+    pub quantity: Option<f64>,
+    pub unit: Option<String>,
+    /// What the provider charged, in the reporting currency. `None` is a
+    /// usage record with no amount — not a free charge.
+    pub billed: Option<f64>,
+    /// The provider's list price for the same line, converted.
+    pub list: Option<f64>,
+    /// Amortized cost, when the provider reports one.
+    pub effective: Option<f64>,
+    /// Where the amount comes from: the provider's bill, a unit price, an
+    /// estimate, or nothing at all.
+    pub basis: CostBasis,
+    pub credential: Option<String>,
+    pub principal: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

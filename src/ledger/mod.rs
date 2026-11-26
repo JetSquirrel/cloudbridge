@@ -13,6 +13,7 @@
 //! would leave behind entries the provider has since deleted and the total
 //! would stop matching theirs.
 
+pub mod bills_export;
 pub mod demo;
 pub mod focus_export;
 pub mod inventory;

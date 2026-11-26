@@ -4,6 +4,7 @@ pub mod account_detail;
 pub mod accounts;
 pub mod alerts;
 pub mod attribution;
+pub mod bills;
 pub mod chart;
 pub mod data;
 mod data_health;

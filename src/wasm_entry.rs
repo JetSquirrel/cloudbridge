@@ -45,6 +45,7 @@ gpui_kit::assets::icon_assets!(
         LayoutDashboard,
         LoaderCircle,
         Plus,
+        FileText,
         RefreshCw,
         RotateCw,
         Search,

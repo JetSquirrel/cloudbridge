@@ -14,11 +14,13 @@ use super::schema::{NORMALIZED_VIEW, TIMESTAMP_FORMAT};
 use super::{with_connection_ref, Channel, PeriodKey};
 use crate::analytics::{self, QualityCounts, TwoPeriodBuckets};
 pub use crate::model::{
-    AdhocResult, Balance, BreakdownDim, CategoryDelta, CostChangeDecomposition, DailyModelTokens,
-    DailyTotal, DataQualityIssue, DataQualityKind, ForecastBands, InventoryResource,
-    InventoryScope, IssueSeverity, LedgerAccount, ModelTokenSummary, MovementKind, PeriodForecast,
-    PeriodOverPeriod, ResourceChargeLine, ResourceCost, ResourceUsage, ServiceDailyTotal,
-    ServiceMovement, ServiceTagUsage, TopResource, UntaggedServiceUsage,
+    AdhocResult, Balance, BillDim, BillFilter, BillGroup, BillKey, BillLine, BillProvenance,
+    BreakdownDim, CategoryDelta, ChargeCategory, CostBasis, CostChangeDecomposition,
+    DailyModelTokens, DailyTotal, DataQualityIssue, DataQualityKind, ForecastBands,
+    InventoryResource, InventoryScope, IssueSeverity, LedgerAccount, ModelTokenSummary,
+    MovementKind, PeriodForecast, PeriodOverPeriod, ResourceChargeLine, ResourceCost,
+    ResourceUsage, ServiceDailyTotal, ServiceMovement, ServiceTagUsage, TopResource,
+    UntaggedServiceUsage,
 };
 use crate::model::{BillingPeriod, BreakdownPart};
 
@@ -2620,6 +2622,330 @@ fn format_interval(months: i32, days: i32, nanos: i64) -> String {
     }
 }
 
+// ==================== Bills ====================
+//
+// The Bills page's reads. All four share one WHERE fragment — the window
+// plus whichever groups the line list is narrowed to — so the totals above
+// the list and the lines in it answer for the same rows.
+
+/// The `WHERE` fragment a bill read filters on, with `?` placeholders in
+/// the order [`bill_params`] binds them.
+fn bill_where(filter: &BillFilter) -> String {
+    let mut clauses = vec![
+        "charge_period_start >= CAST(? AS TIMESTAMP)".to_string(),
+        "charge_period_start < CAST(? AS TIMESTAMP)".to_string(),
+    ];
+    if filter.provider.is_some() {
+        clauses.push("provider = ?".to_string());
+    }
+    if filter.account_id.is_some() {
+        clauses.push("account_id = ?".to_string());
+    }
+    // A key filter selects one group: the value it names, or — as `None`
+    // inside `Some` — the rows that name none. `IS NULL` is a filter of its
+    // own, never "unfiltered".
+    for (key, column) in [
+        (&filter.credential, "credential_id"),
+        (&filter.principal, "principal_id"),
+    ] {
+        match key {
+            None => {}
+            Some(BillKey::Named(_)) => clauses.push(format!("{column} = ?")),
+            Some(BillKey::Unnamed) => clauses.push(format!("{column} IS NULL")),
+        }
+    }
+    clauses.join(" AND ")
+}
+
+/// Bind values for [`bill_where`], in clause order.
+fn bill_params(since: DateTime<Utc>, until: DateTime<Utc>, filter: &BillFilter) -> Vec<String> {
+    let mut bound = vec![
+        since.format(TIMESTAMP_FORMAT).to_string(),
+        until.format(TIMESTAMP_FORMAT).to_string(),
+    ];
+    if let Some(provider) = &filter.provider {
+        bound.push(provider.clone());
+    }
+    if let Some(account_id) = &filter.account_id {
+        bound.push(account_id.clone());
+    }
+    for key in [&filter.credential, &filter.principal]
+        .into_iter()
+        .flatten()
+    {
+        if let BillKey::Named(value) = key {
+            bound.push(value.clone());
+        }
+    }
+    bound
+}
+
+/// What a window's charges are worth, and how much of them can be trusted
+/// as money: billed, list and amortized totals beside the counts of lines
+/// that carry no amount or no rate.
+pub fn bill_provenance_between(
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    filter: &BillFilter,
+) -> Result<BillProvenance> {
+    with_connection_ref(|conn| bill_provenance_of(conn, since, until, filter))
+}
+
+fn bill_provenance_of(
+    conn: &Connection,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    filter: &BillFilter,
+) -> Result<BillProvenance> {
+    let provenance = conn.query_row(
+        &format!(
+            "SELECT coalesce(sum(billed_cost_base), 0.0) AS billed,
+                    coalesce(sum(list_cost * fx_rate), 0.0) AS list_total,
+                    coalesce(sum(coalesce(effective_cost_base, billed_cost_base)), 0.0) AS effective,
+                    count(list_cost * fx_rate) AS priced,
+                    count(*) FILTER (WHERE billed_cost IS NULL) AS unpriced,
+                    count(*) FILTER (
+                        WHERE billed_cost IS NOT NULL AND billed_cost_base IS NULL
+                    ) AS unconverted,
+                    count(*) AS lines
+             FROM {NORMALIZED_VIEW}
+             WHERE {}",
+            bill_where(filter)
+        ),
+        duckdb::params_from_iter(bill_params(since, until, filter)),
+        |row| {
+            Ok(BillProvenance {
+                billed: row.get(0)?,
+                list: row.get(1)?,
+                effective: row.get(2)?,
+                priced: row.get(3)?,
+                unpriced: row.get(4)?,
+                unconverted: row.get(5)?,
+                lines: row.get(6)?,
+            })
+        },
+    )?;
+
+    Ok(provenance)
+}
+
+/// A window's spend grouped by `dim`, largest first. The groups answer for
+/// `filter`, less `dim`'s own axis — so choosing an account and switching to
+/// keys lists that account's keys rather than collapsing to the one clicked.
+/// Every group is kept, credits included, so the groups add up to the
+/// narrowed window's net total.
+pub fn bill_groups_between(
+    dim: BillDim,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    filter: &BillFilter,
+) -> Result<Vec<BillGroup>> {
+    with_connection_ref(|conn| bill_groups_of(conn, dim, since, until, filter))
+}
+
+/// `filter` without the axis `dim` groups on.
+fn bill_groups_filter(filter: &BillFilter, dim: BillDim) -> BillFilter {
+    let mut narrowed = filter.clone();
+    match dim {
+        BillDim::Account => {
+            narrowed.provider = None;
+            narrowed.account_id = None;
+        }
+        BillDim::Credential => narrowed.credential = None,
+        BillDim::Principal => narrowed.principal = None,
+    }
+    narrowed
+}
+
+fn bill_groups_of(
+    conn: &Connection,
+    dim: BillDim,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    filter: &BillFilter,
+) -> Result<Vec<BillGroup>> {
+    // Only an account is scoped to a provider: one key or one principal can
+    // be used from several providers, and splitting it would report the
+    // same key as two groups.
+    let (selected, grouped) = match dim {
+        BillDim::Account => ("provider, account_id AS grp", "provider, account_id"),
+        BillDim::Credential => (
+            "CAST(NULL AS VARCHAR) AS provider, credential_id AS grp",
+            "credential_id",
+        ),
+        BillDim::Principal => (
+            "CAST(NULL AS VARCHAR) AS provider, principal_id AS grp",
+            "principal_id",
+        ),
+    };
+    let narrowed = bill_groups_filter(filter, dim);
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {selected},
+                coalesce(sum(billed_cost_base), 0.0) AS amount,
+                count(*) AS lines
+         FROM {NORMALIZED_VIEW}
+         WHERE {where_sql}
+         GROUP BY {grouped}
+         ORDER BY amount DESC",
+        where_sql = bill_where(&narrowed),
+    ))?;
+
+    let rows = stmt
+        .query_map(
+            duckdb::params_from_iter(bill_params(since, until, &narrowed)),
+            |row| {
+                Ok(BillGroup {
+                    provider: row.get(0)?,
+                    key: row.get(1)?,
+                    amount: row.get(2)?,
+                    lines: row.get(3)?,
+                })
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows)
+}
+
+/// One page of a window's charges, newest first then largest, narrowed by
+/// `filter` — the line list under the breakdown.
+pub fn bill_lines_between(
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    filter: &BillFilter,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<BillLine>> {
+    with_connection_ref(|conn| bill_lines_of(conn, since, until, filter, limit, offset))
+}
+
+fn bill_lines_of(
+    conn: &Connection,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    filter: &BillFilter,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<BillLine>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT strftime(charge_period_start, '%Y-%m-%d') AS day,
+                provider, account_id, coalesce(service_name, 'Other') AS service,
+                charge_description, x_model, charge_category,
+                pricing_quantity, pricing_unit,
+                billed_cost_base, list_cost * fx_rate AS list_base,
+                effective_cost_base, cost_basis, credential_id, principal_id
+         FROM {NORMALIZED_VIEW}
+         WHERE {where_sql}
+         ORDER BY charge_period_start DESC, billed_cost_base DESC NULLS LAST
+         LIMIT {limit} OFFSET {offset}",
+        where_sql = bill_where(filter),
+        // Interpolated rather than bound: they are `i64`s this function
+        // made, and DuckDB will not take a VARCHAR for a LIMIT.
+        limit = bounded_limit(limit),
+        offset = i64::try_from(offset).unwrap_or(i64::MAX)
+    ))?;
+
+    let raw = stmt
+        .query_map(
+            duckdb::params_from_iter(bill_params(since, until, filter)),
+            |row| {
+                Ok(RawBillLine {
+                    day: row.get(0)?,
+                    provider: row.get(1)?,
+                    account_id: row.get(2)?,
+                    service: row.get(3)?,
+                    description: row.get(4)?,
+                    model: row.get(5)?,
+                    category: row.get(6)?,
+                    quantity: row.get(7)?,
+                    unit: row.get(8)?,
+                    billed: row.get(9)?,
+                    list: row.get(10)?,
+                    effective: row.get(11)?,
+                    basis: row.get(12)?,
+                    credential: row.get(13)?,
+                    principal: row.get(14)?,
+                })
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    raw.into_iter().map(RawBillLine::into_line).collect()
+}
+
+/// How many charges `filter` selects in a window — the page count's other
+/// half.
+pub fn bill_line_count_between(
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    filter: &BillFilter,
+) -> Result<i64> {
+    with_connection_ref(|conn| bill_line_count_of(conn, since, until, filter))
+}
+
+fn bill_line_count_of(
+    conn: &Connection,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    filter: &BillFilter,
+) -> Result<i64> {
+    Ok(conn.query_row(
+        &format!(
+            "SELECT count(*) FROM {NORMALIZED_VIEW} WHERE {}",
+            bill_where(filter)
+        ),
+        duckdb::params_from_iter(bill_params(since, until, filter)),
+        |row| row.get(0),
+    )?)
+}
+
+/// One charge as stored, before its two enum columns are read: a row mapper
+/// can only answer with a `duckdb` error, and these two name their kinds.
+struct RawBillLine {
+    day: String,
+    provider: String,
+    account_id: String,
+    service: String,
+    description: Option<String>,
+    model: Option<String>,
+    category: String,
+    quantity: Option<f64>,
+    unit: Option<String>,
+    billed: Option<f64>,
+    list: Option<f64>,
+    effective: Option<f64>,
+    basis: String,
+    credential: Option<String>,
+    principal: Option<String>,
+}
+
+impl RawBillLine {
+    fn into_line(self) -> Result<BillLine> {
+        let category = ChargeCategory::from_stored(&self.category)
+            .ok_or_else(|| anyhow::anyhow!("Unknown charge category {:?}", self.category))?;
+        let basis = CostBasis::from_stored(&self.basis)
+            .ok_or_else(|| anyhow::anyhow!("Unknown cost basis {:?}", self.basis))?;
+
+        Ok(BillLine {
+            day: self.day,
+            provider: self.provider,
+            account_id: self.account_id,
+            service: self.service,
+            description: self.description,
+            model: self.model,
+            category,
+            quantity: self.quantity,
+            unit: self.unit,
+            billed: self.billed,
+            list: self.list,
+            effective: self.effective,
+            basis,
+            credential: self.credential,
+            principal: self.principal,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5133,5 +5459,185 @@ mod report_tests {
         .unwrap();
         assert_eq!(rows_without_amount_of(&conn, "2026-08").unwrap(), 1);
         assert_eq!(rows_without_amount_of(&conn, "2026-09").unwrap(), 0);
+    }
+}
+
+#[cfg(test)]
+mod bill_tests {
+    use super::*;
+    use crate::ledger::schema;
+    use crate::ledger::{write_period, Channel, Charge, CostBasis};
+    use chrono::{TimeZone, Utc};
+
+    fn conn() -> Connection {
+        let conn = Connection::open_in_memory().expect("in-memory duckdb");
+        schema::apply(&conn).expect("schema applies");
+        schema::apply_reporting_currency(&conn, "USD").expect("view applies");
+        conn
+    }
+
+    fn day(day: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 9, day, 0, 0, 0).unwrap()
+    }
+
+    /// One model-provider row: `cost` `None` is a token row, which carries
+    /// no amount and no list price.
+    fn charge(
+        day_of_month: u32,
+        cost: Option<f64>,
+        key: Option<&str>,
+        user: Option<&str>,
+    ) -> Charge {
+        Charge {
+            billed_cost: cost,
+            effective_cost: cost,
+            list_cost: cost.map(|cost| cost * 2.0),
+            cost_basis: if cost.is_some() {
+                CostBasis::Authoritative
+            } else {
+                CostBasis::Absent
+            },
+            service_name: Some("gpt-5".to_string()),
+            credential_id: key.map(str::to_string),
+            principal_id: user.map(str::to_string),
+            ..Charge::new(day(day_of_month), day(day_of_month + 1), "USD")
+        }
+    }
+
+    fn seeded() -> Connection {
+        let mut conn = conn();
+        let charges = [
+            charge(1, Some(10.0), Some("key-a"), Some("x@example.com")),
+            charge(2, Some(30.0), Some("key-a"), Some("y@example.com")),
+            charge(3, None, Some("key-b"), Some("x@example.com")),
+            // A cloud row: no key and no user, so it lands in the unnamed
+            // bucket rather than in a key's group.
+            charge(4, Some(5.0), None, None),
+        ];
+        let key = PeriodKey::new("OpenAI", "acct", "2026-09");
+        write_period(&mut conn, &key, "b-1", &charges, None, Channel::File).unwrap();
+        conn
+    }
+
+    /// Keys first, then the unnamed group, then a key with no net spend —
+    /// every group kept, so the breakdown adds up to the window's net.
+    #[test]
+    fn spend_splits_by_key_and_keeps_the_unnamed_and_the_empty_groups() {
+        let conn = seeded();
+        let groups = bill_groups_of(
+            &conn,
+            BillDim::Credential,
+            day(1),
+            day(30),
+            &BillFilter::default(),
+        )
+        .unwrap();
+
+        let keys: Vec<Option<&str>> = groups.iter().map(|group| group.key.as_deref()).collect();
+        assert_eq!(keys, vec![Some("key-a"), None, Some("key-b")]);
+        assert_eq!(groups[0].amount, 40.0);
+        assert_eq!(groups[1].amount, 5.0);
+        // The token row alone: no amount, but the line is still there.
+        assert_eq!((groups[2].amount, groups[2].lines), (0.0, 1));
+
+        let by_user = bill_groups_of(
+            &conn,
+            BillDim::Principal,
+            day(1),
+            day(30),
+            &BillFilter::default(),
+        )
+        .unwrap();
+        assert_eq!(by_user.len(), 3);
+
+        // An account group is scoped to its provider; a key group is not.
+        let by_account = bill_groups_of(
+            &conn,
+            BillDim::Account,
+            day(1),
+            day(30),
+            &BillFilter::default(),
+        )
+        .unwrap();
+        assert_eq!(by_account.len(), 1);
+        assert_eq!(by_account[0].provider.as_deref(), Some("OpenAI"));
+
+        // Choosing an account and switching to keys lists that account's
+        // keys — the filter applies, less the axis being grouped.
+        let elsewhere = BillFilter {
+            provider: Some("AWS".to_string()),
+            account_id: Some("other".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            bill_groups_of(&conn, BillDim::Credential, day(1), day(30), &elsewhere)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_key_filter_pages_newest_first_and_counts_the_filtered_list() {
+        let conn = seeded();
+        let filter = BillFilter {
+            credential: Some(BillKey::Named("key-a".to_string())),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            bill_line_count_of(&conn, day(1), day(30), &filter).unwrap(),
+            2
+        );
+        let first = bill_lines_of(&conn, day(1), day(30), &filter, 1, 0).unwrap();
+        let second = bill_lines_of(&conn, day(1), day(30), &filter, 1, 1).unwrap();
+        assert_eq!(first[0].billed, Some(30.0));
+        assert_eq!(first[0].day, "2026-09-02");
+        assert_eq!(second[0].billed, Some(10.0));
+
+        // The unnamed bucket is a filter of its own, not "unfiltered".
+        let unnamed = BillFilter {
+            credential: Some(BillKey::Unnamed),
+            ..Default::default()
+        };
+        let lines = bill_lines_of(&conn, day(1), day(30), &unnamed, 10, 0).unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].credential, None);
+        assert_eq!(lines[0].billed, Some(5.0));
+    }
+
+    #[test]
+    fn provenance_counts_the_rows_no_total_can_hold() {
+        let conn = seeded();
+        let provenance =
+            bill_provenance_of(&conn, day(1), day(30), &BillFilter::default()).unwrap();
+
+        assert_eq!(provenance.billed, 45.0);
+        // Only the rows with an amount carry a list price.
+        assert_eq!(provenance.priced, 3);
+        assert_eq!(provenance.list, 90.0);
+        assert_eq!(provenance.effective, 45.0);
+        assert_eq!(provenance.lines, 4);
+        assert_eq!(provenance.unpriced, 1);
+        assert_eq!(provenance.unconverted, 0);
+    }
+
+    #[test]
+    fn a_group_filter_round_trips_through_the_line_list() {
+        let conn = seeded();
+        let groups = bill_groups_of(
+            &conn,
+            BillDim::Credential,
+            day(1),
+            day(30),
+            &BillFilter::default(),
+        )
+        .unwrap();
+        let filter = BillFilter::of_group(BillDim::Credential, &groups[0]);
+
+        assert_eq!(filter.credential, Some(BillKey::Named("key-a".to_string())));
+        assert_eq!(
+            bill_line_count_of(&conn, day(1), day(30), &filter).unwrap(),
+            2
+        );
     }
 }

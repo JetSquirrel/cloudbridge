@@ -1,0 +1,21 @@
+Tool: built-in image_gen
+References: three user-provided sign photographs, mood only
+Transparent background: false
+
+Design a logo mark for CloudBridge, a desktop app that gathers bills from many cloud and AI providers into one private ledger.
+
+Concept: ONE single solid shape. A simple cloud silhouette whose flat underside is cut by one clean semicircular arch opening, like the arch of an old stone bridge. The cloud is also the bridge: the top edge is the soft bumps of a cloud, and the two parts on either side of the arch stand like bridge piers. It should read immediately as "a cloud that is a bridge".
+
+Shape: a single continuous silhouette with no separate pieces and no enclosed gaps inside it. Exactly three bumps along the top, asymmetric, with the largest bump off-center. The arch is wide, about 40% of the shape's width, centered, and reaches about halfway up the shape. The arch opening connects to the background below the silhouette. The piers are wide and sturdy with flat bottoms. Curves are confident and smooth, drawn by a skilled designer, with no wobble.
+
+Style: the quiet, crafted look of an independent studio or a backlit stencil sign, not a tech startup. The three attached photographs show mood ONLY. Do not copy their shapes or typography. Do not render the photographs, signs, lighting or surroundings.
+
+Color: exactly two flat colors. Warm off-white #F2EFE6 shape on ink black #141414. Perfectly uniform solid color fills.
+
+Composition: a solid square filled edge to edge, with square corners and no outer margin. The shape is centered and fills about 70% of the square's width.
+
+Must stay clear at 16 pixels.
+
+Avoid: separate pebbles or blobs, anything resembling a paw print, face, smile, mushroom, crown or turtle; gradients, glow, shadows, 3D, texture; lines, nodes, charts, coins, letters, text, a mockup, or a presentation sheet.
+
+Output: only the flat logo, straight on, 1024 x 1024, a single image.
